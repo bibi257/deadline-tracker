@@ -682,7 +682,8 @@ function renderSettings(){
   s4.querySelector(".row").append(bOut,bIn,bIcs,file);
   main.appendChild(s4);
 
-  main.appendChild(h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p></div>'));
+  main.appendChild(h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p>'+
+    '<p><b>iPhoneで取り込むときの注意：</b>Discordなどの添付ファイルを直接タップすると「照会カレンダー」として登録され、更新がすぐ反映されません。長押しして「ファイルに保存」してから開き、「カレンダーに追加」を選んでください。このアプリの「カレンダーへ」ボタンから書き出したファイルは、その心配がありません。</p></div>'));
 
   // Discord毎朝ダイジェスト（GitHubへの同期）
   var s5=h('<div class="sec"><h3>Discordへ毎朝連絡</h3>'+
@@ -945,6 +946,33 @@ function toast(msg){
   clearTimeout(toastTimer); toastTimer=setTimeout(function(){ toastEl.classList.remove("on"); },2600);
 }
 
+/* ========== リンクから直接.icsを書き出す ==========
+   例: .../?export=all で開くと、未完了全件の.icsのダウンロードが始まる。
+   Discordの添付を直接開くとiOSでは「照会カレンダー」になってしまうため、
+   ファイルとして保存させる導線を用意する */
+function handleExportParam(){
+  var q=new URLSearchParams(location.search);
+  var mode=q.get("export");
+  if(!mode) return;
+  setTimeout(function(){
+    var list;
+    if(mode==="rep") list=activeItems().filter(isRepeating).sort(sortByDue);
+    else if(mode==="once") list=activeItems().filter(function(i){ return !isRepeating(i); }).sort(sortByDue);
+    else list=activeItems().sort(sortByDue);
+    if(!list.length){ toast("書き出す予定がありません"); return; }
+    downloadICS(list, "deadlines");
+    var guide=h('<div class="sec" style="border-color:var(--blue)">'+
+      '<h3>カレンダーへの入れ方</h3>'+
+      '<p>1. 保存された <b>deadlines.ics</b> を開く（Safariの右上のダウンロードマーク、または「ファイル」アプリの中）<br>'+
+      '2. 「カレンダーに追加」を選ぶ<br>'+
+      '3. 同じ予定は上書きされるので、何度取り込んでも重複しません</p></div>');
+    main.insertBefore(guide, main.firstChild);
+    window.scrollTo(0,0);
+  }, 600);
+  // 履歴からパラメータを消し、再読み込みで二重に書き出さないようにする
+  if(history.replaceState) history.replaceState(null,"",location.pathname);
+}
+
 /* ========== 更新の自動反映 ==========
    GitHub Pagesは古いHTMLを長く保持することがあるため、
    起動時と復帰時にサーバー側の更新を確認し、変わっていれば読み直す */
@@ -974,6 +1002,7 @@ document.querySelectorAll(".tab").forEach(function(t){
 });
 document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
 load(); applyTheme(); render();
+handleExportParam();
 setInterval(render, 60000); // 残り時間を更新
 checkForUpdate();
 setInterval(checkForUpdate, 10*60000); // 10分ごとに更新を確認
