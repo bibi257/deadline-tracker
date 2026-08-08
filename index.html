@@ -586,9 +586,9 @@ function renderSettings(){
 
   // Discord毎朝ダイジェスト（GitHubへの同期）
   var s5=h('<div class="sec"><h3>Discordへ毎朝連絡</h3>'+
-    '<p>GitHub Actionsが毎朝リポジトリの data.json を読んでDiscordへ送ります。ここではその data.json をリポジトリへ送るだけです。ユーザー名とリポジトリ名はこのページのURLから自動入力されます。</p>'+
+    '<p>締切データ（data.json）を保存するリポジトリを指定します。締切の内容が他人に見えないよう、<b>Privateリポジトリ</b>を指定してください。毎朝のDiscord送信もそのリポジトリ内で動きます。</p>'+
     '<div class="two"><label class="field"><span>GitHubユーザー名 / Organization</span><input type="text" id="ghOwner" placeholder="例：taro-yamada"></label>'+
-    '<label class="field"><span>リポジトリ名</span><input type="text" id="ghRepo" placeholder="例：deadline-tracker"></label></div>'+
+    '<label class="field"><span>データ用リポジトリ名（Private推奨）</span><input type="text" id="ghRepo" placeholder="例：deadline-data"></label></div>'+
     '<label class="field"><span>ブランチ</span><input type="text" id="ghBranch" value="main"></label>'+
     '<label class="field"><span>Personal Access Token（Contents: Read and write）</span><input type="password" id="ghToken" placeholder="このリポジトリだけに絞ったトークンを推奨"></label>'+
     '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
@@ -602,23 +602,22 @@ function renderSettings(){
   g("ghBranch").value=saved.branch||"main";
   g("ghToken").value=store.get("gh-token")||"";
   g("ghRemember").checked=!!store.get("gh-token");
-  if(!saved.owner&&guess.owner) s5.querySelector("#ghStatus").textContent="このページのURLから "+guess.owner+"/"+guess.repo+" を自動入力しました。";
+  if(!saved.owner&&guess.owner) s5.querySelector("#ghStatus").textContent="保存先の候補として "+guess.owner+"/"+guess.repo+" を入れました。実際のPrivateリポジトリ名に合わせて直してください。";
   var bSync=h('<button class="btn fill">GitHubに同期する</button>');
   bSync.onclick=function(){ syncToGitHub(g,s5); };
   s5.querySelector(".row").appendChild(bSync);
   main.appendChild(s5);
 }
 
-/* 公開URL（例：bibi257.github.io/deadline-tracker/）からowner/repoを推定する */
+/* 締切データの保存先リポジトリ名。Privateリポジトリを推奨（下のREADME参照） */
+var DATA_REPO_NAME="deadline-data";
+
+/* 公開URL（例：bibi257.github.io/deadline-tracker/）からownerを推定する */
 function guessRepoFromURL(){
-  var host=location.hostname, path=location.pathname;
+  var host=location.hostname;
   var m=host.match(/^([^.]+)\.github\.io$/);
   if(!m) return {};
-  var owner=m[1];
-  var seg=path.split("/").filter(Boolean)[0];
-  // owner.github.io 直下で公開している場合、リポジトリ名は owner.github.io になる
-  var repo=(seg&&seg.indexOf(".")<0)?seg:(owner+".github.io");
-  return {owner:owner, repo:repo};
+  return {owner:m[1], repo:DATA_REPO_NAME};
 }
 
 /* GitHubのContents APIでdata.jsonを作成/更新する */
