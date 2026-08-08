@@ -165,7 +165,7 @@ html[data-theme="dark"] .fab{background:var(--ink);color:#101317}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .field{display:block;margin:0 0 12px}
 .field span{display:block;font-size:11.5px;letter-spacing:.1em;color:var(--ink-2);margin-bottom:4px}
-input[type=text],input[type=date],input[type=time],select,textarea{
+input[type=text],input[type=date],input[type=time],input[type=password],select,textarea{
   width:100%;background:var(--paper);border:1px solid var(--rule);border-radius:2px;padding:9px 10px
 }
 html[data-theme="dark"] input,html[data-theme="dark"] select,html[data-theme="dark"] textarea{background:#0C0F13}
@@ -586,19 +586,39 @@ function renderSettings(){
 
   // Discord毎朝ダイジェスト（GitHubへの同期）
   var s5=h('<div class="sec"><h3>Discordへ毎朝連絡</h3>'+
-    '<p>GitHub Actionsを設定すると、毎朝リポジトリの data.json を読んでDiscordへ届きます（設定方法はREADME）。ここではその data.json をリポジトリへ送るだけです。トークンはこの端末のブラウザにだけ保存され、リポジトリには書き込まれません。</p>'+
+    '<p>GitHub Actionsが毎朝リポジトリの data.json を読んでDiscordへ送ります。ここではその data.json をリポジトリへ送るだけです。ユーザー名とリポジトリ名はこのページのURLから自動入力されます。</p>'+
     '<div class="two"><label class="field"><span>GitHubユーザー名 / Organization</span><input type="text" id="ghOwner" placeholder="例：taro-yamada"></label>'+
     '<label class="field"><span>リポジトリ名</span><input type="text" id="ghRepo" placeholder="例：deadline-tracker"></label></div>'+
     '<label class="field"><span>ブランチ</span><input type="text" id="ghBranch" value="main"></label>'+
     '<label class="field"><span>Personal Access Token（Contents: Read and write）</span><input type="password" id="ghToken" placeholder="このリポジトリだけに絞ったトークンを推奨"></label>'+
+    '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
+    '<input type="checkbox" id="ghRemember" style="width:auto">この端末にトークンを保存して次回から入力を省く</label>'+
     '<div class="row"></div><p id="ghStatus" style="margin-top:8px"></p></div>');
   var g=function(id){ return s5.querySelector("#"+id); };
   var saved=JSON.parse(store.get("gh-sync")||"{}");
-  g("ghOwner").value=saved.owner||""; g("ghRepo").value=saved.repo||""; g("ghBranch").value=saved.branch||"main";
+  var guess=guessRepoFromURL();
+  g("ghOwner").value=saved.owner||guess.owner||"";
+  g("ghRepo").value=saved.repo||guess.repo||"";
+  g("ghBranch").value=saved.branch||"main";
+  g("ghToken").value=store.get("gh-token")||"";
+  g("ghRemember").checked=!!store.get("gh-token");
+  if(!saved.owner&&guess.owner) s5.querySelector("#ghStatus").textContent="このページのURLから "+guess.owner+"/"+guess.repo+" を自動入力しました。";
   var bSync=h('<button class="btn fill">GitHubに同期する</button>');
   bSync.onclick=function(){ syncToGitHub(g,s5); };
   s5.querySelector(".row").appendChild(bSync);
   main.appendChild(s5);
+}
+
+/* 公開URL（例：bibi257.github.io/deadline-tracker/）からowner/repoを推定する */
+function guessRepoFromURL(){
+  var host=location.hostname, path=location.pathname;
+  var m=host.match(/^([^.]+)\.github\.io$/);
+  if(!m) return {};
+  var owner=m[1];
+  var seg=path.split("/").filter(Boolean)[0];
+  // owner.github.io 直下で公開している場合、リポジトリ名は owner.github.io になる
+  var repo=(seg&&seg.indexOf(".")<0)?seg:(owner+".github.io");
+  return {owner:owner, repo:repo};
 }
 
 /* GitHubのContents APIでdata.jsonを作成/更新する */
@@ -612,7 +632,9 @@ function syncToGitHub(g,s5){
       branch=g("ghBranch").value.trim()||"main", token=g("ghToken").value.trim();
   var statusEl=s5.querySelector("#ghStatus");
   if(!owner||!repo||!token){ statusEl.textContent="ユーザー名・リポジトリ名・トークンをすべて入力してください。"; return; }
-  store.set("gh-sync", JSON.stringify({owner:owner,repo:repo,branch:branch})); // トークンは保存しない
+  store.set("gh-sync", JSON.stringify({owner:owner,repo:repo,branch:branch}));
+  if(g("ghRemember").checked){ store.set("gh-token", token); }
+  else if(hasLS){ try{ localStorage.removeItem("gh-token"); }catch(e){} }
   statusEl.textContent="同期しています…";
   var api="https://api.github.com/repos/"+owner+"/"+repo+"/contents/data.json";
   var payload={items:db.items, categories:db.categories};
