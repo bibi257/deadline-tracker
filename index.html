@@ -27,6 +27,7 @@
   --blue:#1F46C8;
   --amber:#B87400;
   --mark:#E4EF5C;
+  --routine:#0E8F7E;
   --radius:3px;
   --shadow:0 1px 0 rgba(20,24,32,.06), 0 2px 10px rgba(20,24,32,.05);
 }
@@ -41,6 +42,7 @@ html[data-theme="dark"]{
   --blue:#7EA0FF;
   --amber:#E2A33C;
   --mark:#B9C93A;
+  --routine:#3FC9B4;
   --shadow:none;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -144,6 +146,10 @@ header{
 .dot.over,.dot.today{background:var(--red)}.dot.soon{background:var(--amber)}.dot.near{background:var(--blue)}
 .dot.done{background:var(--rule)}
 .dot.span{opacity:.35;height:3px}
+.dot.routine{background:var(--routine)}
+.card.routine{border-left-color:var(--routine)}
+.card.routine .rail i{background:var(--routine)}
+.card.routine .left .n{color:var(--routine)}
 .sel-title{margin:16px 0 6px;font-size:12px;letter-spacing:.12em;color:var(--ink-3)}
 
 /* ---- misc ---- */
@@ -216,6 +222,7 @@ html[data-theme="dark"] .toast{color:#101317}
     </div>
     <nav class="tabs" role="tablist">
       <button class="tab" role="tab" data-view="list" aria-selected="true">一覧</button>
+      <button class="tab" role="tab" data-view="rep" aria-selected="false">定期予定</button>
       <button class="tab" role="tab" data-view="cal" aria-selected="false">カレンダー</button>
       <button class="tab" role="tab" data-view="done" aria-selected="false">完了</button>
       <button class="tab" role="tab" data-view="set" aria-selected="false">設定</button>
@@ -418,9 +425,16 @@ function render(){
   var now=new Date();
   document.getElementById("todayLabel").textContent =
     now.getFullYear()+"年"+(now.getMonth()+1)+"月"+now.getDate()+"日（"+DOW[now.getDay()]+"）";
-  var soon=activeItems().filter(function(i){ var d=new Date(i.due); return d>=now && daysBetween(now,d)<=7; });
-  var over=activeItems().filter(function(i){ return new Date(i.due)<now; });
-  if(over.length){ document.getElementById("cntNum").textContent=over.length; document.getElementById("cntLabel").textContent="期限切れ"; }
+  // ヘッダーの件数は締切のみを数える（定期予定は常時あるため除く）
+  var onceOnly=activeItems().filter(function(i){ return !isRepeating(i); });
+  var soon=onceOnly.filter(function(i){ var d=new Date(i.due); return d>=now && daysBetween(now,d)<=7; });
+  var over=onceOnly.filter(function(i){ return new Date(i.due)<now; });
+  if(view==="rep"){
+    var reps=activeItems().filter(isRepeating);
+    document.getElementById("cntNum").textContent=reps.length;
+    document.getElementById("cntLabel").textContent="定期予定";
+  }
+  else if(over.length){ document.getElementById("cntNum").textContent=over.length; document.getElementById("cntLabel").textContent="期限切れ"; }
   else { document.getElementById("cntNum").textContent=soon.length; document.getElementById("cntLabel").textContent="7日以内"; }
 
   document.querySelectorAll(".tab").forEach(function(t){ t.setAttribute("aria-selected", t.dataset.view===view?"true":"false"); });
@@ -429,6 +443,7 @@ function render(){
   main.innerHTML="";
   if(!hasLS) main.appendChild(h('<div class="notice">この画面ではブラウザの保存領域が使えないため、入力内容は再読み込みで消えます。GitHub Pages に置けば端末内に保存されます。</div>'));
   if(view==="list") renderList();
+  else if(view==="rep") renderRepeat();
   else if(view==="cal") renderCal();
   else if(view==="done") renderDone();
   else renderSettings();
@@ -451,7 +466,7 @@ function cardOf(it){
   var created=it.created?new Date(it.created):new Date(d.getTime()-14*86400000);
   var total=Math.max(1, d-created), pass=Math.min(total, Math.max(0, Date.now()-created));
   var pct=it.done?100:Math.round(pass/total*100);
-  var el=h('<article class="card '+st+(it.done?" done":"")+'">'+
+  var el=h('<article class="card '+st+(isRepeating(it)?" routine":"")+(it.done?" done":"")+'">'+
     '<div class="left"><b class="n num">'+escHtml(r.n)+'</b><span class="u">'+escHtml(r.u)+'</span></div>'+
     '<div class="body">'+
       '<h3 class="title">'+escHtml(it.title)+'</h3>'+
@@ -476,9 +491,12 @@ function cardOf(it){
   return el;
 }
 
+function isRepeating(it){ return !!(it.rep&&it.rep!=="none"); }
+
 function renderList(){
   main.appendChild(filterBar());
-  var list=activeItems().filter(function(i){ return filter==="ALL"||i.cat===filter; }).sort(sortByDue);
+  // 繰り返しは「定期予定」タブに分けているため、ここでは除く
+  var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&!isRepeating(i); }).sort(sortByDue);
   if(!list.length){
     main.appendChild(h('<div class="empty" style="margin-top:18px"><b>登録された締切はありません</b>下のボタンから最初の締切を登録してください。</div>'));
     return;
@@ -500,6 +518,25 @@ function renderList(){
   });
   var all=h('<div style="margin:20px 0 0"><button class="act primary" style="padding:8px 14px">表示中の締切をまとめてカレンダーへ書き出す</button></div>');
   all.querySelector("button").onclick=function(){ downloadICS(list,"deadlines"); };
+  main.appendChild(all);
+}
+
+function renderRepeat(){
+  main.appendChild(filterBar());
+  var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&isRepeating(i); }).sort(sortByDue);
+  if(!list.length){
+    main.appendChild(h('<div class="empty" style="margin-top:18px"><b>定期予定はありません</b>締切を登録するとき「繰り返し」を選ぶと、ここにまとまります。</div>'));
+    return;
+  }
+  var labels={weekly:"毎週",biweekly:"隔週",monthly:"毎月"};
+  ["weekly","biweekly","monthly"].forEach(function(rep){
+    var arr=list.filter(function(i){ return i.rep===rep; });
+    if(!arr.length) return;
+    main.appendChild(h('<div class="group-label">'+labels[rep]+'</div>'));
+    arr.forEach(function(i){ main.appendChild(cardOf(i)); });
+  });
+  var all=h('<div style="margin:20px 0 0"><button class="act primary" style="padding:8px 14px">定期予定をまとめてカレンダーへ書き出す</button></div>');
+  all.querySelector("button").onclick=function(){ downloadICS(list,"routines"); };
   main.appendChild(all);
 }
 
@@ -548,8 +585,9 @@ function renderCal(){
     var hit=hitsOn(key);
     hit.slice(0,3).forEach(function(i){
       var isDue=(toLocalISO(new Date(i.due))===key);
-      // 期間の途中は薄い帯、締切当日は通常のドットで区別する
-      day.appendChild(h('<span class="dot '+(i.done?"done":statusOf(i))+(isDue?"":" span")+'"></span>'));
+      // 定期予定は緑、それ以外は緊急度の色。期間の途中は薄い帯にする
+      var cls=i.done?"done":(isRepeating(i)?"routine":statusOf(i));
+      day.appendChild(h('<span class="dot '+cls+(isDue?"":" span")+'"></span>'));
     });
     (function(key){ day.onclick=function(){ selDay=(selDay===key?null:key); render(); }; })(key);
     grid.appendChild(day);
