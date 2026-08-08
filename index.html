@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- ブラウザがHTMLを保持し続けないようにする（更新をすぐ反映させるため） -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>締切トラッカー</title>
 <meta name="description" content="課題・記事の締切を管理して、iPhoneのカレンダーに通知を渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -941,6 +945,29 @@ function toast(msg){
   clearTimeout(toastTimer); toastTimer=setTimeout(function(){ toastEl.classList.remove("on"); },2600);
 }
 
+/* ========== 更新の自動反映 ==========
+   GitHub Pagesは古いHTMLを長く保持することがあるため、
+   起動時と復帰時にサーバー側の更新を確認し、変わっていれば読み直す */
+var APP_BUILD=null;
+function checkForUpdate(){
+  if(location.protocol==="file:") return;
+  fetch(location.pathname+"?_="+Date.now(),{cache:"no-store"})
+    .then(function(res){ return res.ok?res.text():null; })
+    .then(function(html){
+      if(!html) return;
+      // ファイル内容の長さを簡易な版番号として使う
+      var build=html.length;
+      if(APP_BUILD===null){ APP_BUILD=build; return; }
+      if(build!==APP_BUILD){
+        APP_BUILD=build;
+        toast("新しい版が見つかりました。読み直します…");
+        setTimeout(function(){ location.reload(); },1200);
+      }
+    })
+    .catch(function(){});
+}
+document.addEventListener("visibilitychange",function(){ if(!document.hidden) checkForUpdate(); });
+
 /* ========== 起動 ========== */
 document.querySelectorAll(".tab").forEach(function(t){
   t.onclick=function(){ view=t.dataset.view; window.scrollTo(0,0); render(); };
@@ -948,6 +975,8 @@ document.querySelectorAll(".tab").forEach(function(t){
 document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
 load(); applyTheme(); render();
 setInterval(render, 60000); // 残り時間を更新
+checkForUpdate();
+setInterval(checkForUpdate, 10*60000); // 10分ごとに更新を確認
 })();
 </script>
 </body>
