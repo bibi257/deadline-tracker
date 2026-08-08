@@ -583,6 +583,62 @@ function renderSettings(){
   main.appendChild(s4);
 
   main.appendChild(h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p></div>'));
+
+  // Discord毎朝ダイジェスト（GitHubへの同期）
+  var s5=h('<div class="sec"><h3>Discordへ毎朝連絡</h3>'+
+    '<p>GitHub Actionsを設定すると、毎朝リポジトリの data.json を読んでDiscordへ届きます（設定方法はREADME）。ここではその data.json をリポジトリへ送るだけです。トークンはこの端末のブラウザにだけ保存され、リポジトリには書き込まれません。</p>'+
+    '<div class="two"><label class="field"><span>GitHubユーザー名 / Organization</span><input type="text" id="ghOwner" placeholder="例：taro-yamada"></label>'+
+    '<label class="field"><span>リポジトリ名</span><input type="text" id="ghRepo" placeholder="例：deadline-tracker"></label></div>'+
+    '<label class="field"><span>ブランチ</span><input type="text" id="ghBranch" value="main"></label>'+
+    '<label class="field"><span>Personal Access Token（Contents: Read and write）</span><input type="password" id="ghToken" placeholder="このリポジトリだけに絞ったトークンを推奨"></label>'+
+    '<div class="row"></div><p id="ghStatus" style="margin-top:8px"></p></div>');
+  var g=function(id){ return s5.querySelector("#"+id); };
+  var saved=JSON.parse(store.get("gh-sync")||"{}");
+  g("ghOwner").value=saved.owner||""; g("ghRepo").value=saved.repo||""; g("ghBranch").value=saved.branch||"main";
+  var bSync=h('<button class="btn fill">GitHubに同期する</button>');
+  bSync.onclick=function(){ syncToGitHub(g,s5); };
+  s5.querySelector(".row").appendChild(bSync);
+  main.appendChild(s5);
+}
+
+/* GitHubのContents APIでdata.jsonを作成/更新する */
+function utf8ToBase64(str){
+  var bytes=new TextEncoder().encode(str), bin="";
+  bytes.forEach(function(b){ bin+=String.fromCharCode(b); });
+  return btoa(bin);
+}
+function syncToGitHub(g,s5){
+  var owner=g("ghOwner").value.trim(), repo=g("ghRepo").value.trim(),
+      branch=g("ghBranch").value.trim()||"main", token=g("ghToken").value.trim();
+  var statusEl=s5.querySelector("#ghStatus");
+  if(!owner||!repo||!token){ statusEl.textContent="ユーザー名・リポジトリ名・トークンをすべて入力してください。"; return; }
+  store.set("gh-sync", JSON.stringify({owner:owner,repo:repo,branch:branch})); // トークンは保存しない
+  statusEl.textContent="同期しています…";
+  var api="https://api.github.com/repos/"+owner+"/"+repo+"/contents/data.json";
+  var payload={items:db.items, categories:db.categories};
+  var content=utf8ToBase64(JSON.stringify(payload,null,2));
+  var headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"};
+
+  fetch(api+"?ref="+encodeURIComponent(branch),{headers:headers})
+    .then(function(res){
+      if(res.status===404) return null; // まだ無い＝新規作成
+      if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
+      return res.json();
+    })
+    .then(function(existing){
+      var body={ message:"締切データを同期（"+new Date().toLocaleString("ja-JP")+"）",
+                 content:content, branch:branch };
+      if(existing&&existing.sha) body.sha=existing.sha;
+      return fetch(api,{method:"PUT",headers:Object.assign({"Content-Type":"application/json"},headers),body:JSON.stringify(body)});
+    })
+    .then(function(res){
+      if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
+      statusEl.textContent="同期しました。次の朝のダイジェストから反映されます。";
+      toast("GitHubに同期しました");
+    })
+    .catch(function(err){
+      statusEl.textContent="同期に失敗しました："+err.message+"（トークンの権限・リポジトリ名を確認してください）";
+    });
 }
 
 /* ========== 登録・編集 ========== */
