@@ -641,17 +641,32 @@ function syncToGitHub(g,s5){
   var content=utf8ToBase64(JSON.stringify(payload,null,2));
   var headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"};
 
-  fetch(api+"?ref="+encodeURIComponent(branch),{headers:headers})
+  // 現在のsha(ファイルの版番号)を取得する。キャッシュされた古いshaを送ると409になるため無効化する
+  function fetchSha(){
+    return fetch(api+"?ref="+encodeURIComponent(branch)+"&_="+Date.now(),
+                 {headers:headers, cache:"no-store"})
+      .then(function(res){
+        if(res.status===404) return null; // まだ無い＝新規作成
+        if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
+        return res.json().then(function(j){ return j.sha; });
+      });
+  }
+  function put(sha){
+    var body={ message:"締切データを同期（"+new Date().toLocaleString("ja-JP")+"）",
+               content:content, branch:branch };
+    if(sha) body.sha=sha;
+    return fetch(api,{method:"PUT",
+      headers:Object.assign({"Content-Type":"application/json"},headers),
+      body:JSON.stringify(body)});
+  }
+
+  fetchSha()
+    .then(put)
     .then(function(res){
-      if(res.status===404) return null; // まだ無い＝新規作成
-      if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
-      return res.json();
-    })
-    .then(function(existing){
-      var body={ message:"締切データを同期（"+new Date().toLocaleString("ja-JP")+"）",
-                 content:content, branch:branch };
-      if(existing&&existing.sha) body.sha=existing.sha;
-      return fetch(api,{method:"PUT",headers:Object.assign({"Content-Type":"application/json"},headers),body:JSON.stringify(body)});
+      if(res.status===409){ // 版が競合したら最新shaを取り直して1度だけやり直す
+        return fetchSha().then(put);
+      }
+      return res;
     })
     .then(function(res){
       if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
@@ -659,7 +674,13 @@ function syncToGitHub(g,s5){
       toast("GitHubに同期しました");
     })
     .catch(function(err){
-      statusEl.textContent="同期に失敗しました："+err.message+"（トークンの権限・リポジトリ名を確認してください）";
+      var m=err.message||"";
+      var hint="";
+      if(/does not match|conflict/i.test(m)) hint="別の端末から同期された可能性があります。もう一度押してください。";
+      else if(/Bad credentials|401/i.test(m)) hint="トークンが正しくないか、期限切れです。";
+      else if(/Not Found|404/i.test(m)) hint="リポジトリ名か、トークンのRepository accessの設定を確認してください。";
+      else if(/403|permission|Resource not accessible/i.test(m)) hint="トークンの権限（Contents: Read and write）を確認してください。";
+      statusEl.textContent="同期に失敗しました："+m+(hint?"　→ "+hint:"");
     });
 }
 
