@@ -83,8 +83,7 @@ header{
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
 
 /* ---- filter ---- */
-.filters{display:flex;gap:6px;overflow-x:auto;padding:12px 0 2px;scrollbar-width:none}
-.filters::-webkit-scrollbar{display:none}
+.filters{display:flex;flex-wrap:wrap;gap:6px;padding:12px 0 2px}
 .chip{
   border:1px solid var(--rule);background:var(--card);color:var(--ink-2);
   border-radius:999px;padding:4px 12px;font-size:12.5px;white-space:nowrap
@@ -246,13 +245,16 @@ html[data-theme="dark"] .toast{color:#101317}
     <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
       <input type="checkbox" id="fSpan" style="width:auto">何日かにまたがる予定にする（試験期間・合宿など）
     </label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
+      <input type="checkbox" id="fAllDay" style="width:auto">終日（時刻を決めない）
+    </label>
     <div class="two" id="startRow" style="display:none">
       <label class="field"><span>開始日</span><input type="date" id="fStart"></label>
-      <label class="field"><span>開始時刻</span><input type="time" id="fStartTime" value="09:00"></label>
+      <label class="field startTimeCell"><span>開始時刻</span><input type="time" id="fStartTime" value="09:00"></label>
     </div>
     <div class="two">
       <label class="field"><span id="dueLabel">締切日</span><input type="date" id="fDate" required></label>
-      <label class="field"><span>時刻</span><input type="time" id="fTime" value="23:59" required></label>
+      <label class="field dueTimeCell"><span>時刻</span><input type="time" id="fTime" value="09:00" required></label>
     </div>
     <div class="two">
       <label class="field"><span>カテゴリ</span><select id="fCat"></select></label>
@@ -308,12 +310,16 @@ function parseItemDate(it){ return new Date(it.due); }
 function startOfDay(d){ return new Date(d.getFullYear(),d.getMonth(),d.getDate()); }
 function daysBetween(a,b){ return Math.round((startOfDay(b)-startOfDay(a))/86400000); }
 var DOW=["日","月","火","水","木","金","土"];
-function fmtDue(d){
-  return (d.getMonth()+1)+"/"+d.getDate()+"（"+DOW[d.getDay()]+"） "+pad(d.getHours())+":"+pad(d.getMinutes());
+/* 残り日数の基準になる日時。期間つきの予定は「開始日」までを数える */
+function refDate(it){ return it.start?new Date(it.start):parseItemDate(it); }
+
+function fmtDue(d,allDay){
+  var s=(d.getMonth()+1)+"/"+d.getDate()+"（"+DOW[d.getDay()]+"）";
+  return allDay?s:(s+" "+pad(d.getHours())+":"+pad(d.getMinutes()));
 }
 function statusOf(it){
-  var now=new Date(), d=parseItemDate(it);
-  if(d<now) return "over";
+  var now=new Date(), d=refDate(it);
+  if(parseItemDate(it)<now) return "over"; // 終了済みかどうかは締切で判定する
   var n=daysBetween(now,d);
   if(n<=0) return "today";
   if(n<=3) return "soon";
@@ -321,17 +327,19 @@ function statusOf(it){
   return "far";
 }
 function remainText(it){
-  var now=new Date(), d=parseItemDate(it);
-  if(d<now){
-    var od=daysBetween(d,now);
+  var now=new Date(), d=refDate(it), due=parseItemDate(it);
+  if(due<now){
+    var od=daysBetween(due,now);
     return {n:od===0?"—":od, u:od===0?"期限切れ":"日 超過"};
   }
   var n=daysBetween(now,d);
+  if(n<0) return {n:"—", u:"進行中"};  // 期間の途中
   if(n===0){
+    if(it.allDay) return {n:"今日", u:it.start?"開始":"締切"};
     var h=Math.max(0,Math.floor((d-now)/3600000));
     return {n:h, u:"時間後・今日"};
   }
-  return {n:n, u:"日後"};
+  return {n:n, u:it.start?"日後に開始":"日後"};
 }
 
 /* ========== .ics 生成 ========== */
@@ -340,6 +348,7 @@ function utc(d){
   return d.getUTCFullYear()+pad(d.getUTCMonth()+1)+pad(d.getUTCDate())+"T"+
          pad(d.getUTCHours())+pad(d.getUTCMinutes())+pad(d.getUTCSeconds())+"Z";
 }
+function dateOnly(d){ return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate()); }
 function fold(line){ // RFC5545: 1行75オクテット以内。日本語があるのでバイト数で折る
   var out="", cur="", b=0;
   for(var i=0;i<line.length;i++){
@@ -363,23 +372,41 @@ function relAlarm(minutesBefore,label,relatedEnd){
 }
 function veventOf(it){
   var due=parseItemDate(it);
-  // 期間指定があれば開始〜締切。無い場合は締切の30分前から締切までとし、
-  // 締切時刻が予定の「終了」に来るようにする（日をまたいで見えるのを防ぐ）
   var begin=it.start?new Date(it.start):new Date(due.getTime()-30*60000);
   var end=due;
   var L=["BEGIN:VEVENT",
     "UID:"+it.id+"@deadline-tracker",
     "DTSTAMP:"+utc(new Date()),
-    "SEQUENCE:"+(it.seq||0),
-    "DTSTART:"+utc(begin),
-    "DTEND:"+utc(end),
-    "SUMMARY:"+esc(it.title),
-    "CATEGORIES:"+esc(it.cat||"その他")];
+    "SEQUENCE:"+(it.seq||0)];
+  if(it.allDay){
+    // 終日予定。DTENDは翌日を指す決まりなので1日足す
+    var s=it.start?new Date(it.start):due;
+    var e=new Date(due.getFullYear(),due.getMonth(),due.getDate()+1);
+    L.push("DTSTART;VALUE=DATE:"+dateOnly(s));
+    L.push("DTEND;VALUE=DATE:"+dateOnly(e));
+  } else {
+    L.push("DTSTART:"+utc(begin));
+    L.push("DTEND:"+utc(end));
+  }
+  L.push("SUMMARY:"+esc(it.title));
+  L.push("CATEGORIES:"+esc(it.cat||"その他"));
   if(it.memo) L.push("DESCRIPTION:"+esc(it.memo));
   var repeating=!!(it.rep&&it.rep!=="none");
   if(repeating){
     var freq={weekly:"FREQ=WEEKLY",biweekly:"FREQ=WEEKLY;INTERVAL=2",monthly:"FREQ=MONTHLY"}[it.rep];
     if(freq) L.push("RRULE:"+freq+(it.repCount>0?";COUNT="+it.repCount:""));
+    // 取りやめた回はEXDATEで除外する
+    if(it.skip&&it.skip.length){
+      it.skip.forEach(function(k){
+        var parts=k.split("-");
+        if(it.allDay){
+          L.push("EXDATE;VALUE=DATE:"+parts.join(""));
+        } else {
+          var ex=new Date(+parts[0],+parts[1]-1,+parts[2],due.getHours(),due.getMinutes(),0);
+          L.push("EXDATE:"+utc(ex));
+        }
+      });
+    }
   }
 
   if(repeating){
@@ -475,7 +502,8 @@ function cardOf(it){
     '<div class="body">'+
       '<h3 class="title">'+escHtml(it.title)+'</h3>'+
       '<div class="meta"><span class="cat">'+escHtml(it.cat||"その他")+'</span><span class="num">'+
-      escHtml(it.start?(fmtDue(new Date(it.start))+" 〜 "+fmtDue(d)):fmtDue(d))+'</span>'+
+      escHtml(it.start?(fmtDue(new Date(it.start),it.allDay)+" 〜 "+fmtDue(d,it.allDay)):fmtDue(d,it.allDay))+'</span>'+
+      (it.allDay?'<span class="cat">終日</span>':"")+
       (it.rep&&it.rep!=="none"?'<span class="cat">'+({weekly:"毎週",biweekly:"隔週",monthly:"毎月"}[it.rep])+
         (it.repCount>0?" 残"+it.repCount+"回":"")+'</span>':"")+'</div>'+
       (it.memo?'<p class="memo">'+escHtml(it.memo)+'</p>':"")+
@@ -486,6 +514,13 @@ function cardOf(it){
   function add(label,cls,fn){ var b=h('<button class="act '+(cls||"")+'">'+label+'</button>'); b.onclick=fn; acts.appendChild(b); }
   if(!it.done){
     add("完了にする","",function(){ complete(it); });
+    // 繰り返しの特定の回だけ取りやめる（カレンダーから展開された回に出す）
+    if(isRepeating(it)){
+      var key=toLocalISO(parseItemDate(it));
+      add("この回は休み","",function(){
+        if(confirm(key+" の回だけ取りやめます。よろしいですか？")) skipOccurrence(it.id, key);
+      });
+    }
     add("カレンダーへ","primary",function(){ downloadICS([it], it.title); });
     add("編集","",function(){ openDialog(it); });
   } else {
@@ -537,7 +572,21 @@ function renderRepeat(){
     var arr=list.filter(function(i){ return i.rep===rep; });
     if(!arr.length) return;
     main.appendChild(h('<div class="group-label">'+labels[rep]+'</div>'));
-    arr.forEach(function(i){ main.appendChild(cardOf(i)); });
+    arr.forEach(function(i){
+      main.appendChild(cardOf(i));
+      // 取りやめた回があれば一覧を出し、戻せるようにする
+      if(i.skip&&i.skip.length){
+        var box=h('<div style="margin:-4px 0 12px;padding:8px 12px;border:1px solid var(--rule);border-radius:2px;background:var(--card)">'+
+          '<div style="font-size:11.5px;color:var(--ink-3);letter-spacing:.1em;margin-bottom:6px">取りやめた回</div>'+
+          '<div class="row"></div></div>');
+        i.skip.slice().sort().forEach(function(k){
+          var b=h('<button class="act">'+escHtml(k)+' を戻す</button>');
+          b.onclick=(function(id,key){ return function(){ unskipOccurrence(id,key); }; })(i.id,k);
+          box.querySelector(".row").appendChild(b);
+        });
+        main.appendChild(box);
+      }
+    });
   });
   var all=h('<div style="margin:20px 0 0"><button class="act primary" style="padding:8px 14px">定期予定をまとめてカレンダーへ書き出す</button></div>');
   all.querySelector("button").onclick=function(){ downloadICS(list,"routines"); };
@@ -865,6 +914,7 @@ function openDialog(item){
     document.getElementById("fRep").value=item.rep||"none";
     document.getElementById("fRepCount").value=String(item.repCount==null?15:item.repCount);
     document.getElementById("fMemo").value=item.memo||"";
+    document.getElementById("fAllDay").checked=!!item.allDay;
     var hasStart=!!item.start;
     document.getElementById("fSpan").checked=hasStart;
     if(hasStart){
@@ -876,7 +926,7 @@ function openDialog(item){
     dlgForm.reset();
     var base=selDay?new Date(selDay+"T00:00:00"):new Date();
     document.getElementById("fDate").value=toLocalISO(base);
-    document.getElementById("fTime").value="23:59";
+    document.getElementById("fTime").value="09:00";
     document.getElementById("fStart").value=toLocalISO(base);
     document.getElementById("fStartTime").value="09:00";
     document.getElementById("fRepCount").value="15";
@@ -893,21 +943,32 @@ function syncDialogRows(){
   document.getElementById("dueLabel").textContent=span?"終了日":"締切日";
   var rep=document.getElementById("fRep").value;
   document.getElementById("repCountRow").style.display=(rep==="none")?"none":"";
+  // 終日のときは時刻欄を隠す
+  var allDay=document.getElementById("fAllDay").checked;
+  var dueCell=document.querySelector(".dueTimeCell"), startCell=document.querySelector(".startTimeCell");
+  dueCell.style.display=allDay?"none":"";
+  startCell.style.display=allDay?"none":"";
+  document.getElementById("fTime").required=!allDay;
 }
 document.getElementById("fSpan").addEventListener("change",syncDialogRows);
+document.getElementById("fAllDay").addEventListener("change",syncDialogRows);
 document.getElementById("fRep").addEventListener("change",syncDialogRows);
 
 dlgForm.addEventListener("submit",function(e){
   var val=e.submitter?e.submitter.value:"save";
   if(val!=="save") return;
   var title=document.getElementById("fTitle").value.trim();
-  var date=document.getElementById("fDate").value, time=document.getElementById("fTime").value||"23:59";
+  var date=document.getElementById("fDate").value;
+  var allDay=document.getElementById("fAllDay").checked;
+  // 終日は内部的に「その日の23:59」を締切として扱い、表示では時刻を出さない
+  var time=allDay?"23:59":(document.getElementById("fTime").value||"09:00");
   if(!title||!date){ e.preventDefault(); return; }
   var due=new Date(date+"T"+time+":00");
 
   var start=null;
   if(document.getElementById("fSpan").checked){
-    var sd=document.getElementById("fStart").value, st=document.getElementById("fStartTime").value||"09:00";
+    var sd=document.getElementById("fStart").value;
+    var st=allDay?"00:00":(document.getElementById("fStartTime").value||"09:00");
     if(sd){
       start=new Date(sd+"T"+st+":00");
       if(start>due){ e.preventDefault(); toast("開始が終了より後になっています"); return; }
@@ -921,6 +982,7 @@ dlgForm.addEventListener("submit",function(e){
       if(i.id!==editingId) return;
       i.title=title; i.due=due.toISOString(); i.cat=document.getElementById("fCat").value;
       i.rep=rep; i.repCount=repCount; i.memo=document.getElementById("fMemo").value.trim();
+      if(allDay) i.allDay=true; else delete i.allDay;
       if(start) i.start=start.toISOString(); else delete i.start;
       i.seq=(i.seq||0)+1;
     });
@@ -933,6 +995,7 @@ dlgForm.addEventListener("submit",function(e){
       done:false, created:new Date().toISOString()
     };
     if(start) it.start=start.toISOString();
+    if(allDay) it.allDay=true;
     db.items.push(it);
     toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
   }
@@ -978,12 +1041,13 @@ function nextOccurrence(d, rep){
 function expandOccurrences(it, fromDate, toDate){
   var out=[];
   if(!it.rep||it.rep==="none"){ out.push(it); return out; }
+  var skip=it.skip||[];  // 「この回だけ休み」にした日（YYYY-MM-DD）
   var d=parseItemDate(it);
   var span=it.start?(d-new Date(it.start)):0;
   var limit=(it.repCount&&it.repCount>0)?it.repCount:60; // 無期限でも60回で打ち切る
   for(var k=0;k<limit;k++){
     if(d>toDate) break;
-    if(d>=fromDate){
+    if(d>=fromDate && skip.indexOf(toLocalISO(d))<0){
       var copy=Object.assign({},it);
       copy.due=d.toISOString();
       if(it.start) copy.start=new Date(d.getTime()-span).toISOString();
@@ -993,6 +1057,27 @@ function expandOccurrences(it, fromDate, toDate){
     d=nextOccurrence(d, it.rep);
   }
   return out;
+}
+
+/* 繰り返しのうち、指定日の回だけを取りやめる */
+function skipOccurrence(id, dateKey){
+  db.items.forEach(function(i){
+    if(i.id!==id) return;
+    i.skip=(i.skip||[]).concat([dateKey]);
+    i.seq=(i.seq||0)+1;
+  });
+  save(); render();
+  toast(dateKey+" の回を取りやめました");
+}
+/* 取りやめを元に戻す */
+function unskipOccurrence(id, dateKey){
+  db.items.forEach(function(i){
+    if(i.id!==id) return;
+    i.skip=(i.skip||[]).filter(function(x){ return x!==dateKey; });
+    i.seq=(i.seq||0)+1;
+  });
+  save(); render();
+  toast(dateKey+" の回を戻しました");
 }
 
 /* ========== テーマ・トースト ========== */
