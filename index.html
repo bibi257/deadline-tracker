@@ -143,6 +143,7 @@ header{
 .dot{height:4px;border-radius:2px;background:var(--ink-3)}
 .dot.over,.dot.today{background:var(--red)}.dot.soon{background:var(--amber)}.dot.near{background:var(--blue)}
 .dot.done{background:var(--rule)}
+.dot.span{opacity:.35;height:3px}
 .sel-title{margin:16px 0 6px;font-size:12px;letter-spacing:.12em;color:var(--ink-3)}
 
 /* ---- misc ---- */
@@ -231,8 +232,15 @@ html[data-theme="dark"] .toast{color:#101317}
   <form method="dialog" class="dlg-in" id="dlgForm">
     <h2 id="dlgTitle">締切を登録</h2>
     <label class="field"><span>タイトル</span><input type="text" id="fTitle" required maxlength="80" placeholder="例：情報理論レポート"></label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
+      <input type="checkbox" id="fSpan" style="width:auto">何日かにまたがる予定にする（試験期間・合宿など）
+    </label>
+    <div class="two" id="startRow" style="display:none">
+      <label class="field"><span>開始日</span><input type="date" id="fStart"></label>
+      <label class="field"><span>開始時刻</span><input type="time" id="fStartTime" value="09:00"></label>
+    </div>
     <div class="two">
-      <label class="field"><span>締切日</span><input type="date" id="fDate" required></label>
+      <label class="field"><span id="dueLabel">締切日</span><input type="date" id="fDate" required></label>
       <label class="field"><span>時刻</span><input type="time" id="fTime" value="23:59" required></label>
     </div>
     <div class="two">
@@ -242,6 +250,13 @@ html[data-theme="dark"] .toast{color:#101317}
         <option value="biweekly">隔週</option><option value="monthly">毎月</option>
       </select></label>
     </div>
+    <label class="field" id="repCountRow" style="display:none"><span>繰り返す回数（初回を含む）</span>
+      <select id="fRepCount">
+        <option value="4">4回</option><option value="8">8回</option>
+        <option value="12">12回</option><option value="15" selected>15回</option>
+        <option value="30">30回</option><option value="0">終わりを決めない</option>
+      </select>
+    </label>
     <label class="field"><span>メモ</span><textarea id="fMemo" maxlength="500" placeholder="提出先・条件など"></textarea></label>
     <div class="dlg-acts">
       <button class="btn" value="cancel" type="submit" formnovalidate>やめる</button>
@@ -329,23 +344,45 @@ function alarm(trigger,label){
   return ["BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:"+esc(label),
           "TRIGGER;VALUE=DATE-TIME:"+utc(trigger),"END:VALARM"];
 }
+/* 繰り返し予定用。絶対時刻だと初回しか鳴らないので、相対時間で指定する。
+   期間ありの予定は終了(=締切)基準、期間なしは開始(=締切)基準にする */
+function relAlarm(minutesBefore,label,relatedEnd){
+  return ["BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:"+esc(label),
+          "TRIGGER"+(relatedEnd?";RELATED=END":"")+":-PT"+minutesBefore+"M","END:VALARM"];
+}
 function veventOf(it){
   var due=parseItemDate(it);
-  var end=new Date(due.getTime()+30*60000);
+  // 期間指定があれば開始〜締切、なければ締切の30分間の予定にする
+  var begin=it.start?new Date(it.start):due;
+  var end=it.start?due:new Date(due.getTime()+30*60000);
   var L=["BEGIN:VEVENT",
     "UID:"+it.id+"@deadline-tracker",
     "DTSTAMP:"+utc(new Date()),
     "SEQUENCE:"+(it.seq||0),
-    "DTSTART:"+utc(due),
+    "DTSTART:"+utc(begin),
     "DTEND:"+utc(end),
-    "SUMMARY:"+esc("【締切】"+it.title),
+    "SUMMARY:"+esc((it.start?"":"【締切】")+it.title),
     "CATEGORIES:"+esc(it.cat||"その他")];
   if(it.memo) L.push("DESCRIPTION:"+esc(it.memo));
-  // 通知3件：1週間前 / 前日 / 当日の指定時刻
-  L=L.concat(alarm(new Date(due.getTime()-7*86400000), it.title+"：あと1週間"));
-  L=L.concat(alarm(new Date(due.getTime()-86400000), it.title+"：明日が締切"));
-  var dayOf=new Date(due.getFullYear(),due.getMonth(),due.getDate(),db.settings.dayHour,0,0);
-  if(dayOf<due) L=L.concat(alarm(dayOf, it.title+"：今日が締切"));
+  var repeating=!!(it.rep&&it.rep!=="none");
+  if(repeating){
+    var freq={weekly:"FREQ=WEEKLY",biweekly:"FREQ=WEEKLY;INTERVAL=2",monthly:"FREQ=MONTHLY"}[it.rep];
+    if(freq) L.push("RRULE:"+freq+(it.repCount>0?";COUNT="+it.repCount:""));
+  }
+
+  if(repeating){
+    // 毎回鳴らすため相対時間で指定する。基準は締切時刻（期間ありなら終了）
+    var relEnd=!!it.start;
+    L=L.concat(relAlarm(7*24*60, it.title+"：あと1週間", relEnd));
+    L=L.concat(relAlarm(24*60,   it.title+"：明日が締切", relEnd));
+    var minsFrom9=(due.getHours()-db.settings.dayHour)*60+due.getMinutes();
+    if(minsFrom9>0) L=L.concat(relAlarm(minsFrom9, it.title+"：今日が締切", relEnd));
+  } else {
+    L=L.concat(alarm(new Date(due.getTime()-7*86400000), it.title+"：あと1週間"));
+    L=L.concat(alarm(new Date(due.getTime()-86400000), it.title+"：明日が締切"));
+    var dayOf=new Date(due.getFullYear(),due.getMonth(),due.getDate(),db.settings.dayHour,0,0);
+    if(dayOf<due) L=L.concat(alarm(dayOf, it.title+"：今日が締切"));
+  }
   L.push("END:VEVENT");
   return L;
 }
@@ -418,8 +455,10 @@ function cardOf(it){
     '<div class="left"><b class="n num">'+escHtml(r.n)+'</b><span class="u">'+escHtml(r.u)+'</span></div>'+
     '<div class="body">'+
       '<h3 class="title">'+escHtml(it.title)+'</h3>'+
-      '<div class="meta"><span class="cat">'+escHtml(it.cat||"その他")+'</span><span class="num">'+escHtml(fmtDue(d))+'</span>'+
-      (it.rep&&it.rep!=="none"?'<span class="cat">'+({weekly:"毎週",biweekly:"隔週",monthly:"毎月"}[it.rep])+'</span>':"")+'</div>'+
+      '<div class="meta"><span class="cat">'+escHtml(it.cat||"その他")+'</span><span class="num">'+
+      escHtml(it.start?(fmtDue(new Date(it.start))+" 〜 "+fmtDue(d)):fmtDue(d))+'</span>'+
+      (it.rep&&it.rep!=="none"?'<span class="cat">'+({weekly:"毎週",biweekly:"隔週",monthly:"毎月"}[it.rep])+
+        (it.repCount>0?" 残"+it.repCount+"回":"")+'</span>':"")+'</div>'+
       (it.memo?'<p class="memo">'+escHtml(it.memo)+'</p>':"")+
       '<div class="rail"><i style="width:'+pct+'%"></i></div>'+
       '<div class="acts"></div>'+
@@ -485,27 +524,46 @@ function renderCal(){
   var grid=h('<div class="grid"></div>');
   DOW.forEach(function(d,i){ grid.appendChild(h('<div class="dow'+(i===0?" sun":i===6?" sat":"")+'">'+d+'</div>')); });
   var first=new Date(y,m,1), start=new Date(y,m,1-first.getDay());
-  var items=db.items.filter(function(i){ return filter==="ALL"||i.cat===filter; });
+  var gridEnd=new Date(start.getFullYear(),start.getMonth(),start.getDate()+41,23,59,59);
+  // 繰り返しは表示範囲ぶんだけ展開する
+  var items=[];
+  db.items.filter(function(i){ return filter==="ALL"||i.cat===filter; })
+    .forEach(function(i){ items=items.concat(expandOccurrences(i, start, gridEnd)); });
   var todayKey=toLocalISO(new Date());
+
+  // その日が「締切日」か「期間の途中」かを判定する
+  function hitsOn(key){
+    return items.filter(function(i){
+      var dueKey=toLocalISO(new Date(i.due));
+      if(dueKey===key) return true;
+      if(!i.start) return false;
+      return key>=toLocalISO(new Date(i.start)) && key<dueKey;
+    });
+  }
+
   for(var k=0;k<42;k++){
     var d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+k);
     var key=toLocalISO(d);
     var day=h('<button class="day'+(d.getMonth()!==m?" out":"")+(key===todayKey?" is-today":"")+(selDay===key?" sel":"")+'"><span class="d">'+d.getDate()+'</span></button>');
-    var hit=items.filter(function(i){ return toLocalISO(new Date(i.due))===key; });
-    hit.slice(0,3).forEach(function(i){ day.appendChild(h('<span class="dot '+(i.done?"done":statusOf(i))+'"></span>')); });
-    (function(key,hasHit){ day.onclick=function(){ selDay=(selDay===key?null:key); render(); }; })(key,hit.length);
+    var hit=hitsOn(key);
+    hit.slice(0,3).forEach(function(i){
+      var isDue=(toLocalISO(new Date(i.due))===key);
+      // 期間の途中は薄い帯、締切当日は通常のドットで区別する
+      day.appendChild(h('<span class="dot '+(i.done?"done":statusOf(i))+(isDue?"":" span")+'"></span>'));
+    });
+    (function(key){ day.onclick=function(){ selDay=(selDay===key?null:key); render(); }; })(key);
     grid.appendChild(day);
   }
   main.appendChild(grid);
 
   if(selDay){
-    var sel=items.filter(function(i){ return toLocalISO(new Date(i.due))===selDay; }).sort(sortByDue);
+    var sel=hitsOn(selDay).sort(sortByDue);
     var dd=new Date(selDay+"T00:00:00");
-    main.appendChild(h('<div class="sel-title">'+(dd.getMonth()+1)+"月"+dd.getDate()+"日（"+DOW[dd.getDay()]+"）の締切"+'</div>'));
+    main.appendChild(h('<div class="sel-title">'+(dd.getMonth()+1)+"月"+dd.getDate()+"日（"+DOW[dd.getDay()]+"）の予定"+'</div>'));
     if(!sel.length) main.appendChild(h('<div class="empty">この日の締切はありません。</div>'));
     else sel.forEach(function(i){ main.appendChild(cardOf(i)); });
   } else {
-    main.appendChild(h('<div class="sel-title">日付をタップすると、その日の締切が出ます</div>'));
+    main.appendChild(h('<div class="sel-title">日付をタップすると、その日の予定が出ます</div>'));
   }
 }
 
@@ -698,15 +756,40 @@ function openDialog(item){
     document.getElementById("fTime").value=pad(d.getHours())+":"+pad(d.getMinutes());
     catSel.value=item.cat||db.categories[0];
     document.getElementById("fRep").value=item.rep||"none";
+    document.getElementById("fRepCount").value=String(item.repCount==null?15:item.repCount);
     document.getElementById("fMemo").value=item.memo||"";
+    var hasStart=!!item.start;
+    document.getElementById("fSpan").checked=hasStart;
+    if(hasStart){
+      var s=new Date(item.start);
+      document.getElementById("fStart").value=toLocalISO(s);
+      document.getElementById("fStartTime").value=pad(s.getHours())+":"+pad(s.getMinutes());
+    }
   } else {
     dlgForm.reset();
-    document.getElementById("fDate").value=toLocalISO(selDay?new Date(selDay+"T00:00:00"):new Date());
+    var base=selDay?new Date(selDay+"T00:00:00"):new Date();
+    document.getElementById("fDate").value=toLocalISO(base);
     document.getElementById("fTime").value="23:59";
+    document.getElementById("fStart").value=toLocalISO(base);
+    document.getElementById("fStartTime").value="09:00";
+    document.getElementById("fRepCount").value="15";
     catSel.value=(filter!=="ALL"&&db.categories.indexOf(filter)>=0)?filter:db.categories[0];
   }
+  syncDialogRows();
   dlg.showModal();
 }
+
+/* チェックや選択に応じて、関係のある入力欄だけを出す */
+function syncDialogRows(){
+  var span=document.getElementById("fSpan").checked;
+  document.getElementById("startRow").style.display=span?"":"none";
+  document.getElementById("dueLabel").textContent=span?"終了日":"締切日";
+  var rep=document.getElementById("fRep").value;
+  document.getElementById("repCountRow").style.display=(rep==="none")?"none":"";
+}
+document.getElementById("fSpan").addEventListener("change",syncDialogRows);
+document.getElementById("fRep").addEventListener("change",syncDialogRows);
+
 dlgForm.addEventListener("submit",function(e){
   var val=e.submitter?e.submitter.value:"save";
   if(val!=="save") return;
@@ -714,22 +797,37 @@ dlgForm.addEventListener("submit",function(e){
   var date=document.getElementById("fDate").value, time=document.getElementById("fTime").value||"23:59";
   if(!title||!date){ e.preventDefault(); return; }
   var due=new Date(date+"T"+time+":00");
+
+  var start=null;
+  if(document.getElementById("fSpan").checked){
+    var sd=document.getElementById("fStart").value, st=document.getElementById("fStartTime").value||"09:00";
+    if(sd){
+      start=new Date(sd+"T"+st+":00");
+      if(start>due){ e.preventDefault(); toast("開始が終了より後になっています"); return; }
+    }
+  }
+  var rep=document.getElementById("fRep").value;
+  var repCount=(rep==="none")?0:parseInt(document.getElementById("fRepCount").value,10);
+
   if(editingId){
     db.items.forEach(function(i){
       if(i.id!==editingId) return;
       i.title=title; i.due=due.toISOString(); i.cat=document.getElementById("fCat").value;
-      i.rep=document.getElementById("fRep").value; i.memo=document.getElementById("fMemo").value.trim();
+      i.rep=rep; i.repCount=repCount; i.memo=document.getElementById("fMemo").value.trim();
+      if(start) i.start=start.toISOString(); else delete i.start;
       i.seq=(i.seq||0)+1;
     });
     toast("更新しました。通知を変えるには.icsを取り込み直してください");
   } else {
-    db.items.push({
+    var it={
       id:"d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
       title:title, due:due.toISOString(), cat:document.getElementById("fCat").value,
-      rep:document.getElementById("fRep").value, memo:document.getElementById("fMemo").value.trim(),
+      rep:rep, repCount:repCount, memo:document.getElementById("fMemo").value.trim(),
       done:false, created:new Date().toISOString()
-    });
-    toast("登録しました");
+    };
+    if(start) it.start=start.toISOString();
+    db.items.push(it);
+    toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
   }
   save(); render();
 });
@@ -737,20 +835,57 @@ dlgForm.addEventListener("submit",function(e){
 function complete(it){
   it.done=true; it.doneAt=new Date().toISOString();
   if(it.rep&&it.rep!=="none"){
-    var d=parseItemDate(it), n=new Date(d);
-    if(it.rep==="weekly") n.setDate(d.getDate()+7);
-    else if(it.rep==="biweekly") n.setDate(d.getDate()+14);
-    else n.setMonth(d.getMonth()+1);
-    db.items.push({
-      id:"d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
-      title:it.title, due:n.toISOString(), cat:it.cat, rep:it.rep, memo:it.memo,
-      done:false, created:new Date().toISOString()
-    });
-    toast("完了。次回（"+fmtDue(n)+"）を作りました");
+    // 繰り返しはカレンダー側で先の回まで展開しているため、ここでは複製しない。
+    // 「この回だけ完了」にすると次回以降が消えるので、締切日を次回へ進める。
+    var n=nextOccurrence(parseItemDate(it), it.rep);
+    var left=(it.repCount||0);
+    if(left===0 || left>1){
+      it.done=false; delete it.doneAt;
+      if(it.start){
+        var span=parseItemDate(it)-new Date(it.start);
+        it.start=new Date(n.getTime()-span).toISOString();
+      }
+      it.due=n.toISOString();
+      if(left>1) it.repCount=left-1;
+      it.seq=(it.seq||0)+1;
+      toast("完了。次回は "+fmtDue(n)+" です");
+    } else {
+      toast("繰り返しの最終回を完了しました");
+    }
   } else {
     toast("完了にしました");
   }
   save(); render();
+}
+
+/* 繰り返し1回分だけ日付を進める */
+function nextOccurrence(d, rep){
+  var n=new Date(d);
+  if(rep==="weekly") n.setDate(d.getDate()+7);
+  else if(rep==="biweekly") n.setDate(d.getDate()+14);
+  else if(rep==="monthly") n.setMonth(d.getMonth()+1);
+  return n;
+}
+
+/* 表示用に、繰り返しの回を指定範囲まで展開する（保存はせず、その場で作る） */
+function expandOccurrences(it, fromDate, toDate){
+  var out=[];
+  if(!it.rep||it.rep==="none"){ out.push(it); return out; }
+  var d=parseItemDate(it);
+  var span=it.start?(d-new Date(it.start)):0;
+  var limit=(it.repCount&&it.repCount>0)?it.repCount:60; // 無期限でも60回で打ち切る
+  for(var k=0;k<limit;k++){
+    if(d>toDate) break;
+    if(d>=fromDate){
+      var copy=Object.assign({},it);
+      copy.due=d.toISOString();
+      if(it.start) copy.start=new Date(d.getTime()-span).toISOString();
+      if(k>0){ copy.occurrence=k; copy.done=false; } // 2回目以降は未完了として扱う
+      out.push(copy);
+    }
+    d=nextOccurrence(d, it.rep);
+  }
+  return out;
 }
 
 /* ========== テーマ・トースト ========== */
