@@ -15,7 +15,6 @@ jobs:
 
       - name: ダイジェストを送信
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # WebhookURL・ユーザーID・対象日数は scripts/send_digest.sh の冒頭に直接書いてある
           DATA_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/data.json
-          WINDOW_DAYS: "7"
         run: bash scripts/send_digest.sh
