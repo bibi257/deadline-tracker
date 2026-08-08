@@ -363,16 +363,17 @@ function relAlarm(minutesBefore,label,relatedEnd){
 }
 function veventOf(it){
   var due=parseItemDate(it);
-  // 期間指定があれば開始〜締切、なければ締切の30分間の予定にする
-  var begin=it.start?new Date(it.start):due;
-  var end=it.start?due:new Date(due.getTime()+30*60000);
+  // 期間指定があれば開始〜締切。無い場合は締切の30分前から締切までとし、
+  // 締切時刻が予定の「終了」に来るようにする（日をまたいで見えるのを防ぐ）
+  var begin=it.start?new Date(it.start):new Date(due.getTime()-30*60000);
+  var end=due;
   var L=["BEGIN:VEVENT",
     "UID:"+it.id+"@deadline-tracker",
     "DTSTAMP:"+utc(new Date()),
     "SEQUENCE:"+(it.seq||0),
     "DTSTART:"+utc(begin),
     "DTEND:"+utc(end),
-    "SUMMARY:"+esc((it.start?"":"【締切】")+it.title),
+    "SUMMARY:"+esc(it.title),
     "CATEGORIES:"+esc(it.cat||"その他")];
   if(it.memo) L.push("DESCRIPTION:"+esc(it.memo));
   var repeating=!!(it.rep&&it.rep!=="none");
@@ -382,12 +383,11 @@ function veventOf(it){
   }
 
   if(repeating){
-    // 毎回鳴らすため相対時間で指定する。基準は締切時刻（期間ありなら終了）
-    var relEnd=!!it.start;
-    L=L.concat(relAlarm(7*24*60, it.title+"：あと1週間", relEnd));
-    L=L.concat(relAlarm(24*60,   it.title+"：明日が締切", relEnd));
+    // 毎回鳴らすため相対時間で指定する。締切＝予定の終了なので終了基準に揃える
+    L=L.concat(relAlarm(7*24*60, it.title+"：あと1週間", true));
+    L=L.concat(relAlarm(24*60,   it.title+"：明日が締切", true));
     var minsFrom9=(due.getHours()-db.settings.dayHour)*60+due.getMinutes();
-    if(minsFrom9>0) L=L.concat(relAlarm(minsFrom9, it.title+"：今日が締切", relEnd));
+    if(minsFrom9>0) L=L.concat(relAlarm(minsFrom9, it.title+"：今日が締切", true));
   } else {
     L=L.concat(alarm(new Date(due.getTime()-7*86400000), it.title+"：あと1週間"));
     L=L.concat(alarm(new Date(due.getTime()-86400000), it.title+"：明日が締切"));
