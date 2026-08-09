@@ -768,24 +768,7 @@ function renderSettings(){
   s4.querySelector(".row").append(bOut,bIn,bIcs,file);
   main.appendChild(s4);
 
-  // Discordへ今すぐ送る
-  var s6=h('<div class="sec"><h3>Discordへ今すぐ送る</h3>'+
-    '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。Webhook URLはDiscordのチャンネル設定 →「連携サービス」→「ウェブフック」から取得できます（入力内容はこの端末にのみ保存されます）。</p>'+
-    '<label class="field"><span>Discord Webhook URL</span><input type="password" id="dcHook" placeholder="https://discord.com/api/webhooks/..."></label>'+
-    '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
-    '<input type="checkbox" id="dcRemember" style="width:auto">この端末に保存して次回から入力を省く</label>'+
-    '<div class="row"></div><p id="dcStatus" style="margin-top:8px"></p></div>');
-  s6.querySelector("#dcHook").value=store.get("dc-hook")||"";
-  s6.querySelector("#dcRemember").checked=!!store.get("dc-hook");
-  var bSend=h('<button class="btn fill">今すぐ送信</button>');
-  bSend.onclick=function(){ sendToDiscord(s6); };
-  s6.querySelector(".row").appendChild(bSend);
-  main.appendChild(s6);
-
-  main.appendChild(h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p>'+
-    '<p><b>iPhoneで取り込むときの注意：</b>Discordなどの添付ファイルを直接タップすると「照会カレンダー」として登録され、更新がすぐ反映されません。長押しして「ファイルに保存」してから開き、「カレンダーに追加」を選んでください。このアプリの「カレンダーへ」ボタンから書き出したファイルは、その心配がありません。</p></div>'));
-
-  // Discord毎朝ダイジェスト（GitHubへの同期）
+  // 端末間の同期（GitHub）
   var s5=h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+
     '<p>締切データ（data.json）をPrivateリポジトリに置き、端末間で受け渡します。<b>同期する</b>でこの端末の内容を送り、<b>読み込む</b>で他の端末から送られた内容を取り込みます。毎朝のDiscord送信も同じデータを見ています。</p>'+
     '<div class="two"><label class="field"><span>GitHubユーザー名 / Organization</span><input type="text" id="ghOwner" placeholder="例：taro-yamada"></label>'+
@@ -810,6 +793,23 @@ function renderSettings(){
   bPull.onclick=function(){ pullFromGitHub(g,s5); };
   s5.querySelector(".row").append(bSync,bPull);
   main.appendChild(s5);
+
+  // Discordへ今すぐ送る
+  var s6=h('<div class="sec"><h3>Discordへ今すぐ送る</h3>'+
+    '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。通知先は上の同期設定を使って、Privateリポジトリの送信スクリプトから自動で読み取ります（別の宛先へ送りたいときだけ、下に直接入力してください）。</p>'+
+    '<label class="field"><span>Discord Webhook URL（空欄でGitHubから自動取得）</span><input type="password" id="dcHook" placeholder="通常は空欄のままで大丈夫です"></label>'+
+    '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
+    '<input type="checkbox" id="dcRemember" style="width:auto">この端末に保存して次回から取得を省く</label>'+
+    '<div class="row"></div><p id="dcStatus" style="margin-top:8px"></p></div>');
+  s6.querySelector("#dcHook").value=store.get("dc-hook")||"";
+  s6.querySelector("#dcRemember").checked=!!store.get("dc-hook");
+  var bSend=h('<button class="btn fill">今すぐ送信</button>');
+  bSend.onclick=function(){ sendToDiscord(s6,s5); };
+  s6.querySelector(".row").appendChild(bSend);
+  main.appendChild(s6);
+
+  main.appendChild(h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p>'+
+    '<p><b>iPhoneで取り込むときの注意：</b>Discordなどの添付ファイルを直接タップすると「照会カレンダー」として登録され、更新がすぐ反映されません。長押しして「ファイルに保存」してから開き、「カレンダーに追加」を選んでください。このアプリの「カレンダーへ」ボタンから書き出したファイルは、その心配がありません。</p></div>'));
 }
 
 /* 締切データの保存先リポジトリ名。Privateリポジトリを推奨（下のREADME参照） */
@@ -847,6 +847,35 @@ function ghHint(m){
   return "";
 }
 
+/* Privateリポジトリの send_digest.sh から Webhook URL を読み取る。
+   同じURLを二度入力しなくて済むようにするための補助 */
+function fetchWebhookFromRepo(g,statusEl){
+  var cfg=ghConfig(g,statusEl);
+  if(!cfg) return Promise.reject(new Error("設定が足りません"));
+  var api="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+
+          "/contents/.github/scripts/send_digest.sh";
+  var rawHeaders=Object.assign({}, cfg.headers, {"Accept":"application/vnd.github.raw"});
+  return fetch(api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(),
+               {headers:rawHeaders, cache:"no-store"})
+    .then(function(res){
+      if(res.status===404) throw new Error("send_digest.sh が見つかりません。");
+      if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
+      return res.text();
+    })
+    .then(function(text){
+      // APIのJSONが返った場合はbase64を展開してから探す
+      if(text.charAt(0)==="{"){
+        try{
+          var j=JSON.parse(text);
+          if(j.content&&j.encoding==="base64") text=base64ToUtf8(j.content);
+        }catch(e){}
+      }
+      var m=text.match(/DEFAULT_WEBHOOK_URL\s*=\s*"([^"]+)"/);
+      if(!m||!m[1]) throw new Error("スクリプト内にWebhook URLが見つかりません。");
+      return m[1];
+    });
+}
+
 /* Discordへ送る本文を組み立てる（毎朝のダイジェストと同じ書式に揃える） */
 function buildDigestText(){
   var now=new Date();
@@ -882,38 +911,61 @@ function buildDigestText(){
   return head+"\n\n"+body;
 }
 
-/* 入力されたWebhookへ、いまの締切一覧を送信する */
-function sendToDiscord(s6){
-  var hook=s6.querySelector("#dcHook").value.trim();
+/* 入力されたWebhookへ、いまの締切一覧を送信する。
+   未入力の場合は、Privateリポジトリのスクリプトから自動で取得する */
+function sendToDiscord(s6,s5){
   var statusEl=s6.querySelector("#dcStatus");
-  if(!hook){ statusEl.textContent="Webhook URLを入力してください。"; return; }
-  if(!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(hook)){
-    statusEl.textContent="DiscordのWebhook URLの形式ではありません。"; return;
-  }
-  if(s6.querySelector("#dcRemember").checked){ store.set("dc-hook", hook); }
-  else if(hasLS){ try{ localStorage.removeItem("dc-hook"); }catch(e){} }
+  var hook=s6.querySelector("#dcHook").value.trim();
 
-  statusEl.textContent="送信しています…";
-  fetch(hook,{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({content:buildDigestText()})
-  })
-  .then(function(res){
-    if(res.ok||res.status===204){
-      statusEl.textContent="送信しました。";
-      toast("Discordへ送信しました");
-    } else if(res.status===429){
-      statusEl.textContent="送信が多すぎます。少し待ってからもう一度お試しください。";
-    } else if(res.status===401||res.status===404){
-      statusEl.textContent="Webhook URLが無効です。Discord側で削除されていないか確認してください。";
-    } else {
-      statusEl.textContent="送信に失敗しました（HTTP "+res.status+"）。";
+  function post(url){
+    statusEl.textContent="送信しています…";
+    return fetch(url,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({content:buildDigestText()})
+    })
+    .then(function(res){
+      if(res.ok||res.status===204){
+        statusEl.textContent="送信しました。";
+        toast("Discordへ送信しました");
+      } else if(res.status===429){
+        statusEl.textContent="送信が多すぎます。少し待ってからもう一度お試しください。";
+      } else if(res.status===401||res.status===404){
+        statusEl.textContent="Webhook URLが無効です。Discord側で削除されていないか確認してください。";
+      } else {
+        statusEl.textContent="送信に失敗しました（HTTP "+res.status+"）。";
+      }
+    })
+    .catch(function(){
+      statusEl.textContent="送信に失敗しました。通信状況を確認してください。";
+    });
+  }
+
+  if(hook){
+    if(!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(hook)){
+      statusEl.textContent="DiscordのWebhook URLの形式ではありません。"; return;
     }
-  })
-  .catch(function(){
-    statusEl.textContent="送信に失敗しました。通信状況を確認してください。";
-  });
+    if(s6.querySelector("#dcRemember").checked){ store.set("dc-hook", hook); }
+    else if(hasLS){ try{ localStorage.removeItem("dc-hook"); }catch(e){} }
+    post(hook);
+    return;
+  }
+
+  // 未入力：上のGitHub設定を使ってスクリプトからURLを取り出す
+  statusEl.textContent="GitHubから通知先を取得しています…";
+  var g=function(id){ return s5.querySelector("#"+id); };
+  fetchWebhookFromRepo(g,statusEl)
+    .then(function(url){
+      store.set("dc-hook", url);           // 次回以降は取得しなくて済む
+      s6.querySelector("#dcHook").value=url;
+      s6.querySelector("#dcRemember").checked=true;
+      return post(url);
+    })
+    .catch(function(err){
+      var m=err.message||"";
+      statusEl.textContent="通知先を取得できませんでした："+m+
+        "　→ 上の同期設定（ユーザー名・リポジトリ名・トークン）を確認するか、Webhook URLを直接入力してください。";
+    });
 }
 
 /* カテゴリの並び順を1つ入れ替える */
