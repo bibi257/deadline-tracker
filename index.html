@@ -7,6 +7,8 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
+<!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
+<meta name="build-stamp" content="2026-08-09 13:35 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="課題・記事の締切を管理して、iPhoneのカレンダーに通知を渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -210,6 +212,8 @@ html[data-theme="dark"] .btn.fill{color:#101317}
 }
 html[data-theme="dark"] .toast{color:#101317}
 .toast.on{opacity:1}
+.toast{display:flex;align-items:center;gap:12px}
+#toastAction{border:1px solid currentColor;background:none;color:inherit;border-radius:2px;padding:3px 10px;font-size:12.5px;white-space:nowrap;flex-shrink:0}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media (max-width:420px){
   .card{grid-template-columns:54px 1fr;gap:10px}
@@ -242,7 +246,7 @@ html[data-theme="dark"] .toast{color:#101317}
 <main class="wrap" id="main"></main>
 
 <button class="fab" id="fabAdd">＋ 締切を登録</button>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast"><span id="toastMsg"></span><button id="toastAction" style="display:none"></button></div>
 
 <dialog id="dlg">
   <form method="dialog" class="dlg-in" id="dlgForm">
@@ -448,7 +452,7 @@ function downloadICS(items,name){
 }
 
 /* ========== 状態 ========== */
-var view="list", filter="ALL", calRef=new Date(), selDay=null, editingId=null;
+var view="list", filter="ALL", calRef=new Date(), selDay=null, editingId=null, searchKw="";
 var main=document.getElementById("main");
 
 function activeItems(){ return db.items.filter(function(i){ return !i.done; }); }
@@ -550,18 +554,69 @@ function cardOf(it){
   } else {
     add("戻す","",function(){ it.done=false; save(); render(); });
   }
-  add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ db.items=db.items.filter(function(x){return x.id!==it.id;}); save(); render(); toast("削除しました"); } });
+  add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ deleteItem(it); } });
   return el;
+}
+
+/* 削除は直前の1件だけ一時保持し、「元に戻す」で復元できるようにする */
+var lastDeleted=null;
+function deleteItem(it){
+  var idx=db.items.findIndex(function(x){ return x.id===it.id; });
+  if(idx<0) return;
+  lastDeleted={item:db.items[idx], index:idx};
+  db.items.splice(idx,1);
+  save(); render();
+  toast("「"+it.title+"」を削除しました", "元に戻す", undoDelete);
+}
+function undoDelete(){
+  if(!lastDeleted) return;
+  var pos=Math.min(lastDeleted.index, db.items.length);
+  db.items.splice(pos,0,lastDeleted.item);
+  var restored=lastDeleted.item.title;
+  lastDeleted=null;
+  save(); render();
+  toast("「"+restored+"」を元に戻しました");
 }
 
 function isRepeating(it){ return !!(it.rep&&it.rep!=="none"); }
 
+/* タイトル・メモの部分一致で絞り込む検索欄 */
+function searchBar(){
+  var bar=h('<div style="margin:12px 0 -2px"><input type="text" id="searchBox" placeholder="タイトルで検索" '+
+    'style="width:100%;background:var(--card);border:1px solid var(--rule);border-radius:2px;padding:8px 10px;font-size:13.5px"></div>');
+  var input=bar.querySelector("input");
+  input.value=searchKw;
+  input.oninput=function(){
+    searchKw=input.value;
+    renderListBody(); // 欄自体は再描画せず、結果だけ差し替えてIME入力中の欠落を防ぐ
+  };
+  return bar;
+}
+function matchesSearch(it){
+  if(!searchKw.trim()) return true;
+  var kw=searchKw.trim().toLowerCase();
+  return (it.title||"").toLowerCase().indexOf(kw)>=0 || (it.memo||"").toLowerCase().indexOf(kw)>=0;
+}
+
 function renderList(){
   main.appendChild(filterBar());
+  main.appendChild(searchBar());
+  var body=h('<div id="listBody"></div>');
+  main.appendChild(body);
+  renderListBody();
+}
+
+function renderListBody(){
+  var body=document.getElementById("listBody");
+  if(!body) return;
+  body.innerHTML="";
   // 繰り返しは「定期予定」タブに分けているため、ここでは除く
-  var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&!isRepeating(i); }).sort(sortByDue);
+  var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&!isRepeating(i)&&matchesSearch(i); }).sort(sortByDue);
   if(!list.length){
-    main.appendChild(h('<div class="empty" style="margin-top:18px"><b>登録された締切はありません</b>下のボタンから最初の締切を登録してください。</div>'));
+    var msg=searchKw.trim()
+      ? '<div class="empty" style="margin-top:18px"><b>見つかりませんでした</b>「'+escHtml(searchKw)+'」に一致する締切はありません。</div>'
+      : '<div class="empty" style="margin-top:18px"><b>登録された締切はありません</b>下のボタンから最初の締切を登録してください。</div>';
+    body.appendChild(h(msg));
     return;
   }
   var now=new Date();
@@ -577,12 +632,12 @@ function renderList(){
     var arr=list.filter(function(i){ return !used[i.id]&&g[1](i); });
     arr.forEach(function(i){ used[i.id]=1; });
     if(!arr.length) return;
-    main.appendChild(h('<div class="group-label">'+g[0]+'</div>'));
-    arr.forEach(function(i){ main.appendChild(cardOf(i)); });
+    body.appendChild(h('<div class="group-label">'+g[0]+'</div>'));
+    arr.forEach(function(i){ body.appendChild(cardOf(i)); });
   });
   var all=h('<div style="margin:20px 0 0"><button class="act primary" style="padding:8px 14px">表示中の締切をまとめてカレンダーへ書き出す</button></div>');
   all.querySelector("button").onclick=function(){ downloadICS(list,"deadlines"); };
-  main.appendChild(all);
+  body.appendChild(all);
 }
 
 function renderRepeat(){
@@ -683,7 +738,40 @@ function renderCal(){
   }
 }
 
+/* サーバー上のindex.htmlを取り直し、ビルドスタンプを比較して表示する */
+function checkVersionDisplay(section, myStamp){
+  var el=section.querySelector("#verCheck");
+  if(location.protocol==="file:"){ el.textContent="ローカルファイルのため確認できません。"; return; }
+  fetch(location.pathname+"?_="+Date.now(),{cache:"no-store"})
+    .then(function(res){ return res.ok?res.text():null; })
+    .then(function(html){
+      if(!html){ el.textContent="サーバーへ接続できませんでした。"; return; }
+      var m=html.match(/<meta name="build-stamp" content="([^"]*)">/);
+      var serverStamp=m?m[1]:"不明";
+      if(serverStamp===myStamp){
+        el.innerHTML='<span style="color:var(--blue)">✓ 最新版を表示しています</span>';
+      } else {
+        el.innerHTML='サーバー上の版：<b>'+escHtml(serverStamp)+'</b><br>'+
+          '<span style="color:var(--red)">画面が古い可能性があります。強制リロード（Ctrl/⌘+Shift+R）するか、'+
+          'URLの末尾に <code>?v=2</code> のように付けて開き直してください。</span>';
+      }
+    })
+    .catch(function(){ el.textContent="確認に失敗しました。"; });
+}
+
 function renderSettings(){
+  // このアプリが最新版かどうかを確認できるセクション
+  var myStamp=(document.querySelector('meta[name="build-stamp"]')||{}).content||"不明";
+  var s0=h('<div class="sec"><h3>バージョン</h3>'+
+    '<p>この画面が読み込んでいる版：<b>'+escHtml(myStamp)+'</b></p>'+
+    '<p id="verCheck" style="color:var(--ink-3)">サーバー上の版を確認しています…</p>'+
+    '<div class="row"></div></div>');
+  var bCheck=h('<button class="btn">今すぐ確認する</button>');
+  bCheck.onclick=function(){ checkVersionDisplay(s0, myStamp); };
+  s0.querySelector(".row").appendChild(bCheck);
+  main.appendChild(s0);
+  checkVersionDisplay(s0, myStamp);
+
   // 当日リマインド時刻
   var s1=h('<div class="sec"><h3>当日リマインドの時刻</h3><p>カレンダーに書き出すとき、締切当日の通知をこの時刻に入れます。1週間前・前日の通知は締切と同じ時刻に鳴ります。</p></div>');
   var sel=h('<select style="max-width:160px"></select>');
@@ -1292,9 +1380,19 @@ function applyTheme(){
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){ if(db.settings.theme==="auto") applyTheme(); });
 
 var toastEl=document.getElementById("toast"), toastTimer=null;
-function toast(msg){
-  toastEl.textContent=msg; toastEl.classList.add("on");
-  clearTimeout(toastTimer); toastTimer=setTimeout(function(){ toastEl.classList.remove("on"); },2600);
+var toastMsgEl=document.getElementById("toastMsg"), toastActionEl=document.getElementById("toastAction");
+function toast(msg, actionLabel, actionFn){
+  toastMsgEl.textContent=msg; toastEl.classList.add("on");
+  if(actionLabel&&actionFn){
+    toastActionEl.textContent=actionLabel;
+    toastActionEl.style.display="";
+    toastActionEl.onclick=function(){ actionFn(); toastEl.classList.remove("on"); clearTimeout(toastTimer); };
+  } else {
+    toastActionEl.style.display="none";
+    toastActionEl.onclick=null;
+  }
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){ toastEl.classList.remove("on"); }, actionLabel?5000:2600);
 }
 
 /* ========== リンクから直接.icsを書き出す ==========
@@ -1322,6 +1420,15 @@ function handleExportParam(){
   }, 600);
   // 履歴からパラメータを消し、再読み込みで二重に書き出さないようにする
   if(history.replaceState) history.replaceState(null,"",location.pathname);
+}
+
+/* ========== オフライン対応 ==========
+   一度開いておけば、電波が悪い場所でもアプリの画面自体は開けるようにする。
+   データはlocalStorageにあるので、この登録自体は失敗しても致命的ではない */
+if("serviceWorker" in navigator && location.protocol!=="file:"){
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("./service-worker.js").catch(function(){});
+  });
 }
 
 /* ========== 更新の自動反映 ==========
