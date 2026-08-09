@@ -915,26 +915,37 @@ function buildDigestText(){
    未入力の場合は、Privateリポジトリのスクリプトから自動で取得する */
 function sendToDiscord(s6,s5){
   var statusEl=s6.querySelector("#dcStatus");
-  var hook=s6.querySelector("#dcHook").value.trim();
+  // コピー時に混ざりやすい空白・引用符・末尾のスラッシュを取り除く
+  var hook=s6.querySelector("#dcHook").value.trim().replace(/^["'<]+|[">'\s]+$/g,"").replace(/\/+$/,"");
 
   function post(url){
     statusEl.textContent="送信しています…";
+    var text=buildDigestText();
+    // Discordの本文上限は2000文字。超える分は切り詰めて送る
+    if(text.length>1900){
+      text=text.slice(0,1880)+"\n…（件数が多いため省略しました）";
+    }
     return fetch(url,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({content:buildDigestText()})
+      body:JSON.stringify({content:text})
     })
     .then(function(res){
       if(res.ok||res.status===204){
         statusEl.textContent="送信しました。";
         toast("Discordへ送信しました");
-      } else if(res.status===429){
-        statusEl.textContent="送信が多すぎます。少し待ってからもう一度お試しください。";
-      } else if(res.status===401||res.status===404){
-        statusEl.textContent="Webhook URLが無効です。Discord側で削除されていないか確認してください。";
-      } else {
-        statusEl.textContent="送信に失敗しました（HTTP "+res.status+"）。";
+        return;
       }
+      if(res.status===429){ statusEl.textContent="送信が多すぎます。少し待ってからもう一度お試しください。"; return; }
+      if(res.status===401||res.status===404){
+        statusEl.textContent="Webhook URLが無効です。Discord側で削除されていないか、URLが最後まで正しくコピーされているか確認してください。"; return;
+      }
+      // 400などはDiscordが理由を返すので、そのまま見せる
+      return res.text().then(function(t){
+        var detail=t;
+        try{ var j=JSON.parse(t); detail=j.message||JSON.stringify(j); }catch(e){}
+        statusEl.textContent="送信に失敗しました（HTTP "+res.status+"）："+String(detail).slice(0,200);
+      });
     })
     .catch(function(){
       statusEl.textContent="送信に失敗しました。通信状況を確認してください。";
