@@ -880,35 +880,44 @@ function fetchWebhookFromRepo(g,statusEl){
 function buildDigestText(){
   var now=new Date();
   var win=new Date(now.getTime()+7*86400000);
-  var once=activeItems().filter(function(i){ return !isRepeating(i); })
-    .filter(function(i){ return refDate(i)<=win; }).sort(sortByDue);
+  var all=activeItems().filter(function(i){ return !isRepeating(i); });
+  var over=all.filter(function(i){ return parseItemDate(i)<now; }).sort(sortByDue);
+  var soon=all.filter(function(i){ return parseItemDate(i)>=now && refDate(i)<=win; }).sort(sortByDue);
   var reps=activeItems().filter(isRepeating).sort(sortByDue);
 
-  var over=once.filter(function(i){ return parseItemDate(i)<now; }).length;
-  var head="📋 締切トラッカー："+(now.getMonth()+1)+"月"+now.getDate()+"日（"+DOW[now.getDay()]+"）の連絡"
-           +(over?"（期限切れ "+over+"件あり）":"");
-  var body="";
-  if(once.length){
-    once.forEach(function(i){
-      var d=parseItemDate(i);
-      var when=i.start?(fmtDue(new Date(i.start),i.allDay)+" 〜 "+fmtDue(d,i.allDay)):fmtDue(d,i.allDay);
-      body+=(parseItemDate(i)<now?"🔴 ":"・")+"**"+i.title+"**  ["+(i.cat||"その他")+"] "+when
-            +(parseItemDate(i)<now?" ── 期限切れ":"")+"\n";
-    });
-  } else {
-    body="7日以内の締切はありません。\n";
+  function line(i){
+    var d=parseItemDate(i);
+    var when=i.start?(fmtDue(new Date(i.start),i.allDay)+" 〜 "+fmtDue(d,i.allDay)):fmtDue(d,i.allDay);
+    var r=remainText(i);
+    return "- **"+i.title+"**　`"+(i.cat||"その他")+"`\n  "+when+"　── "+r.n+" "+r.u;
   }
+
+  var t="# 📋 締切トラッカー\n";
+  t+="### "+(now.getMonth()+1)+"月"+now.getDate()+"日（"+DOW[now.getDay()]+"）の連絡\n";
+
+  if(over.length){
+    t+="\n## 🔴 期限切れ（"+over.length+"件）\n";
+    over.forEach(function(i){ t+=line(i)+"\n"; });
+  }
+
+  t+="\n## ⏳ 7日以内の締切"+(soon.length?"（"+soon.length+"件）":"")+"\n";
+  if(soon.length) soon.forEach(function(i){ t+=line(i)+"\n"; });
+  else t+="-# 予定はありません\n";
+
   if(reps.length){
     var labels={weekly:"毎週",biweekly:"隔週",monthly:"毎月"};
-    body+="\n🔁 **定期予定**\n";
+    t+="\n## 🔁 定期予定\n";
     reps.forEach(function(i){
-      body+="・**"+i.title+"**  ["+(i.cat||"その他")+"/"+(labels[i.rep]||i.rep)+"] 次は "+fmtDue(parseItemDate(i),i.allDay)+"\n";
+      t+="- **"+i.title+"**　`"+(i.cat||"その他")+"`　"+(labels[i.rep]||i.rep)+"\n"+
+         "  次は "+fmtDue(parseItemDate(i),i.allDay)+"\n";
     });
   }
+
   var url=location.origin+location.pathname;
-  body+="\n🔗 アプリを開く: "+url;
-  body+="\n📅 カレンダーに入れる: "+url+"?export=all";
-  return head+"\n\n"+body;
+  t+="\n## 🔗 リンク\n";
+  t+="- [アプリを開く]("+url+")\n";
+  t+="- [カレンダーに入れる]("+url+"?export=all)\n";
+  return t;
 }
 
 /* 入力されたWebhookへ、いまの締切一覧を送信する。
