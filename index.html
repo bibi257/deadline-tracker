@@ -182,6 +182,12 @@ html[data-theme="dark"] input,html[data-theme="dark"] select,html[data-theme="da
 textarea{resize:vertical;min-height:64px}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .tag-line{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.cat-list{margin-bottom:12px}
+.cat-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--rule);border-radius:2px;margin-bottom:4px;background:var(--paper)}
+html[data-theme="dark"] .cat-row{background:#0C0F13}
+.cat-name{flex:1;font-size:13.5px;word-break:break-word}
+.cat-btns{display:flex;gap:4px;flex-shrink:0}
+.cat-btns .act{padding:2px 9px;font-size:13px;line-height:1.5}
 .tag{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--rule);border-radius:2px;padding:2px 4px 2px 9px;font-size:12.5px}
 .tag button{border:0;background:none;color:var(--ink-3);font-size:14px;line-height:1;padding:2px 4px}
 
@@ -446,7 +452,12 @@ var view="list", filter="ALL", calRef=new Date(), selDay=null, editingId=null;
 var main=document.getElementById("main");
 
 function activeItems(){ return db.items.filter(function(i){ return !i.done; }); }
-function sortByDue(a,b){ return new Date(a.due)-new Date(b.due); }
+/* 並び順。期間つきの予定は「開始日」を基準にして、
+   カードに出ている残り日数と並びが食い違わないようにする */
+function sortByDue(a,b){
+  var d=refDate(a)-refDate(b);
+  return d!==0?d:(parseItemDate(a)-parseItemDate(b));
+}
 
 function h(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstElementChild; }
 function escHtml(s){ return String(s).replace(/[&<>"]/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
@@ -458,8 +469,8 @@ function render(){
     now.getFullYear()+"年"+(now.getMonth()+1)+"月"+now.getDate()+"日（"+DOW[now.getDay()]+"）";
   // ヘッダーの件数は締切のみを数える（定期予定は常時あるため除く）
   var onceOnly=activeItems().filter(function(i){ return !isRepeating(i); });
-  var soon=onceOnly.filter(function(i){ var d=new Date(i.due); return d>=now && daysBetween(now,d)<=7; });
-  var over=onceOnly.filter(function(i){ return new Date(i.due)<now; });
+  var soon=onceOnly.filter(function(i){ var d=refDate(i); return parseItemDate(i)>=now && daysBetween(now,d)<=7; });
+  var over=onceOnly.filter(function(i){ return parseItemDate(i)<now; });
   if(view==="rep"){
     var reps=activeItems().filter(isRepeating);
     document.getElementById("cntNum").textContent=reps.length;
@@ -497,6 +508,9 @@ function cardOf(it){
   var created=it.created?new Date(it.created):new Date(d.getTime()-14*86400000);
   var total=Math.max(1, d-created), pass=Math.min(total, Math.max(0, Date.now()-created));
   var pct=it.done?100:Math.round(pass/total*100);
+  // カレンダー画面の繰り返しは表示用の複製（occurrence>0、または展開由来）で、
+  // 完了・編集をここから行うと元の予定がずれるので、その回の取りやめだけに絞る
+  var isCopy=!!it.isExpanded;
   var el=h('<article class="card '+st+(isRepeating(it)?" routine":"")+(it.done?" done":"")+'">'+
     '<div class="left"><b class="n num">'+escHtml(r.n)+'</b><span class="u">'+escHtml(r.u)+'</span></div>'+
     '<div class="body">'+
@@ -513,16 +527,26 @@ function cardOf(it){
   var acts=el.querySelector(".acts");
   function add(label,cls,fn){ var b=h('<button class="act '+(cls||"")+'">'+label+'</button>'); b.onclick=fn; acts.appendChild(b); }
   if(!it.done){
-    add("完了にする","",function(){ complete(it); });
-    // 繰り返しの特定の回だけ取りやめる（カレンダーから展開された回に出す）
-    if(isRepeating(it)){
+    if(isCopy){
+      // 2回目以降の表示専用コピー：この回の取りやめと、.ics書き出しのみ許可
       var key=toLocalISO(parseItemDate(it));
       add("この回は休み","",function(){
         if(confirm(key+" の回だけ取りやめます。よろしいですか？")) skipOccurrence(it.id, key);
       });
+      add("カレンダーへ","primary",function(){ downloadICS([it], it.title); });
+      var note=h('<div style="font-size:11.5px;color:var(--ink-3);margin-top:6px">完了・編集は「定期予定」タブから行ってください</div>');
+      el.querySelector(".body").appendChild(note);
+    } else {
+      add("完了にする","",function(){ complete(it); });
+      if(isRepeating(it)){
+        var key0=toLocalISO(parseItemDate(it));
+        add("この回は休み","",function(){
+          if(confirm(key0+" の回だけ取りやめます。よろしいですか？")) skipOccurrence(it.id, key0);
+        });
+      }
+      add("カレンダーへ","primary",function(){ downloadICS([it], it.title); });
+      add("編集","",function(){ openDialog(it); });
     }
-    add("カレンダーへ","primary",function(){ downloadICS([it], it.title); });
-    add("編集","",function(){ openDialog(it); });
   } else {
     add("戻す","",function(){ it.done=false; save(); render(); });
   }
@@ -541,11 +565,12 @@ function renderList(){
     return;
   }
   var now=new Date();
+  // グループ分けもカードの残り日数と同じ基準（期間つきは開始日）で判定する
   var groups=[
-    ["期限切れ", function(i){ return new Date(i.due)<now; }],
-    ["今日・明日", function(i){ var n=daysBetween(now,new Date(i.due)); return n>=0&&n<=1; }],
-    ["今週（7日以内）", function(i){ var n=daysBetween(now,new Date(i.due)); return n>1&&n<=7; }],
-    ["これから", function(i){ return daysBetween(now,new Date(i.due))>7; }]
+    ["期限切れ", function(i){ return parseItemDate(i)<now; }],
+    ["今日・明日", function(i){ var n=daysBetween(now,refDate(i)); return n>=0&&n<=1; }],
+    ["今週（7日以内）", function(i){ var n=daysBetween(now,refDate(i)); return n>1&&n<=7; }],
+    ["これから", function(i){ return daysBetween(now,refDate(i))>7; }]
   ];
   var used={};
   groups.forEach(function(g){
@@ -667,15 +692,27 @@ function renderSettings(){
   s1.appendChild(sel); main.appendChild(s1);
 
   // カテゴリ
-  var s2=h('<div class="sec"><h3>カテゴリ</h3><p>登録画面の選択肢になります。</p><div class="tag-line"></div></div>');
-  var line=s2.querySelector(".tag-line");
-  db.categories.forEach(function(c){
-    var t=h('<span class="tag">'+escHtml(c)+'<button title="削除">×</button></span>');
-    t.querySelector("button").onclick=function(){
+  var s2=h('<div class="sec"><h3>カテゴリ</h3><p>登録画面の選択肢と、フィルタの並び順になります。</p><div class="cat-list"></div></div>');
+  var line=s2.querySelector(".cat-list");
+  db.categories.forEach(function(c,idx){
+    var row=h('<div class="cat-row"><span class="cat-name">'+escHtml(c)+'</span><div class="cat-btns"></div></div>');
+    var btns=row.querySelector(".cat-btns");
+    function mkBtn(label,title,disabled,fn){
+      var b=h('<button class="act" title="'+title+'"'+(disabled?' disabled style="opacity:.3"':'')+'>'+label+'</button>');
+      if(!disabled) b.onclick=fn;
+      btns.appendChild(b);
+    }
+    mkBtn("↑","上へ移動",idx===0,function(){ moveCategory(idx,-1); });
+    mkBtn("↓","下へ移動",idx===db.categories.length-1,function(){ moveCategory(idx,1); });
+    mkBtn("×","削除",false,function(){
       if(db.categories.length<=1){ toast("カテゴリは1つ以上必要です"); return; }
-      db.categories=db.categories.filter(function(x){return x!==c;}); if(filter===c) filter="ALL"; save(); render();
-    };
-    line.appendChild(t);
+      var used=db.items.filter(function(i){ return i.cat===c; }).length;
+      if(used && !confirm("「"+c+"」を使っている予定が"+used+"件あります。削除するとその予定のカテゴリ表示は残りますが、選択肢からは消えます。よろしいですか？")) return;
+      db.categories=db.categories.filter(function(x){return x!==c;});
+      if(filter===c) filter="ALL";
+      save(); render();
+    });
+    line.appendChild(row);
   });
   var addRow=h('<div class="row"><input type="text" id="newCat" maxlength="20" placeholder="新しいカテゴリ名" style="flex:1;min-width:140px"><button class="btn">追加する</button></div>');
   addRow.querySelector("button").onclick=function(){
@@ -730,6 +767,20 @@ function renderSettings(){
   bIcs.onclick=function(){ downloadICS(activeItems().sort(sortByDue),"deadlines-all"); };
   s4.querySelector(".row").append(bOut,bIn,bIcs,file);
   main.appendChild(s4);
+
+  // Discordへ今すぐ送る
+  var s6=h('<div class="sec"><h3>Discordへ今すぐ送る</h3>'+
+    '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。Webhook URLはDiscordのチャンネル設定 →「連携サービス」→「ウェブフック」から取得できます（入力内容はこの端末にのみ保存されます）。</p>'+
+    '<label class="field"><span>Discord Webhook URL</span><input type="password" id="dcHook" placeholder="https://discord.com/api/webhooks/..."></label>'+
+    '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
+    '<input type="checkbox" id="dcRemember" style="width:auto">この端末に保存して次回から入力を省く</label>'+
+    '<div class="row"></div><p id="dcStatus" style="margin-top:8px"></p></div>');
+  s6.querySelector("#dcHook").value=store.get("dc-hook")||"";
+  s6.querySelector("#dcRemember").checked=!!store.get("dc-hook");
+  var bSend=h('<button class="btn fill">今すぐ送信</button>');
+  bSend.onclick=function(){ sendToDiscord(s6); };
+  s6.querySelector(".row").appendChild(bSend);
+  main.appendChild(s6);
 
   main.appendChild(h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p>'+
     '<p><b>iPhoneで取り込むときの注意：</b>Discordなどの添付ファイルを直接タップすると「照会カレンダー」として登録され、更新がすぐ反映されません。長押しして「ファイルに保存」してから開き、「カレンダーに追加」を選んでください。このアプリの「カレンダーへ」ボタンから書き出したファイルは、その心配がありません。</p></div>'));
@@ -794,6 +845,84 @@ function ghHint(m){
   if(/Not Found|404/i.test(m)) return "リポジトリ名か、トークンのRepository accessの設定を確認してください。";
   if(/403|permission|Resource not accessible/i.test(m)) return "トークンの権限（Contents: Read and write）を確認してください。";
   return "";
+}
+
+/* Discordへ送る本文を組み立てる（毎朝のダイジェストと同じ書式に揃える） */
+function buildDigestText(){
+  var now=new Date();
+  var win=new Date(now.getTime()+7*86400000);
+  var once=activeItems().filter(function(i){ return !isRepeating(i); })
+    .filter(function(i){ return refDate(i)<=win; }).sort(sortByDue);
+  var reps=activeItems().filter(isRepeating).sort(sortByDue);
+
+  var over=once.filter(function(i){ return parseItemDate(i)<now; }).length;
+  var head="📋 締切トラッカー："+(now.getMonth()+1)+"月"+now.getDate()+"日（"+DOW[now.getDay()]+"）の連絡"
+           +(over?"（期限切れ "+over+"件あり）":"");
+  var body="";
+  if(once.length){
+    once.forEach(function(i){
+      var d=parseItemDate(i);
+      var when=i.start?(fmtDue(new Date(i.start),i.allDay)+" 〜 "+fmtDue(d,i.allDay)):fmtDue(d,i.allDay);
+      body+=(parseItemDate(i)<now?"🔴 ":"・")+"**"+i.title+"**  ["+(i.cat||"その他")+"] "+when
+            +(parseItemDate(i)<now?" ── 期限切れ":"")+"\n";
+    });
+  } else {
+    body="7日以内の締切はありません。\n";
+  }
+  if(reps.length){
+    var labels={weekly:"毎週",biweekly:"隔週",monthly:"毎月"};
+    body+="\n🔁 **定期予定**\n";
+    reps.forEach(function(i){
+      body+="・**"+i.title+"**  ["+(i.cat||"その他")+"/"+(labels[i.rep]||i.rep)+"] 次は "+fmtDue(parseItemDate(i),i.allDay)+"\n";
+    });
+  }
+  var url=location.origin+location.pathname;
+  body+="\n🔗 アプリを開く: "+url;
+  body+="\n📅 カレンダーに入れる: "+url+"?export=all";
+  return head+"\n\n"+body;
+}
+
+/* 入力されたWebhookへ、いまの締切一覧を送信する */
+function sendToDiscord(s6){
+  var hook=s6.querySelector("#dcHook").value.trim();
+  var statusEl=s6.querySelector("#dcStatus");
+  if(!hook){ statusEl.textContent="Webhook URLを入力してください。"; return; }
+  if(!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(hook)){
+    statusEl.textContent="DiscordのWebhook URLの形式ではありません。"; return;
+  }
+  if(s6.querySelector("#dcRemember").checked){ store.set("dc-hook", hook); }
+  else if(hasLS){ try{ localStorage.removeItem("dc-hook"); }catch(e){} }
+
+  statusEl.textContent="送信しています…";
+  fetch(hook,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({content:buildDigestText()})
+  })
+  .then(function(res){
+    if(res.ok||res.status===204){
+      statusEl.textContent="送信しました。";
+      toast("Discordへ送信しました");
+    } else if(res.status===429){
+      statusEl.textContent="送信が多すぎます。少し待ってからもう一度お試しください。";
+    } else if(res.status===401||res.status===404){
+      statusEl.textContent="Webhook URLが無効です。Discord側で削除されていないか確認してください。";
+    } else {
+      statusEl.textContent="送信に失敗しました（HTTP "+res.status+"）。";
+    }
+  })
+  .catch(function(){
+    statusEl.textContent="送信に失敗しました。通信状況を確認してください。";
+  });
+}
+
+/* カテゴリの並び順を1つ入れ替える */
+function moveCategory(idx, dir){
+  var to=idx+dir;
+  if(to<0||to>=db.categories.length) return;
+  var arr=db.categories;
+  var tmp=arr[idx]; arr[idx]=arr[to]; arr[to]=tmp;
+  save(); render();
 }
 
 /* GitHubのdata.jsonを読み込んで、この端末のデータを置き換える */
@@ -1050,6 +1179,7 @@ function expandOccurrences(it, fromDate, toDate){
     if(d>=fromDate && skip.indexOf(toLocalISO(d))<0){
       var copy=Object.assign({},it);
       copy.due=d.toISOString();
+      copy.isExpanded=true; // カレンダー表示用の複製であることを示す（元データではない）
       if(it.start) copy.start=new Date(d.getTime()-span).toISOString();
       if(k>0){ copy.occurrence=k; copy.done=false; } // 2回目以降は未完了として扱う
       out.push(copy);
