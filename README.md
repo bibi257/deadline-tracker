@@ -4,6 +4,8 @@
 
 ## ファイル構成
 
+**`deadline-tracker`（Public / GitHub Pagesで公開）**
+
 ```
 index.html            アプリ本体（HTML/CSS/JS すべて内包）
 manifest.webmanifest  ホーム画面追加用の設定
@@ -11,6 +13,17 @@ icon-180.png          iOSホーム画面アイコン
 icon-192.png          Android/PWA用
 icon-512.png          PWA用
 ```
+
+**`deadline-data`（Private / データと自動送信）**
+
+```
+data.json                           締切データ（アプリの「GitHubに同期する」で自動生成・更新）
+.github/workflows/daily-digest.yml  毎朝の実行スケジュール
+.github/scripts/send_digest.sh      Discordへ送る処理（Webhook URL等の設定はこの冒頭）
+.github/scripts/build_ics.py        添付する.icsを作る処理
+```
+
+> `daily-digest.yml` 内の `run:` のパスと `send_digest.sh` の実際の置き場所は必ず一致させること。ズレていると `No such file or directory` で失敗する。
 
 ## 公開手順（ステップ1）
 
@@ -44,47 +57,82 @@ icon-512.png          PWA用
 
 ## データについて
 
-- 保存先は **ブラウザの localStorage**。端末ごとに別データになる（PCとiPhoneは同期しない）
-- 端末をまたぐときは、設定タブの **JSONで書き出す / JSONを読み込む** を使う
-- ブラウザのデータを消すと締切も消える。定期的にJSONを書き出しておくと安心
+- 保存先は **ブラウザの localStorage**。端末ごとに別データになる
+- 端末をまたぐときは、設定タブの **GitHubに同期する / GitHubから読み込む** を使う
+  - PCで登録 → 「同期する」→ iPhoneで「読み込む」、で両方の端末が揃う
+  - 読み込むと、その端末のデータは GitHub 上の内容で置き換わる（実行前に確認が出る）
+  - トークンは端末ごとに入力が必要。「この端末にトークンを保存」にチェックすれば次回から省ける
+- ファイル経由で移したい場合は **JSONで書き出す / JSONを読み込む** も使える
+- ブラウザのデータを消すと締切も消える
+
+### バックアップは3重にある
+
+| 手段 | 作られるタイミング | 復元方法 |
+|---|---|---|
+| GitHubのコミット履歴 | 「GitHubに同期する」を押すたび | リポジトリの `data.json` → **History** → 戻したい時点の内容をコピーして、JSONとして読み込む |
+| Discordへの週次添付 | 毎週月曜の朝（設定で変更可） | 添付ファイルを保存 → 設定タブの **JSONを読み込む** |
+| 手動のJSON書き出し | 自分で押したとき | 同上 |
+
+Discordに届くファイルはアプリの読み込み形式とそのまま互換なので、ダウンロードして選ぶだけで復元できる。
+
+バックアップの曜日は `.github/scripts/send_digest.sh` の `BACKUP_DOW` で変更する（`1`=月曜 … `7`=日曜、`0`で添付しない）。毎日欲しければ、その日の曜日番号ではなく毎回送るよう `send_backup` の曜日判定行を削除する。
+
+> 注意：`data.json` はPublicリポジトリに置かれるため、締切のタイトルやメモは誰でも閲覧できる。見られたくない内容は書かないこと。
 
 ## Discordへ毎朝の連絡（任意機能）
 
-GitHub Pagesはサーバーが無いため、アプリ単体では「閉じている間の自動通知」ができません。そこで **GitHub Actions**（GitHub上で定期実行できる無料の仕組み）を使って、毎朝リポジトリ内の `data.json` を読み、近日中の締切をDiscordのチャンネルへ送ります。
+GitHub Pagesはサーバーが無いため、アプリ単体では「閉じている間の自動通知」ができない。そこで **GitHub Actions** を使って、毎朝リポジトリ内の `data.json` を読み、近日中の締切をDiscordのチャンネルへ送る。
 
-### 全体の流れ
+### リポジトリは2つに分ける
 
-```
-アプリで締切を登録
-      ↓
-設定タブの「GitHubに同期する」でリポジトリへ data.json を書き込む（手動でひと手間）
-      ↓
-毎朝7:00(JST)、GitHub Actionsが自動起動
-      ↓
-data.json を読んで、7日以内・期限切れの締切をDiscordへ送信
-```
+締切のタイトルやメモが他人に見えないよう、**データは別のPrivateリポジトリに置く**。
 
-`.ics`（iPhoneカレンダー通知）は登録時点の日時にピンポイントで届く方式、Discordは毎朝まとめて届く方式です。両方使っても構いません。
+| リポジトリ | 公開設定 | 中身 |
+|---|---|---|
+| `deadline-tracker` | **Public**（GitHub Pagesに必要） | index.html, アイコン, manifest |
+| `deadline-data` | **Private** | data.json, `.github/` 一式 |
+
+Publicリポジトリはファイル一覧もコミット履歴も全て公開されるため、ファイル名を変えたり深い階層に置いても隠したことにはならない。分離が唯一の確実な方法。
 
 ### 設定手順
 
-1. **Discordでウェブフックを作る**
-   通知したいチャンネルの設定 → 連携サービス → ウェブフック → 新しいウェブフック → URLをコピー
-2. **GitHubリポジトリにシークレットを登録する**
-   リポジトリの **Settings → Secrets and variables → Actions → New repository secret**
-   - Name: `DISCORD_WEBHOOK_URL`
-   - Secret: 手順1でコピーしたURL
-3. **同期用トークンを作る**
-   GitHubの **Settings（自分のアカウント） → Developer settings → Fine-grained tokens → Generate new token**
-   - Repository access: このリポジトリだけを選択
+1. **Privateリポジトリを作る**
+   GitHubで新規リポジトリ `deadline-data` を作成し、**Private** を選ぶ。
+2. **Actions用のファイルを置く**
+   `deadline-data` に **Add file → Create new file** で以下2つを作る（ファイル名にスラッシュを含めるとフォルダになる）。
+   - `.github/workflows/daily-digest.yml`
+   - `.github/scripts/send_digest.sh`
+3. **Discordのウェブフックはスクリプトに埋め込み済み**
+   `.github/scripts/send_digest.sh` の冒頭に、Webhook URLと毎朝メンションするユーザーIDを直接書いてある。Privateリポジトリなので他人には見えない。
+4. **トークンを作る**
+   GitHubの **Settings（アカウント） → Developer settings → Fine-grained tokens → Generate new token**
+   - Repository access: **`deadline-data` を選択**（`deadline-tracker` ではない）
    - Permissions: **Contents → Read and write**
-   - 発行されたトークンをコピー（この画面を閉じると二度と表示されません）
-4. **アプリで同期する**
-   アプリの **設定タブ → Discordへ毎朝連絡** に、GitHubユーザー名・リポジトリ名・上記トークンを入力し「GitHubに同期する」を押す
-   - 締切を追加・編集したら、この同期をもう一度押すと最新内容が反映されます
-   - トークンはこの端末のブラウザにだけ保持され、リポジトリには書き込まれません（ただし共有PCでは入力しないでください）
-5. **動作確認**
-   リポジトリの **Actions** タブ → 「締切ダイジェストをDiscordへ送る」→ **Run workflow** で手動実行し、Discordに届くか確認する
+5. **アプリで同期する**
+   アプリの **設定タブ → Discordへ毎朝連絡** に、GitHubユーザー名・`deadline-data`・トークンを入力し「GitHubに同期する」を押す。
+6. **動作確認**
+   `deadline-data` の **Actions** タブ → 「締切ダイジェストをDiscordへ送る」→ **Run workflow**
+
+### すでに公開リポジトリに同期してしまった場合
+
+`data.json` を削除しても、**コミット履歴から中身を取り出せてしまう**。確実に消すには次のどちらか。
+
+- 見られて困る内容が無ければ、`data.json` を削除するだけで済ませる
+- 内容を消したい場合は、`deadline-tracker` リポジトリを一度削除して作り直し、`index.html`・アイコン・`manifest.webmanifest` だけを上げ直す
+
+### 通知先・メンション・対象期間・バックアップ曜日を変える
+
+`.github/scripts/send_digest.sh` の冒頭にまとまっている。
+
+```bash
+DEFAULT_WEBHOOK_URL="https://discord.com/api/webhooks/..."  # 通知先
+MENTION_USER_ID="1212746144481017908"                       # 空にするとメンションしない
+DEFAULT_WINDOW_DAYS="7"                                     # 何日以内を対象にするか
+BACKUP_DOW="1"                                              # data.jsonを添付する曜日(1=月, 0=しない)
+APP_URL="https://bibi257.github.io/deadline-tracker/"       # 通知に載せるアプリのリンク
+ATTACH_ICS="0"                                              # .icsを添付するか(既定0。iOSでは照会になるためリンク推奨)
+ICS_DAY_HOUR="9"                                            # .ics内の当日リマインド時刻
+```
 
 ### 通知時刻を変える
 
@@ -94,20 +142,37 @@ data.json を読んで、7日以内・期限切れの締切をDiscordへ送信
 - cron: "0 22 * * *"   # UTC 22:00 = JST 7:00
 ```
 
-を編集する（cronはUTC基準。JSTにするには `UTC時刻 = JST時刻 - 9時間`）。
+を編集する（cronはUTC基準。`UTC時刻 = JST時刻 - 9時間`）。
 
-### 対象期間を変える
+### iPhoneでカレンダーに入れるとき
 
-同じファイル内の `WINDOW_DAYS: "7"` を変更すると、「何日以内の締切を対象にするか」を変えられます。
+Discordの添付ファイルを直接タップすると、iOSは「照会カレンダー」として登録してしまい、更新がすぐ反映されない。通知内の **「カレンダーに入れる」リンク**（`?export=all`）を開くと、アプリが.icsをファイルとして保存するので、それを開いて「カレンダーに追加」を選ぶ。
+
+添付ファイルから入れたい場合は、長押し→「ファイルに保存」してから開くこと。
+
+### 注意
+
+- PrivateリポジトリでもGitHub Actionsは無料枠（月2000分）で動く。このジョブは1回1分未満なので十分収まる
+- Privateリポジトリでは `raw.githubusercontent.com` からファイルを取得できないが、Actionsはリポジトリ内のファイルを直接読むので問題ない
 
 
+
+## 実装済みの機能
 
 - 締切の登録・編集・削除・完了（完了タブにアーカイブ）
 - 期限までの残り日数、経過メーター、期限切れ・当日・3日以内・7日以内の色分け
 - 期限切れ／今日・明日／今週／これから のグループ分け表示
 - 月表示カレンダー（前月・翌月・今月へ移動、日付タップでその日の締切）
-- カテゴリの追加・削除とカテゴリ別フィルタ
-- 繰り返し締切（毎週・隔週・毎月）— 完了にすると次回が自動で作られる
+- カテゴリの追加・削除・並び替え（↑↓ボタン。フィルタの並び順にも反映）
+- 設定タブから Discord へ手動送信（毎朝の連絡を待たずに送れる。Webhook URLは端末内にのみ保存）
+- GitHub経由の端末間同期（送信・受信の両方向）
+- 毎朝の通知にアプリのURLと、ワンタップで.icsを書き出すリンクを掲載
+- `?export=all` を付けて開くと.icsの書き出しが自動で始まる（`rep`で定期予定のみ、`once`で締切のみ）
+- 「定期予定」タブ — 繰り返しの予定は一覧タブから分離し、カレンダーでは緑で表示。Discordにも別セクションで届く
+- 繰り返し締切（毎週・隔週・毎月・回数指定）— 先の回までカレンダーに自動表示、.icsはRRULEで出力
+- 終日の予定（時刻を決めない。.icsも終日形式で出力）
+- 繰り返しのうち特定の回だけ取りやめ（.icsにはEXDATEで反映、定期予定タブから元に戻せる）
+- 複数日にまたがる予定（試験期間・合宿など）— 残り日数は「開始日まで」を数える— 開始日と終了日を持ち、カレンダーに期間の帯を表示
 - `.ics` 書き出し（1件ずつ／表示中まとめて／全件）
 - JSONバックアップと復元
 - Discordへの毎朝ダイジェスト送信（GitHub Actions、任意設定）
@@ -123,4 +188,8 @@ data.json を読んで、7日以内・期限切れの締切をDiscordへ送信
 - [ ] **iPhone実機で `.ics` を開き、カレンダーに予定と通知3件が入る**
 - [ ] 締切を編集して再取り込みすると、予定が増えずに上書きされる
 - [ ] JSONを書き出して別端末で読み込むと同じ内容になる
-- [ ]（Discordを使う場合）設定タブで同期 → Actionsタブから手動実行 → Discordに届く
+- [ ]（Discordを使う場合）Privateリポジトリ `deadline-data` を作成した
+- [ ] トークンのRepository accessが `deadline-data` になっている
+- [ ] 設定タブで同期 → `deadline-data` に `data.json` ができる
+- [ ] Actionsタブから手動実行 → Discordに届く
+- [ ] Publicリポジトリ側に `data.json` が残っていない
