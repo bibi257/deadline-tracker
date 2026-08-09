@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-08-09 13:35 JST">
+<meta name="build-stamp" content="2026-08-09 13:43 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="課題・記事の締切を管理して、iPhoneのカレンダーに通知を渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -208,12 +208,14 @@ html[data-theme="dark"] .btn.fill{color:#101317}
 .toast{
   position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));
   background:var(--ink);color:var(--paper);font-size:13px;padding:9px 16px;border-radius:3px;z-index:60;
-  opacity:0;pointer-events:none;transition:opacity .2s
+  opacity:0;pointer-events:none;transition:opacity .2s;
+  display:flex;align-items:center;gap:12px
 }
 html[data-theme="dark"] .toast{color:#101317}
-.toast.on{opacity:1}
-.toast{display:flex;align-items:center;gap:12px}
-#toastAction{border:1px solid currentColor;background:none;color:inherit;border-radius:2px;padding:3px 10px;font-size:12.5px;white-space:nowrap;flex-shrink:0}
+/* 表示中だけ不透明にし、クリックも受け付ける（「元に戻す」ボタンを押せるように） */
+.toast.on{opacity:1;pointer-events:auto}
+#toastAction{border:1px solid currentColor;background:none;color:inherit;border-radius:2px;padding:6px 14px;font-size:13px;white-space:nowrap;flex-shrink:0;cursor:pointer;font-weight:700}
+#toastAction:active{opacity:.6}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media (max-width:420px){
   .card{grid-template-columns:54px 1fr;gap:10px}
