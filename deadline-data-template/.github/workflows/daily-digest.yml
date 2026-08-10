@@ -1,0 +1,22 @@
+name: 締切ダイジェストをDiscordへ送る
+
+on:
+  schedule:
+    # UTC 21:47 = JST 6:47。GitHubのcronは混雑時に遅れるため、
+    # 予定時刻の少し前かつ「0分ちょうど」を避けた時刻にしている。
+    # （時刻を変える場合: JST = UTC + 9時間）
+    - cron: "47 21 * * *"
+  workflow_dispatch: {}   # Actionsタブから手動実行するためのボタン
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v7
+
+      - name: ダイジェストを送信
+        # 設定（WebhookURL・ユーザーID・アプリURL・対象日数・バックアップ曜日）は
+        # .github/scripts/send_digest.sh の冒頭にまとめてある。
+        # .icsの生成には同じフォルダの build_ics.py を使う（python3はrunnerに標準搭載）
+        run: bash .github/scripts/send_digest.sh
