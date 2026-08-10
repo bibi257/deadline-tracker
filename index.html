@@ -8,9 +8,9 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-08-09 13:43 JST">
+<meta name="build-stamp" content="2026-08-10 20:08 JST">
 <title>締切トラッカー</title>
-<meta name="description" content="課題・記事の締切を管理して、iPhoneのカレンダーに通知を渡すツール">
+<meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#141820">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -253,9 +253,9 @@ html[data-theme="dark"] .toast{color:#101317}
 <dialog id="dlg">
   <form method="dialog" class="dlg-in" id="dlgForm">
     <h2 id="dlgTitle">締切を登録</h2>
-    <label class="field"><span>タイトル</span><input type="text" id="fTitle" required maxlength="80" placeholder="例：情報理論レポート"></label>
+    <label class="field"><span>タイトル</span><input type="text" id="fTitle" required maxlength="80" placeholder="例：月次報告書の提出"></label>
     <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
-      <input type="checkbox" id="fSpan" style="width:auto">何日かにまたがる予定にする（試験期間・合宿など）
+      <input type="checkbox" id="fSpan" style="width:auto">何日かにまたがる予定にする（出張・研修期間など）
     </label>
     <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
       <input type="checkbox" id="fAllDay" style="width:auto">終日（時刻を決めない）
@@ -272,7 +272,7 @@ html[data-theme="dark"] .toast{color:#101317}
       <label class="field"><span>カテゴリ</span><select id="fCat"></select></label>
       <label class="field"><span>繰り返し</span><select id="fRep">
         <option value="none">なし</option><option value="weekly">毎週</option>
-        <option value="biweekly">隔週</option><option value="monthly">毎月</option>
+        <option value="biweekly">隔週</option><option value="monthly">毎月</option><option value="yearly">毎年</option>
       </select></label>
     </div>
     <label class="field" id="repCountRow" style="display:none"><span>繰り返す回数（初回を含む）</span>
@@ -282,7 +282,7 @@ html[data-theme="dark"] .toast{color:#101317}
         <option value="30">30回</option><option value="0">終わりを決めない</option>
       </select>
     </label>
-    <label class="field"><span>メモ</span><textarea id="fMemo" maxlength="500" placeholder="提出先・条件など"></textarea></label>
+    <label class="field"><span>メモ</span><textarea id="fMemo" maxlength="500" placeholder="提出先・必要書類・関係者など"></textarea></label>
     <div class="dlg-acts">
       <button class="btn" value="cancel" type="submit" formnovalidate>やめる</button>
       <button class="btn fill" value="save" type="submit">保存する</button>
@@ -303,7 +303,7 @@ var store={
   set:function(k,v){ if(hasLS){try{localStorage.setItem(k,v);}catch(e){toast("保存できませんでした（空き容量を確認してください）");}} else {mem[k]=v;} }
 };
 
-var db={items:[],categories:["課題","電大navi記事","その他"],settings:{dayHour:9,theme:"auto"}};
+var db={items:[],categories:["仕事","提出物","支払い","プライベート","その他"],settings:{dayHour:9,theme:"auto"}};
 function load(){
   var raw=store.get(KEY); if(!raw) return;
   try{
@@ -405,7 +405,7 @@ function veventOf(it){
   if(it.memo) L.push("DESCRIPTION:"+esc(it.memo));
   var repeating=!!(it.rep&&it.rep!=="none");
   if(repeating){
-    var freq={weekly:"FREQ=WEEKLY",biweekly:"FREQ=WEEKLY;INTERVAL=2",monthly:"FREQ=MONTHLY"}[it.rep];
+    var freq={weekly:"FREQ=WEEKLY",biweekly:"FREQ=WEEKLY;INTERVAL=2",monthly:"FREQ=MONTHLY",yearly:"FREQ=YEARLY"}[it.rep];
     if(freq) L.push("RRULE:"+freq+(it.repCount>0?";COUNT="+it.repCount:""));
     // 取りやめた回はEXDATEで除外する
     if(it.skip&&it.skip.length){
@@ -524,7 +524,7 @@ function cardOf(it){
       '<div class="meta"><span class="cat">'+escHtml(it.cat||"その他")+'</span><span class="num">'+
       escHtml(it.start?(fmtDue(new Date(it.start),it.allDay)+" 〜 "+fmtDue(d,it.allDay)):fmtDue(d,it.allDay))+'</span>'+
       (it.allDay?'<span class="cat">終日</span>':"")+
-      (it.rep&&it.rep!=="none"?'<span class="cat">'+({weekly:"毎週",biweekly:"隔週",monthly:"毎月"}[it.rep])+
+      (it.rep&&it.rep!=="none"?'<span class="cat">'+({weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"}[it.rep])+
         (it.repCount>0?" 残"+it.repCount+"回":"")+'</span>':"")+'</div>'+
       (it.memo?'<p class="memo">'+escHtml(it.memo)+'</p>':"")+
       '<div class="rail"><i style="width:'+pct+'%"></i></div>'+
@@ -558,6 +558,49 @@ function cardOf(it){
   }
   add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ deleteItem(it); } });
   return el;
+}
+
+/* 締切を登録・編集したとき、設定が揃っていれば自動で同期する。
+   同期先やトークンが未設定なら何もしない（初回利用者の邪魔をしない） */
+function autoSyncIfConfigured(){
+  if(!db.settings.autoSync) return;
+  var saved=JSON.parse(store.get("gh-sync")||"{}");
+  var token=store.get("gh-token");
+  if(!saved.owner||!saved.repo||!token) return;
+
+  var api="https://api.github.com/repos/"+saved.owner+"/"+saved.repo+"/contents/data.json";
+  var branch=saved.branch||"main";
+  var headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"};
+  var content=utf8ToBase64(JSON.stringify({items:db.items, categories:db.categories},null,2));
+
+  function fetchSha(){
+    return fetch(api+"?ref="+encodeURIComponent(branch)+"&_="+Date.now(),{headers:headers, cache:"no-store"})
+      .then(function(res){
+        if(res.status===404) return null;
+        if(!res.ok) throw new Error("HTTP "+res.status);
+        return res.json().then(function(j){ return j.sha; });
+      });
+  }
+  function put(sha){
+    var body={message:"締切データを自動同期（"+new Date().toLocaleString("ja-JP")+"）",content:content,branch:branch};
+    if(sha) body.sha=sha;
+    return fetch(api,{method:"PUT",
+      headers:Object.assign({"Content-Type":"application/json"},headers),
+      body:JSON.stringify(body)});
+  }
+  fetchSha().then(put)
+    .then(function(res){ if(res.status===409) return fetchSha().then(put); return res; })
+    .then(function(res){ if(res.ok) toast("GitHubに自動同期しました"); })
+    .catch(function(){ /* 自動処理なので失敗しても通知しない */ });
+}
+
+/* 締切を登録・編集したとき、設定が揃っていればDiscordへ通知する */
+function autoNotifyIfConfigured(){
+  if(!db.settings.autoNotify) return;
+  var hook=store.get("dc-hook");
+  if(!hook) return;
+  fetch(hook,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({content:buildDigestText()})}).catch(function(){});
 }
 
 /* 削除は直前の1件だけ一時保持し、「元に戻す」で復元できるようにする */
@@ -625,7 +668,8 @@ function renderListBody(){
   // グループ分けもカードの残り日数と同じ基準（期間つきは開始日）で判定する
   var groups=[
     ["期限切れ", function(i){ return parseItemDate(i)<now; }],
-    ["今日・明日", function(i){ var n=daysBetween(now,refDate(i)); return n>=0&&n<=1; }],
+    ["今日", function(i){ return daysBetween(now,refDate(i))===0; }],
+    ["明日", function(i){ return daysBetween(now,refDate(i))===1; }],
     ["今週（7日以内）", function(i){ var n=daysBetween(now,refDate(i)); return n>1&&n<=7; }],
     ["これから", function(i){ return daysBetween(now,refDate(i))>7; }]
   ];
@@ -649,8 +693,8 @@ function renderRepeat(){
     main.appendChild(h('<div class="empty" style="margin-top:18px"><b>定期予定はありません</b>締切を登録するとき「繰り返し」を選ぶと、ここにまとまります。</div>'));
     return;
   }
-  var labels={weekly:"毎週",biweekly:"隔週",monthly:"毎月"};
-  ["weekly","biweekly","monthly"].forEach(function(rep){
+  var labels={weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"};
+  ["weekly","biweekly","monthly","yearly"].forEach(function(rep){
     var arr=list.filter(function(i){ return i.rep===rep; });
     if(!arr.length) return;
     main.appendChild(h('<div class="group-label">'+labels[rep]+'</div>'));
@@ -861,7 +905,7 @@ function renderSettings(){
   // 端末間の同期（GitHub）
   var s5=h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+
     '<p>締切データ（data.json）をPrivateリポジトリに置き、端末間で受け渡します。<b>同期する</b>でこの端末の内容を送り、<b>読み込む</b>で他の端末から送られた内容を取り込みます。毎朝のDiscord送信も同じデータを見ています。</p>'+
-    '<div class="two"><label class="field"><span>GitHubユーザー名 / Organization</span><input type="text" id="ghOwner" placeholder="例：taro-yamada"></label>'+
+    '<div class="two"><label class="field"><span>GitHubユーザー名 / Organization</span><input type="text" id="ghOwner" placeholder="例：yamada-taro"></label>'+
     '<label class="field"><span>データ用リポジトリ名（Private推奨）</span><input type="text" id="ghRepo" placeholder="例：deadline-data"></label></div>'+
     '<label class="field"><span>ブランチ</span><input type="text" id="ghBranch" value="main"></label>'+
     '<label class="field"><span>Personal Access Token（Contents: Read and write）</span><input type="password" id="ghToken" placeholder="このリポジトリだけに絞ったトークンを推奨"></label>'+
@@ -897,6 +941,22 @@ function renderSettings(){
   bSend.onclick=function(){ sendToDiscord(s6,s5); };
   s6.querySelector(".row").appendChild(bSend);
   main.appendChild(s6);
+
+  // 登録時の自動処理
+  var s7=h('<div class="sec"><h3>登録したときの自動処理</h3>'+
+    '<p>締切を登録・編集したときに、以下を自動で行います。上の設定が済んでいない場合は何も起きません。</p></div>');
+  [["autoSync","GitHubへ自動で同期する","同期ボタンを押し忘れても、翌朝のDiscord通知に反映されます"],
+   ["autoNotify","Discordへ自動で通知する","登録するたびにチャンネルへ送信されます（頻繁だと煩わしい場合があります）"]
+  ].forEach(function(p){
+    var wrap=h('<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:10px">'+
+      '<input type="checkbox" style="width:auto;margin-top:3px">'+
+      '<span>'+escHtml(p[1])+'<br><span style="font-size:11.5px;color:var(--ink-3)">'+escHtml(p[2])+'</span></span></label>');
+    var cb=wrap.querySelector("input");
+    cb.checked=!!db.settings[p[0]];
+    cb.onchange=function(){ db.settings[p[0]]=cb.checked; save(); toast(cb.checked?"有効にしました":"無効にしました"); };
+    s7.appendChild(wrap);
+  });
+  main.appendChild(s7);
 
   main.appendChild(h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p>'+
     '<p><b>iPhoneで取り込むときの注意：</b>Discordなどの添付ファイルを直接タップすると「照会カレンダー」として登録され、更新がすぐ反映されません。長押しして「ファイルに保存」してから開き、「カレンダーに追加」を選んでください。このアプリの「カレンダーへ」ボタンから書き出したファイルは、その心配がありません。</p></div>'));
@@ -972,7 +1032,8 @@ function buildDigestText(){
   var win=new Date(now.getTime()+7*86400000);
   var all=activeItems().filter(function(i){ return !isRepeating(i); });
   var over=all.filter(function(i){ return parseItemDate(i)<now; }).sort(sortByDue);
-  var soon=all.filter(function(i){ return parseItemDate(i)>=now && refDate(i)<=win; }).sort(sortByDue);
+  var today=all.filter(function(i){ return parseItemDate(i)>=now && daysBetween(now,refDate(i))===0; }).sort(sortByDue);
+  var soon=all.filter(function(i){ var n=daysBetween(now,refDate(i)); return parseItemDate(i)>=now && n>0 && refDate(i)<=win; }).sort(sortByDue);
   var reps=activeItems().filter(isRepeating).sort(sortByDue);
 
   function line(i){
@@ -989,13 +1050,17 @@ function buildDigestText(){
     t+="\n## 🔴 期限切れ（"+over.length+"件）\n";
     over.forEach(function(i){ t+=line(i)+"\n"; });
   }
+  if(today.length){
+    t+="\n## ⚡ 今日が締切（"+today.length+"件）\n";
+    today.forEach(function(i){ t+=line(i)+"\n"; });
+  }
 
   t+="\n## ⏳ 7日以内の締切"+(soon.length?"（"+soon.length+"件）":"")+"\n";
   if(soon.length) soon.forEach(function(i){ t+=line(i)+"\n"; });
   else t+="-# 予定はありません\n";
 
   if(reps.length){
-    var labels={weekly:"毎週",biweekly:"隔週",monthly:"毎月"};
+    var labels={weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"};
     t+="\n## 🔁 定期予定\n";
     reps.forEach(function(i){
       t+="- **"+i.title+"**　`"+(i.cat||"その他")+"`　"+(labels[i.rep]||i.rep)+"\n"+
@@ -1291,6 +1356,8 @@ dlgForm.addEventListener("submit",function(e){
     toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
   }
   save(); render();
+  autoSyncIfConfigured();
+  autoNotifyIfConfigured();
 });
 
 function complete(it){
@@ -1325,6 +1392,7 @@ function nextOccurrence(d, rep){
   if(rep==="weekly") n.setDate(d.getDate()+7);
   else if(rep==="biweekly") n.setDate(d.getDate()+14);
   else if(rep==="monthly") n.setMonth(d.getMonth()+1);
+  else if(rep==="yearly") n.setFullYear(d.getFullYear()+1);
   return n;
 }
 
