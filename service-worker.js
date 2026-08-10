@@ -4,13 +4,13 @@
 //
 // キャッシュ名を変えると古いキャッシュは自動で破棄される。
 // 中身（index.html等）を大きく更新したときは、この名前も変えると確実に切り替わる。
-const CACHE_NAME = "deadline-tracker-v1";
+const CACHE_NAME = "deadline-tracker-v2";
 const CORE_FILES = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./icon-192.png",
-  "./icon-512.png"
+  "./assets/icon-192.png",
+  "./assets/icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
