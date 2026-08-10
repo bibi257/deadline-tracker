@@ -1,1 +1,101 @@
+# deadline-data テンプレート
 
+締切データの保管と、Discord への毎朝の連絡を担当する **Private リポジトリ** 用のテンプレート。
+
+このフォルダの中身をそのまま、自分で作成した Private リポジトリのルートにコピーして使う。
+
+---
+
+## なぜ Private リポジトリが必要か
+
+締切のタイトルやメモには、仕事の内容や個人的な予定が含まれる。Public リポジトリはファイル一覧もコミット履歴も公開されるため、ファイル名を変えたり深い階層に置いても隠したことにはならない。
+
+また、Discord の Webhook URL を知られると、そのチャンネルに誰でも投稿できてしまう。**この2つを守るために、データと送信スクリプトは必ず Private 側に置く。**
+
+---
+
+## 置き方
+
+```
+deadline-data（Private）
+├── data.json          ← アプリが自動で作る。手動で置く必要はない
+└── .github/
+    ├── workflows/daily-digest.yml
+    └── scripts/
+        ├── send_digest.sh
+        └── build_ics.py
+```
+
+GitHub の Web 画面から作る場合は、**Add file → Create new file** でファイル名にスラッシュを含めて入力すると、フォルダごと作られる。
+
+```
+.github/workflows/daily-digest.yml
+.github/scripts/send_digest.sh
+.github/scripts/build_ics.py
+```
+
+> ⚠️ ドラッグ＆ドロップでアップロードすると、フォルダ構造が崩れてルート直下に置かれることがある。その場合 Actions がスクリプトを見つけられず `No such file or directory` で失敗する。アップロード後に階層を確認すること。
+
+---
+
+## 設定
+
+`.github/scripts/send_digest.sh` の冒頭を編集する。**最低限、`DEFAULT_WEBHOOK_URL` の記入が必要**（空のままだと実行時にエラーで停止する）。
+
+```bash
+DEFAULT_WEBHOOK_URL=""      # 必須。Discordのチャンネル設定 → 連携サービス → ウェブフック で取得
+MENTION_USER_ID=""          # 任意。毎朝メンションで呼び出したい場合に自分のユーザーIDを入れる
+DEFAULT_WINDOW_DAYS="7"     # 何日以内の締切を対象にするか
+BACKUP_DOW="1"              # data.json を添付する曜日（1=月 … 7=日、0=添付しない）
+APP_URL=""                  # 任意。通知に載せるアプリのURL（https://<ユーザー名>.github.io/<リポジトリ名>/）
+ATTACH_ICS="0"              # .ics を添付するか（iOSでは照会カレンダーになるため既定は0）
+ICS_DAY_HOUR="9"            # .ics 内の当日リマインド時刻
+```
+
+### Discord ユーザーIDの調べ方
+
+Discord の設定 → 詳細設定 → 開発者モードをオンにすると、自分のアイコンを右クリックして「ユーザーIDをコピー」が使える。
+
+### 通知時刻
+
+`.github/workflows/daily-digest.yml` の cron を編集する。
+
+```yaml
+- cron: "47 21 * * *"   # UTC 21:47 = JST 6:47
+```
+
+UTC 基準（`UTC = JST − 9時間`）。GitHub の cron は混雑時に遅れるため、「0分ちょうど」は避けた方が安定する。数十分の遅延は仕様上ありうる。
+
+---
+
+## 動作確認
+
+1. Private リポジトリの **Actions** タブを開く
+2. 左の「締切ダイジェストをDiscordへ送る」を選ぶ
+3. **Run workflow** を押す
+
+数十秒で Discord にメッセージが届けば成功。`data.json` がまだ無い場合は、その旨の警告が届く（アプリの設定タブから「GitHubに同期する」を実行すると作られる）。
+
+> スケジュール実行は cron の時刻にしか動かない。ファイルを差し替えたら、翌朝を待たずに **Run workflow** で1回試しておくと、壊れたまま気づかない事態を防げる。
+
+---
+
+## アプリ側との接続
+
+アプリ（Public 側の `index.html`）の **設定タブ → 端末間の同期とDiscord通知** に、以下を入力する。
+
+| 項目 | 値 |
+|---|---|
+| GitHubユーザー名 | 自分のアカウント名 |
+| データ用リポジトリ名 | この Private リポジトリの名前 |
+| Personal Access Token | Contents: Read and write 権限のトークン |
+
+トークンは **Settings（アカウント） → Developer settings → Fine-grained tokens** で発行する。Repository access はこの Private リポジトリのみに絞ること。
+
+---
+
+## 必要な環境
+
+GitHub Actions の `ubuntu-latest` に標準で入っている `bash` / `curl` / `jq` / `python3` のみを使う。追加のインストールは不要。
+
+Private リポジトリでも Actions は無料枠（月2000分）で動く。このジョブは1回1分未満なので十分収まる。
