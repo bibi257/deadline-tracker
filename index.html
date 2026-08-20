@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-08-10 20:18 JST">
+<meta name="build-stamp" content="2026-08-20 17:22 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -118,6 +118,8 @@ header{
 .meta{font-size:12px;color:var(--ink-2);display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
 .cat{font-size:11px;border:1px solid var(--rule);border-radius:2px;padding:0 6px;color:var(--ink-2)}
 .memo{font-size:12.5px;color:var(--ink-2);margin:6px 0 0;white-space:pre-wrap}
+.stale-note{font-size:12px;color:var(--red);margin:6px 0 0;line-height:1.5}
+.card.stale{border-left-width:5px}
 /* signature: 経過メーター */
 .rail{height:3px;background:var(--rule);border-radius:2px;margin:10px 0 8px;overflow:hidden}
 .rail i{display:block;height:100%;background:var(--ink-3);width:0}
@@ -147,6 +149,9 @@ header{
 .day .d{font-family:"Oswald";font-size:13px;color:var(--ink-2)}
 .day.is-today .d{background:var(--ink);color:var(--paper);border-radius:2px;padding:0 4px}
 .day.sel{box-shadow:inset 0 0 0 2px var(--blue)}
+.day.holiday .d{color:var(--red)}
+.holname{font-size:8.5px;line-height:1.2;color:var(--red);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+@media (max-width:420px){.holname{display:none}}
 .dot{height:4px;border-radius:2px;background:var(--ink-3)}
 .dot.over,.dot.today{background:var(--red)}.dot.soon{background:var(--amber)}.dot.near{background:var(--blue)}
 .dot.done{background:var(--rule)}
@@ -156,6 +161,32 @@ header{
 .card.routine .rail i{background:var(--routine)}
 .card.routine .left .n{color:var(--routine)}
 .sel-title{margin:16px 0 6px;font-size:12px;letter-spacing:.12em;color:var(--ink-3)}
+
+/* ---- week view ---- */
+.week{margin-top:14px;border-top:1px solid var(--rule)}
+.wday{display:grid;grid-template-columns:82px 1fr;gap:10px;padding:9px 0;border-bottom:1px solid var(--rule)}
+.wday.is-today{background:linear-gradient(90deg,rgba(31,70,200,.06),transparent)}
+html[data-theme="dark"] .wday.is-today{background:linear-gradient(90deg,rgba(126,160,255,.10),transparent)}
+.wday-head{padding-left:2px;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px}
+.wday-head .num{font-family:"Oswald";font-size:17px;font-weight:600}
+.wdow{font-size:11.5px;color:var(--ink-3)}
+.wday-head.sun .num,.wday-head.sun .wdow{color:var(--red)}
+.wday-head.sat .num,.wday-head.sat .wdow{color:var(--blue)}
+.wtag{font-size:10.5px;background:var(--ink);color:var(--paper);border-radius:2px;padding:1px 5px;letter-spacing:.06em}
+html[data-theme="dark"] .wtag{color:#101317}
+.wday-body{min-width:0}
+.wnone{font-size:12px;color:var(--ink-3);padding:3px 0}
+.witem{display:flex;align-items:baseline;gap:7px;padding:4px 6px;border-radius:2px;cursor:pointer;min-width:0}
+.witem:hover{background:var(--card)}
+.wmark{flex-shrink:0;font-size:11px}
+.wtitle{font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.wcat{font-size:10.5px;color:var(--ink-3);border:1px solid var(--rule);border-radius:2px;padding:0 5px;flex-shrink:0}
+.wtime{font-size:11.5px;color:var(--ink-2);flex-shrink:0}
+.witem.routine .wtitle{color:var(--routine)}
+@media (max-width:420px){
+  .wday{grid-template-columns:64px 1fr;gap:8px}
+  .wcat{display:none}
+}
 
 /* ---- misc ---- */
 .empty{border:1px dashed var(--rule);border-radius:var(--radius);padding:28px 18px;text-align:center;color:var(--ink-2);font-size:13.5px}
@@ -237,6 +268,7 @@ html[data-theme="dark"] .toast{color:#101317}
     </div>
     <nav class="tabs" role="tablist">
       <button class="tab" role="tab" data-view="list" aria-selected="true">一覧</button>
+      <button class="tab" role="tab" data-view="week" aria-selected="false">今週</button>
       <button class="tab" role="tab" data-view="rep" aria-selected="false">定期予定</button>
       <button class="tab" role="tab" data-view="cal" aria-selected="false">カレンダー</button>
       <button class="tab" role="tab" data-view="done" aria-selected="false">完了</button>
@@ -253,6 +285,9 @@ html[data-theme="dark"] .toast{color:#101317}
 <dialog id="dlg">
   <form method="dialog" class="dlg-in" id="dlgForm">
     <h2 id="dlgTitle">締切を登録</h2>
+    <label class="field" id="tplRow" style="display:none"><span>テンプレートから入力</span>
+      <select id="fTpl"></select>
+    </label>
     <label class="field"><span>タイトル</span><input type="text" id="fTitle" required maxlength="80" placeholder="例：月次報告書の提出"></label>
     <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
       <input type="checkbox" id="fSpan" style="width:auto">何日かにまたがる予定にする（出張・研修期間など）
@@ -268,6 +303,7 @@ html[data-theme="dark"] .toast{color:#101317}
       <label class="field"><span id="dueLabel">締切日</span><input type="date" id="fDate" required></label>
       <label class="field dueTimeCell"><span>時刻</span><input type="time" id="fTime" value="09:00" required></label>
     </div>
+    <p id="dayOffNote" style="display:none;font-size:12px;color:var(--amber);margin:-6px 0 12px"></p>
     <div class="two">
       <label class="field"><span>カテゴリ</span><select id="fCat"></select></label>
       <label class="field"><span>繰り返し</span><select id="fRep">
@@ -303,12 +339,14 @@ var store={
   set:function(k,v){ if(hasLS){try{localStorage.setItem(k,v);}catch(e){toast("保存できませんでした（空き容量を確認してください）");}} else {mem[k]=v;} }
 };
 
-var db={items:[],categories:["仕事","提出物","支払い","プライベート","その他"],settings:{dayHour:9,theme:"auto"}};
+var db={items:[],templates:[],categories:["仕事","提出物","支払い","プライベート","その他"],settings:{dayHour:9,theme:"auto"}};
 function load(){
   var raw=store.get(KEY); if(!raw) return;
   try{
     var d=JSON.parse(raw);
     if(d&&Array.isArray(d.items)) db.items=d.items;
+    // templates は後から追加した項目。古いデータには無いので空配列で補う
+    if(d&&Array.isArray(d.templates)) db.templates=d.templates;
     if(d&&Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
     if(d&&d.settings) db.settings=Object.assign(db.settings,d.settings);
   }catch(e){}
@@ -353,6 +391,155 @@ function remainText(it){
   }
   return {n:n, u:it.start?"日後に開始":"日後"};
 }
+
+/* ========== 祝日 ==========
+   出典：holiday_jp（内閣府「国民の祝日について」を元にしたデータ）
+   最終更新：2026-08-20 ／ 収録範囲：2026〜2032年
+   ※法改正や振替で変わることがある。収録範囲を過ぎたら更新すること（README参照） */
+var HOLIDAYS={
+  // 2026年
+  "2026-01-01":"元日",
+  "2026-01-12":"成人の日",
+  "2026-02-11":"建国記念の日",
+  "2026-02-23":"天皇誕生日",
+  "2026-03-20":"春分の日",
+  "2026-04-29":"昭和の日",
+  "2026-05-03":"憲法記念日",
+  "2026-05-04":"みどりの日",
+  "2026-05-05":"こどもの日",
+  "2026-05-06":"こどもの日 振替休日",
+  "2026-07-20":"海の日",
+  "2026-08-11":"山の日",
+  "2026-09-21":"敬老の日",
+  "2026-09-22":"休日",
+  "2026-09-23":"秋分の日",
+  "2026-10-12":"スポーツの日",
+  "2026-11-03":"文化の日",
+  "2026-11-23":"勤労感謝の日",
+
+  // 2027年
+  "2027-01-01":"元日",
+  "2027-01-11":"成人の日",
+  "2027-02-11":"建国記念の日",
+  "2027-02-23":"天皇誕生日",
+  "2027-03-21":"春分の日",
+  "2027-03-22":"春分の日 振替休日",
+  "2027-04-29":"昭和の日",
+  "2027-05-03":"憲法記念日",
+  "2027-05-04":"みどりの日",
+  "2027-05-05":"こどもの日",
+  "2027-07-19":"海の日",
+  "2027-08-11":"山の日",
+  "2027-09-20":"敬老の日",
+  "2027-09-23":"秋分の日",
+  "2027-10-11":"スポーツの日",
+  "2027-11-03":"文化の日",
+  "2027-11-23":"勤労感謝の日",
+
+  // 2028年
+  "2028-01-01":"元日",
+  "2028-01-10":"成人の日",
+  "2028-02-11":"建国記念の日",
+  "2028-02-23":"天皇誕生日",
+  "2028-03-20":"春分の日",
+  "2028-04-29":"昭和の日",
+  "2028-05-03":"憲法記念日",
+  "2028-05-04":"みどりの日",
+  "2028-05-05":"こどもの日",
+  "2028-07-17":"海の日",
+  "2028-08-11":"山の日",
+  "2028-09-18":"敬老の日",
+  "2028-09-22":"秋分の日",
+  "2028-10-09":"スポーツの日",
+  "2028-11-03":"文化の日",
+  "2028-11-23":"勤労感謝の日",
+
+  // 2029年
+  "2029-01-01":"元日",
+  "2029-01-08":"成人の日",
+  "2029-02-11":"建国記念の日",
+  "2029-02-12":"建国記念の日 振替休日",
+  "2029-02-23":"天皇誕生日",
+  "2029-03-20":"春分の日",
+  "2029-04-29":"昭和の日",
+  "2029-04-30":"昭和の日 振替休日",
+  "2029-05-03":"憲法記念日",
+  "2029-05-04":"みどりの日",
+  "2029-05-05":"こどもの日",
+  "2029-07-16":"海の日",
+  "2029-08-11":"山の日",
+  "2029-09-17":"敬老の日",
+  "2029-09-23":"秋分の日",
+  "2029-09-24":"秋分の日 振替休日",
+  "2029-10-08":"スポーツの日",
+  "2029-11-03":"文化の日",
+  "2029-11-23":"勤労感謝の日",
+
+  // 2030年
+  "2030-01-01":"元日",
+  "2030-01-14":"成人の日",
+  "2030-02-11":"建国記念の日",
+  "2030-02-23":"天皇誕生日",
+  "2030-03-20":"春分の日",
+  "2030-04-29":"昭和の日",
+  "2030-05-03":"憲法記念日",
+  "2030-05-04":"みどりの日",
+  "2030-05-05":"こどもの日",
+  "2030-05-06":"こどもの日 振替休日",
+  "2030-07-15":"海の日",
+  "2030-08-11":"山の日",
+  "2030-08-12":"山の日 振替休日",
+  "2030-09-16":"敬老の日",
+  "2030-09-23":"秋分の日",
+  "2030-10-14":"スポーツの日",
+  "2030-11-03":"文化の日",
+  "2030-11-04":"文化の日 振替休日",
+  "2030-11-23":"勤労感謝の日",
+
+  // 2031年
+  "2031-01-01":"元日",
+  "2031-01-13":"成人の日",
+  "2031-02-11":"建国記念の日",
+  "2031-02-23":"天皇誕生日",
+  "2031-02-24":"天皇誕生日 振替休日",
+  "2031-03-21":"春分の日",
+  "2031-04-29":"昭和の日",
+  "2031-05-03":"憲法記念日",
+  "2031-05-04":"みどりの日",
+  "2031-05-05":"こどもの日",
+  "2031-05-06":"こどもの日 振替休日",
+  "2031-07-21":"海の日",
+  "2031-08-11":"山の日",
+  "2031-09-15":"敬老の日",
+  "2031-09-23":"秋分の日",
+  "2031-10-13":"スポーツの日",
+  "2031-11-03":"文化の日",
+  "2031-11-23":"勤労感謝の日",
+  "2031-11-24":"勤労感謝の日 振替休日",
+
+  // 2032年
+  "2032-01-01":"元日",
+  "2032-01-12":"成人の日",
+  "2032-02-11":"建国記念の日",
+  "2032-02-23":"天皇誕生日",
+  "2032-03-20":"春分の日",
+  "2032-04-29":"昭和の日",
+  "2032-05-03":"憲法記念日",
+  "2032-05-04":"みどりの日",
+  "2032-05-05":"こどもの日",
+  "2032-07-19":"海の日",
+  "2032-08-11":"山の日",
+  "2032-09-20":"敬老の日",
+  "2032-09-21":"休日",
+  "2032-09-22":"秋分の日",
+  "2032-10-11":"スポーツの日",
+  "2032-11-03":"文化の日",
+  "2032-11-23":"勤労感謝の日"
+};
+function holidayName(key){ return HOLIDAYS[key]||null; }
+function isHoliday(d){ return !!HOLIDAYS[toLocalISO(d)]; }
+/* 土日祝のいずれかなら休日とみなす */
+function isDayOff(d){ return d.getDay()===0||d.getDay()===6||isHoliday(d); }
 
 /* ========== .ics 生成 ========== */
 function esc(s){ return String(s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n"); }
@@ -491,6 +678,7 @@ function render(){
   main.innerHTML="";
   if(!hasLS) main.appendChild(h('<div class="notice">この画面ではブラウザの保存領域が使えないため、入力内容は再読み込みで消えます。GitHub Pages に置けば端末内に保存されます。</div>'));
   if(view==="list") renderList();
+  else if(view==="week") renderWeek();
   else if(view==="rep") renderRepeat();
   else if(view==="cal") renderCal();
   else if(view==="done") renderDone();
@@ -517,7 +705,7 @@ function cardOf(it){
   // カレンダー画面の繰り返しは表示用の複製（occurrence>0、または展開由来）で、
   // 完了・編集をここから行うと元の予定がずれるので、その回の取りやめだけに絞る
   var isCopy=!!it.isExpanded;
-  var el=h('<article class="card '+st+(isRepeating(it)?" routine":"")+(it.done?" done":"")+'">'+
+  var el=h('<article class="card '+st+(isRepeating(it)?" routine":"")+(isStale(it)&&!it.done?" stale":"")+(it.done?" done":"")+'">'+
     '<div class="left"><b class="n num">'+escHtml(r.n)+'</b><span class="u">'+escHtml(r.u)+'</span></div>'+
     '<div class="body">'+
       '<h3 class="title">'+escHtml(it.title)+'</h3>'+
@@ -527,6 +715,7 @@ function cardOf(it){
       (it.rep&&it.rep!=="none"?'<span class="cat">'+({weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"}[it.rep])+
         (it.repCount>0?" 残"+it.repCount+"回":"")+'</span>':"")+'</div>'+
       (it.memo?'<p class="memo">'+escHtml(it.memo)+'</p>':"")+
+      (isStale(it)&&!it.done?'<p class="stale-note">⚠️ '+overdueDays(it)+'日が過ぎています。まだ必要ですか？完了か削除をおすすめします。</p>':"")+
       '<div class="rail"><i style="width:'+pct+'%"></i></div>'+
       '<div class="acts"></div>'+
     '</div></article>');
@@ -552,6 +741,7 @@ function cardOf(it){
       }
       add("カレンダーへ","primary",function(){ downloadICS([it], it.title); });
       add("編集","",function(){ openDialog(it); });
+      add("雛形に保存","",function(){ saveAsTemplate(it); });
     }
   } else {
     add("戻す","",function(){ it.done=false; save(); render(); });
@@ -571,7 +761,7 @@ function autoSyncIfConfigured(){
   var api="https://api.github.com/repos/"+saved.owner+"/"+saved.repo+"/contents/data.json";
   var branch=saved.branch||"main";
   var headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"};
-  var content=utf8ToBase64(JSON.stringify({items:db.items, categories:db.categories},null,2));
+  var content=utf8ToBase64(JSON.stringify({items:db.items, templates:db.templates, categories:db.categories},null,2));
 
   function fetchSha(){
     return fetch(api+"?ref="+encodeURIComponent(branch)+"&_="+Date.now(),{headers:headers, cache:"no-store"})
@@ -601,6 +791,55 @@ function autoNotifyIfConfigured(){
   if(!hook) return;
   fetch(hook,{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({content:buildDigestText()})}).catch(function(){});
+}
+
+/* 期限切れからの経過日数。滞留（長く放置されている状態）の判定に使う */
+function overdueDays(it){
+  var due=parseItemDate(it);
+  if(due>=new Date()) return -1;
+  return daysBetween(due, new Date());
+}
+function isStale(it){ return overdueDays(it)>=7; }
+
+/* テンプレートの内容をフォームに反映する */
+function applyTemplate(id){
+  if(!id) return;
+  var t=db.templates.filter(function(x){ return x.id===id; })[0];
+  if(!t) return;
+  document.getElementById("fTitle").value=t.title||"";
+  document.getElementById("fMemo").value=t.memo||"";
+  document.getElementById("fCat").value=(db.categories.indexOf(t.cat)>=0)?t.cat:db.categories[0];
+  document.getElementById("fRep").value=t.rep||"none";
+  document.getElementById("fRepCount").value=String(t.repCount==null?15:t.repCount);
+  document.getElementById("fAllDay").checked=!!t.allDay;
+  // 締切日は「今日から◯日後」で計算する（絶対日付だと毎回過去になるため）
+  var base=new Date();
+  base.setDate(base.getDate()+(t.offsetDays||0));
+  document.getElementById("fDate").value=toLocalISO(base);
+  document.getElementById("fTime").value=t.timeOfDay||"09:00";
+  document.getElementById("fSpan").checked=false;
+  syncDialogRows();
+  toast("「"+t.name+"」を読み込みました");
+}
+
+/* いまある締切をテンプレートとして保存する */
+function saveAsTemplate(it){
+  var name=prompt("テンプレート名を入力してください", it.title);
+  if(name===null) return;
+  name=name.trim();
+  if(!name){ toast("名前が空です"); return; }
+  // 締切日は「今日から何日後か」に変換して保存する
+  var diff=daysBetween(new Date(), parseItemDate(it));
+  var d=parseItemDate(it);
+  db.templates.push({
+    id:"t"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+    name:name, title:it.title, cat:it.cat, memo:it.memo||"",
+    allDay:!!it.allDay, rep:it.rep||"none", repCount:it.repCount||0,
+    offsetDays:Math.max(0,diff),
+    timeOfDay:it.allDay?"09:00":(pad(d.getHours())+":"+pad(d.getMinutes()))
+  });
+  save(); render();
+  toast("テンプレート「"+name+"」を保存しました");
 }
 
 /* 削除は直前の1件だけ一時保持し、「元に戻す」で復元できるようにする */
@@ -678,13 +917,78 @@ function renderListBody(){
     var arr=list.filter(function(i){ return !used[i.id]&&g[1](i); });
     arr.forEach(function(i){ used[i.id]=1; });
     if(!arr.length) return;
-    body.appendChild(h('<div class="group-label">'+g[0]+'</div>'));
+    // 期限切れの中では、長く放置されているものを先頭に出す
+    if(g[0]==="期限切れ"){
+      arr.sort(function(a,b){ return overdueDays(b)-overdueDays(a); });
+      var stale=arr.filter(isStale).length;
+      body.appendChild(h('<div class="group-label">'+g[0]+(stale?'（うち '+stale+' 件が7日以上）':'')+'</div>'));
+    } else {
+      body.appendChild(h('<div class="group-label">'+g[0]+'</div>'));
+    }
     arr.forEach(function(i){ body.appendChild(cardOf(i)); });
   });
   var all=h('<div style="margin:20px 0 0"><button class="act primary" style="padding:8px 14px">表示中の締切をまとめてカレンダーへ書き出す</button></div>');
   all.querySelector("button").onclick=function(){ downloadICS(list,"deadlines"); };
   body.appendChild(all);
 }
+
+/* 今日から7日分を縦に並べる。予定のない日も行として出す（空白に意味がある） */
+function renderWeek(){
+  main.appendChild(filterBar());
+  var today=startOfDay(new Date());
+  var last=new Date(today.getFullYear(),today.getMonth(),today.getDate()+6,23,59,59);
+
+  // 繰り返しは表示範囲ぶんだけ展開する（カレンダーと同じ処理を流用）
+  var items=[];
+  db.items.filter(function(i){ return (filter==="ALL"||i.cat===filter)&&!i.done; })
+    .forEach(function(i){ items=items.concat(expandOccurrences(i, today, last)); });
+
+  var wrap=h('<div class="week"></div>');
+  var total=0;
+  for(var k=0;k<7;k++){
+    var d=new Date(today.getFullYear(),today.getMonth(),today.getDate()+k);
+    var key=toLocalISO(d);
+    // その日が締切の予定と、期間の途中にある予定を集める
+    var hit=items.filter(function(i){
+      var dueKey=toLocalISO(parseItemDate(i));
+      if(dueKey===key) return true;
+      if(!i.start) return false;
+      return key>=toLocalISO(new Date(i.start)) && key<dueKey;
+    }).sort(sortByDue);
+    total+=hit.length;
+
+    var hol=holidayName(key);
+    var dowCls=(d.getDay()===0||hol?" sun":d.getDay()===6?" sat":"");
+    var label=(k===0?"今日":k===1?"明日":"");
+    var row=h('<div class="wday'+(k===0?" is-today":"")+'">'+
+      '<div class="wday-head'+dowCls+'"><span class="num">'+(d.getMonth()+1)+'/'+d.getDate()+'</span>'+
+      '<span class="wdow">（'+DOW[d.getDay()]+'）</span>'+
+      (label?'<span class="wtag">'+label+'</span>':'')+
+      (hol?'<span class="wdow" style="width:100%">'+escHtml(hol)+'</span>':'')+'</div>'+
+      '<div class="wday-body"></div></div>');
+    var body=row.querySelector(".wday-body");
+    if(!hit.length){
+      body.appendChild(h('<div class="wnone">予定なし</div>'));
+    } else {
+      hit.forEach(function(i){
+        var isDue=(toLocalISO(parseItemDate(i))===key);
+        var mark=isRepeating(i)?"🔁":(isDue?"・":"↳");
+        var when=i.allDay?"終日":(isDue?fmtTime(parseItemDate(i)):"期間中");
+        var item=h('<div class="witem'+(isRepeating(i)?" routine":"")+'">'+
+          '<span class="wmark">'+mark+'</span>'+
+          '<span class="wtitle">'+escHtml(i.title)+'</span>'+
+          '<span class="wcat">'+escHtml(i.cat||"")+'</span>'+
+          '<span class="wtime num">'+escHtml(when)+'</span></div>');
+        item.onclick=(function(key){ return function(){ view="cal"; selDay=key; calRef=new Date(key+"T00:00:00"); render(); }; })(key);
+        body.appendChild(item);
+      });
+    }
+    wrap.appendChild(row);
+  }
+  main.appendChild(wrap);
+  if(!total) main.appendChild(h('<div class="empty" style="margin-top:14px">この7日間に予定はありません。</div>'));
+}
+function fmtTime(d){ return pad(d.getHours())+":"+pad(d.getMinutes()); }
 
 function renderRepeat(){
   main.appendChild(filterBar());
@@ -760,7 +1064,10 @@ function renderCal(){
   for(var k=0;k<42;k++){
     var d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+k);
     var key=toLocalISO(d);
-    var day=h('<button class="day'+(d.getMonth()!==m?" out":"")+(key===todayKey?" is-today":"")+(selDay===key?" sel":"")+'"><span class="d">'+d.getDate()+'</span></button>');
+    var hol=holidayName(key);
+    var day=h('<button class="day'+(d.getMonth()!==m?" out":"")+(key===todayKey?" is-today":"")+(selDay===key?" sel":"")+(hol?" holiday":"")+'" '+
+      (hol?'title="'+escHtml(hol)+'"':'')+'><span class="d">'+d.getDate()+'</span>'+
+      (hol?'<span class="holname">'+escHtml(hol)+'</span>':'')+'</button>');
     var hit=hitsOn(key);
     hit.slice(0,3).forEach(function(i){
       var isDue=(toLocalISO(new Date(i.due))===key);
@@ -824,6 +1131,31 @@ function renderSettings(){
   for(var hh=5;hh<=22;hh++){ var o=document.createElement("option"); o.value=hh; o.textContent=hh+":00"; if(hh===db.settings.dayHour) o.selected=true; sel.appendChild(o); }
   sel.onchange=function(){ db.settings.dayHour=parseInt(sel.value,10); save(); toast("当日リマインドを "+sel.value+":00 にしました"); };
   s1.appendChild(sel); main.appendChild(s1);
+
+  // テンプレート
+  var sT=h('<div class="sec"><h3>テンプレート</h3>'+
+    '<p>よく登録する締切の雛形です。締切カードの「雛形に保存」から作れます。登録画面で選ぶと内容が入り、締切日は「今日から◯日後」で計算されます。</p>'+
+    '<div class="cat-list"></div></div>');
+  var tplList=sT.querySelector(".cat-list");
+  if(!db.templates.length){
+    tplList.appendChild(h('<p style="font-size:12.5px;color:var(--ink-3);margin:0">まだありません。</p>'));
+  } else {
+    db.templates.forEach(function(t){
+      var row=h('<div class="cat-row"><span class="cat-name">'+escHtml(t.name)+
+        '<br><span style="font-size:11.5px;color:var(--ink-3)">'+escHtml(t.title)+'　'+escHtml(t.cat||"")+
+        '　'+(t.offsetDays?("今日から"+t.offsetDays+"日後"):"当日")+'</span></span>'+
+        '<div class="cat-btns"></div></div>');
+      var del=h('<button class="act" title="削除">×</button>');
+      del.onclick=function(){
+        if(!confirm("テンプレート「"+t.name+"」を削除します。よろしいですか？")) return;
+        db.templates=db.templates.filter(function(x){ return x.id!==t.id; });
+        save(); render(); toast("削除しました");
+      };
+      row.querySelector(".cat-btns").appendChild(del);
+      tplList.appendChild(row);
+    });
+  }
+  main.appendChild(sT);
 
   // カテゴリ
   var s2=h('<div class="sec"><h3>カテゴリ</h3><p>登録画面の選択肢と、フィルタの並び順になります。</p><div class="cat-list"></div></div>');
@@ -889,6 +1221,7 @@ function renderSettings(){
         if(!d||!Array.isArray(d.items)) throw 0;
         if(!confirm("読み込むと現在のデータは置き換わります。続けますか？")) return;
         db.items=d.items;
+        if(Array.isArray(d.templates)) db.templates=d.templates;
         if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
         if(d.settings) db.settings=Object.assign(db.settings,d.settings);
         save(); applyTheme(); render(); toast("読み込みました");
@@ -1046,6 +1379,17 @@ function buildDigestText(){
   var t="# 📋 締切トラッカー\n";
   t+="### "+(now.getMonth()+1)+"月"+now.getDate()+"日（"+DOW[now.getDay()]+"）の連絡\n";
 
+  // 長く放置されているものは冒頭で警告する。多すぎると麻痺するので上位3件まで
+  var stale=over.filter(isStale).sort(function(a,b){ return overdueDays(b)-overdueDays(a); });
+  if(stale.length){
+    t+="\n## ⚠️ 長く残っています（"+stale.length+"件）\n";
+    stale.slice(0,3).forEach(function(i){
+      t+="- **"+i.title+"**　`"+(i.cat||"その他")+"`\n  "+fmtDue(parseItemDate(i),i.allDay)+" 締切 ── "+overdueDays(i)+"日経過\n";
+    });
+    if(stale.length>3) t+="-# ほか "+(stale.length-3)+" 件\n";
+    t+="-# 完了か削除をおすすめします\n";
+  }
+
   if(over.length){
     t+="\n## 🔴 期限切れ（"+over.length+"件）\n";
     over.forEach(function(i){ t+=line(i)+"\n"; });
@@ -1180,6 +1524,7 @@ function pullFromGitHub(g,s5){
         return;
       }
       db.items=d.items;
+      if(Array.isArray(d.templates)) db.templates=d.templates;
       if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
       save(); render();
       statusEl.textContent="読み込みました（"+n+"件）。";
@@ -1211,7 +1556,7 @@ function syncToGitHub(g,s5){
   if(!cfg) return;
   statusEl.textContent="同期しています…";
   var api=cfg.api, branch=cfg.branch, headers=cfg.headers;
-  var payload={items:db.items, categories:db.categories};
+  var payload={items:db.items, templates:db.templates, categories:db.categories};
   var content=utf8ToBase64(JSON.stringify(payload,null,2));
 
   // 現在のsha(ファイルの版番号)を取得する。キャッシュされた古いshaを送ると409になるため無効化する
@@ -1261,6 +1606,21 @@ function openDialog(item){
   var catSel=document.getElementById("fCat");
   catSel.innerHTML="";
   db.categories.forEach(function(c){ var o=document.createElement("option"); o.value=c; o.textContent=c; catSel.appendChild(o); });
+
+  // テンプレート欄は新規登録のときだけ出す（編集中に入れ替わると混乱するため）
+  var tplRow=document.getElementById("tplRow"), tplSel=document.getElementById("fTpl");
+  if(!item && db.templates.length){
+    tplRow.style.display="";
+    tplSel.innerHTML="";
+    var none=document.createElement("option"); none.value=""; none.textContent="（使わない）"; tplSel.appendChild(none);
+    db.templates.forEach(function(t){
+      var o=document.createElement("option"); o.value=t.id; o.textContent=t.name; tplSel.appendChild(o);
+    });
+    tplSel.value="";
+    tplSel.onchange=function(){ applyTemplate(tplSel.value); };
+  } else {
+    tplRow.style.display="none";
+  }
   if(item){
     var d=parseItemDate(item);
     document.getElementById("fTitle").value=item.title;
@@ -1305,7 +1665,20 @@ function syncDialogRows(){
   dueCell.style.display=allDay?"none":"";
   startCell.style.display=allDay?"none":"";
   document.getElementById("fTime").required=!allDay;
+
+  // 締切日が土日祝なら知らせる（登録は妨げない）
+  var note=document.getElementById("dayOffNote");
+  var dv=document.getElementById("fDate").value;
+  note.style.display="none";
+  if(dv){
+    var dd=new Date(dv+"T00:00:00");
+    var hol=holidayName(dv);
+    if(hol){ note.textContent="⚠️ この日は祝日です（"+hol+"）"; note.style.display=""; }
+    else if(dd.getDay()===0){ note.textContent="⚠️ この日は日曜です"; note.style.display=""; }
+    else if(dd.getDay()===6){ note.textContent="⚠️ この日は土曜です"; note.style.display=""; }
+  }
 }
+document.getElementById("fDate").addEventListener("change",syncDialogRows);
 document.getElementById("fSpan").addEventListener("change",syncDialogRows);
 document.getElementById("fAllDay").addEventListener("change",syncDialogRows);
 document.getElementById("fRep").addEventListener("change",syncDialogRows);
