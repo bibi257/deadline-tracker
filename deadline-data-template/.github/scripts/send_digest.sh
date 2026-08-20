@@ -180,9 +180,11 @@ if [ -z "$ROWS" ]; then
 fi
 
 OVER_LINES=""
+STALE_LINES=""
 TODAY_LINES=""
 SOON_LINES=""
 OVERDUE_COUNT=0
+STALE_COUNT=0
 TODAY_COUNT=0
 SOON_COUNT=0
 TODAY_KEY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
@@ -198,6 +200,15 @@ while IFS=$'\x1f' read -r epoch title cat due start allday refep; do
   if [ "$epoch" -lt "$NOW_EPOCH" ]; then
     OVER_LINES="${OVER_LINES}${ENTRY}"
     OVERDUE_COUNT=$((OVERDUE_COUNT+1))
+    # 7日以上放置されているものは別途警告する
+    DUE_KEY=$(TZ=Asia/Tokyo date -d "@$epoch" +%Y-%m-%d)
+    ELAPSED=$(( ( $(date -d "$TODAY_KEY" +%s) - $(date -d "$DUE_KEY" +%s) ) / 86400 ))
+    if [ "$ELAPSED" -ge 7 ]; then
+      STALE_COUNT=$((STALE_COUNT+1))
+      if [ "$STALE_COUNT" -le 3 ]; then
+        STALE_LINES="${STALE_LINES}- **${title}**　\`${cat}\`"$'\n'"  $(fmt_when "$due" "$allday") 締切 ── ${ELAPSED}日経過"$'\n'
+      fi
+    fi
   elif [ "$REF_KEY" = "$TODAY_KEY" ]; then
     TODAY_LINES="${TODAY_LINES}${ENTRY}"
     TODAY_COUNT=$((TODAY_COUNT+1))
@@ -208,6 +219,13 @@ while IFS=$'\x1f' read -r epoch title cat due start allday refep; do
 done <<< "$ROWS"
 
 CONTENT="${MENTION}"$'\n'"# 📋 締切トラッカー"$'\n'"### ${TODAY_JST}の連絡"$'\n'
+if [ "$STALE_COUNT" -gt 0 ]; then
+  CONTENT="${CONTENT}"$'\n'"## ⚠️ 長く残っています（${STALE_COUNT}件）"$'\n'"${STALE_LINES}"
+  if [ "$STALE_COUNT" -gt 3 ]; then
+    CONTENT="${CONTENT}-# ほか $((STALE_COUNT-3)) 件"$'\n'
+  fi
+  CONTENT="${CONTENT}-# 完了か削除をおすすめします"$'\n'
+fi
 if [ "$OVERDUE_COUNT" -gt 0 ]; then
   CONTENT="${CONTENT}"$'\n'"## 🔴 期限切れ（${OVERDUE_COUNT}件）"$'\n'"${OVER_LINES}"
 fi
