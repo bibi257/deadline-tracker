@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-08-20 22:04 JST">
+<meta name="build-stamp" content="2026-08-20 22:10 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -816,11 +816,15 @@ function applyTemplate(id){
   document.getElementById("fTime").value=t.timeOfDay||"09:00";
   document.getElementById("fSpan").checked=false;
   syncDialogRows();
-  // 日付は空にして、入力を促す
+  // 日付はテンプレートに含めない。ただし、カレンダーから開いたなど
+  // すでに日付が入っている場合はその選択を尊重する
   var dateEl=document.getElementById("fDate");
-  dateEl.value="";
-  dateEl.focus();
-  toast("「"+t.name+"」を読み込みました。日付を入力してください");
+  if(dateEl.value){
+    toast("「"+t.name+"」を読み込みました");
+  } else {
+    dateEl.focus();
+    toast("「"+t.name+"」を読み込みました。日付を入力してください");
+  }
 }
 
 /* いまある締切をテンプレートとして保存する */
