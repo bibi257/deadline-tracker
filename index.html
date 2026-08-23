@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-08-20 22:10 JST">
+<meta name="build-stamp" content="2026-08-23 10:47 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -83,6 +83,7 @@ header{
   border-bottom:2px solid transparent;white-space:nowrap
 }
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
+.tab-badge{display:inline-block;margin-left:5px;background:var(--red);color:#fff;font-size:10.5px;font-weight:700;line-height:1;padding:2px 5px;border-radius:8px;vertical-align:1px}
 
 /* ---- filter ---- */
 .filters{display:flex;flex-wrap:wrap;gap:6px;padding:12px 0 2px}
@@ -269,6 +270,7 @@ html[data-theme="dark"] .toast{color:#101317}
     <nav class="tabs" role="tablist">
       <button class="tab" role="tab" data-view="list" aria-selected="true">一覧</button>
       <button class="tab" role="tab" data-view="week" aria-selected="false">今週</button>
+      <button class="tab" role="tab" data-view="over" aria-selected="false">超過</button>
       <button class="tab" role="tab" data-view="rep" aria-selected="false">定期予定</button>
       <button class="tab" role="tab" data-view="cal" aria-selected="false">カレンダー</button>
       <button class="tab" role="tab" data-view="done" aria-selected="false">完了</button>
@@ -669,16 +671,27 @@ function render(){
     document.getElementById("cntNum").textContent=reps.length;
     document.getElementById("cntLabel").textContent="定期予定";
   }
+  else if(view==="over"){
+    document.getElementById("cntNum").textContent=over.length;
+    document.getElementById("cntLabel").textContent="超過";
+  }
   else if(over.length){ document.getElementById("cntNum").textContent=over.length; document.getElementById("cntLabel").textContent="期限切れ"; }
   else { document.getElementById("cntNum").textContent=soon.length; document.getElementById("cntLabel").textContent="7日以内"; }
 
   document.querySelectorAll(".tab").forEach(function(t){ t.setAttribute("aria-selected", t.dataset.view===view?"true":"false"); });
+  // 超過タブには件数を出し、開かなくても気づけるようにする
+  var overTab=document.querySelector('.tab[data-view="over"]');
+  if(overTab){
+    var n=over.length;
+    overTab.innerHTML="超過"+(n?'<span class="tab-badge">'+n+"</span>":"");
+  }
   document.getElementById("fabAdd").style.display = (view==="set")?"none":"";
 
   main.innerHTML="";
   if(!hasLS) main.appendChild(h('<div class="notice">この画面ではブラウザの保存領域が使えないため、入力内容は再読み込みで消えます。GitHub Pages に置けば端末内に保存されます。</div>'));
   if(view==="list") renderList();
   else if(view==="week") renderWeek();
+  else if(view==="over") renderOverdue();
   else if(view==="rep") renderRepeat();
   else if(view==="cal") renderCal();
   else if(view==="done") renderDone();
@@ -780,7 +793,7 @@ function autoSyncIfConfigured(){
   }
   fetchSha().then(put)
     .then(function(res){ if(res.status===409) return fetchSha().then(put); return res; })
-    .then(function(res){ if(res.ok) toast("GitHubに自動同期しました"); })
+    .then(function(res){ if(res.ok){ markSynced("自動同期"); toast("GitHubに自動同期しました"); } })
     .catch(function(){ /* 自動処理なので失敗しても通知しない */ });
 }
 
@@ -800,6 +813,31 @@ function overdueDays(it){
   return daysBetween(due, new Date());
 }
 function isStale(it){ return overdueDays(it)>=7; }
+
+/* 最後に同期・読み込みした時刻を記録する（設定タブに表示して、
+   同期し忘れに気づけるようにするため） */
+function markSynced(kind){
+  store.set("gh-last-sync", JSON.stringify({at:new Date().toISOString(), kind:kind}));
+}
+/* 「3時間前」のような相対表記にする。数字より状態が伝わりやすい */
+function lastSyncText(){
+  var raw=store.get("gh-last-sync");
+  if(!raw) return null;
+  try{
+    var d=JSON.parse(raw);
+    var t=new Date(d.at);
+    var min=Math.floor((Date.now()-t)/60000);
+    var rel;
+    if(min<1) rel="たった今";
+    else if(min<60) rel=min+"分前";
+    else if(min<24*60) rel=Math.floor(min/60)+"時間前";
+    else rel=Math.floor(min/1440)+"日前";
+    return {
+      text:t.getFullYear()+"/"+(t.getMonth()+1)+"/"+t.getDate()+" "+pad(t.getHours())+":"+pad(t.getMinutes()),
+      rel:rel, kind:d.kind||"同期", stale:(min>=24*60)
+    };
+  }catch(e){ return null; }
+}
 
 /* テンプレートの内容をフォームに反映する。
    日付は毎回違うため入れない（意図しない日付のまま保存されるのを防ぐ） */
@@ -932,6 +970,48 @@ function renderListBody(){
   var all=h('<div style="margin:20px 0 0"><button class="act primary" style="padding:8px 14px">表示中の締切をまとめてカレンダーへ書き出す</button></div>');
   all.querySelector("button").onclick=function(){ downloadICS(list,"deadlines"); };
   body.appendChild(all);
+}
+
+/* 期限を過ぎたものだけを集める。経過が長いものほど上に出す */
+function renderOverdue(){
+  main.appendChild(filterBar());
+  var list=activeItems()
+    .filter(function(i){ return (filter==="ALL"||i.cat===filter)&&!isRepeating(i)&&parseItemDate(i)<new Date(); })
+    .sort(function(a,b){ return overdueDays(b)-overdueDays(a); });
+
+  if(!list.length){
+    main.appendChild(h('<div class="empty" style="margin-top:18px"><b>超過しているものはありません</b>すべて期限内です。</div>'));
+    return;
+  }
+  var stale=list.filter(isStale).length;
+  main.appendChild(h('<div class="notice" style="margin-top:14px">'+
+    '合計 '+list.length+' 件が期限を過ぎています'+(stale?'（うち '+stale+' 件は7日以上）':'')+'。'+
+    '対応済みのものは完了か削除にしておくと、毎朝の連絡が見やすくなります。</div>'));
+
+  var groups=[
+    ["7日以上 放置", function(i){ return overdueDays(i)>=7; }],
+    ["3〜6日 経過",  function(i){ var n=overdueDays(i); return n>=3&&n<7; }],
+    ["2日以内",      function(i){ return overdueDays(i)<3; }]
+  ];
+  var used={};
+  groups.forEach(function(g){
+    var arr=list.filter(function(i){ return !used[i.id]&&g[1](i); });
+    arr.forEach(function(i){ used[i.id]=1; });
+    if(!arr.length) return;
+    main.appendChild(h('<div class="group-label">'+g[0]+'（'+arr.length+'件）</div>'));
+    arr.forEach(function(i){ main.appendChild(cardOf(i)); });
+  });
+
+  // まとめて片付けるための導線
+  var bulk=h('<div style="margin:20px 0 0"><button class="act danger" style="padding:8px 14px">7日以上のものをまとめて完了にする</button></div>');
+  bulk.querySelector("button").onclick=function(){
+    var target=list.filter(isStale);
+    if(!target.length){ toast("7日以上のものはありません"); return; }
+    if(!confirm(target.length+"件をまとめて完了にします。よろしいですか？")) return;
+    target.forEach(function(i){ i.done=true; i.doneAt=new Date().toISOString(); });
+    save(); render(); toast(target.length+"件を完了にしました");
+  };
+  main.appendChild(bulk);
 }
 
 /* 今日から7日分を縦に並べる。予定のない日も行として出す（空白に意味がある） */
@@ -1256,6 +1336,13 @@ function renderSettings(){
   g("ghToken").value=store.get("gh-token")||"";
   g("ghRemember").checked=!!store.get("gh-token");
   if(!saved.owner&&guess.owner) s5.querySelector("#ghStatus").textContent="保存先の候補として "+guess.owner+"/"+guess.repo+" を入れました。実際のPrivateリポジトリ名に合わせて直してください。";
+  // 最後に同期した時刻。間が空いていると赤字にして気づけるようにする
+  var ls=lastSyncText();
+  var lsEl=h('<p style="font-size:12.5px;margin:0 0 12px;'+(ls&&ls.stale?'color:var(--red)':'color:var(--ink-2)')+'">'+
+    (ls?('最終'+escHtml(ls.kind)+'：<b>'+escHtml(ls.rel)+'</b>　<span style="color:var(--ink-3)">'+escHtml(ls.text)+'</span>'
+         +(ls.stale?'<br>しばらく同期されていません。登録した内容が毎朝の連絡に反映されていない可能性があります。':''))
+        :'まだ一度も同期していません。')+'</p>');
+  s5.insertBefore(lsEl, s5.querySelector(".two"));
   var bSync=h('<button class="btn fill">GitHubに同期する</button>');
   bSync.onclick=function(){ syncToGitHub(g,s5); };
   var bPull=h('<button class="btn">GitHubから読み込む</button>');
@@ -1529,6 +1616,7 @@ function pullFromGitHub(g,s5){
       if(Array.isArray(d.templates)) db.templates=d.templates;
       if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
       save(); render();
+      markSynced("読み込み");
       statusEl.textContent="読み込みました（"+n+"件）。";
       toast("GitHubから"+n+"件を読み込みました");
     })
@@ -1590,6 +1678,7 @@ function syncToGitHub(g,s5){
     })
     .then(function(res){
       if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
+      markSynced("同期");
       statusEl.textContent="同期しました。次の朝のダイジェストから反映されます。";
       toast("GitHubに同期しました");
     })
