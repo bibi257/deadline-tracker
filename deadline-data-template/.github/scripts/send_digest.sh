@@ -40,14 +40,6 @@ if [ -n "$MENTION_USER_ID" ]; then
   MENTION="<@${MENTION_USER_ID}> "
 fi
 
-# 通知先が未設定なら、何もせず理由を表示して終了する（テンプレートのまま実行された場合）
-if [ -z "$WEBHOOK_URL" ]; then
-  echo "DEFAULT_WEBHOOK_URL が設定されていません。" >&2
-  echo "このスクリプトの冒頭に、DiscordのウェブフックURLを記入してください。" >&2
-  echo "（チャンネル設定 → 連携サービス → ウェブフック から取得できます）" >&2
-  exit 1
-fi
-
 # data.json を読み込む(存在しないならその旨だけ送って終了)
 JSON=""
 if [ -n "${DATA_URL:-}" ]; then
@@ -128,6 +120,17 @@ fmt_remain(){  # $1=基準epoch $2=締切epoch $3=開始があるか
 }
 
 # 指定曜日(JST)なら data.json をファイルとして添付し、控えを残す
+# Discordの本文上限(2000文字)を超えないよう切り詰める。
+# ロケールがPOSIXの環境ではcutやwcが日本語を正しく1文字として数えないことがあるため、
+# UTF-8を確実に扱えるjqで文字数を数えて切る
+truncate_for_discord(){
+  local text="$1" limit=1850
+  echo "$text" | jq -Rs --argjson limit "$limit" '
+    if (length > $limit) then
+      (.[0:$limit] + "\n\n…（件数が多いため省略しました。詳しくはアプリでご確認ください）")
+    else . end'
+}
+
 send_backup(){
   [ "$BACKUP_DOW" = "0" ] && return 0
   [ "$(TZ=Asia/Tokyo date +%u)" = "$BACKUP_DOW" ] || return 0
@@ -173,7 +176,7 @@ if [ -z "$ROWS" ]; then
   CONTENT="# 📋 締切トラッカー"$'\n'"### ${TODAY_JST}の連絡"$'\n\n'
   CONTENT="${CONTENT}## ⏳ ${WINDOW_DAYS}日以内の締切"$'\n'"-# 予定はありません"$'\n'
   CONTENT="${CONTENT}${REP_SECTION}${LINK_SECTION}"
-  BODY=$(jq -n --arg c "$CONTENT" '{content: $c}')
+  BODY=$(truncate_for_discord "$CONTENT" | jq '{content: .}')
   curl -sf -H "Content-Type: application/json" -d "$BODY" "$WEBHOOK_URL" >/dev/null
   send_backup
   exit 0
@@ -251,7 +254,10 @@ if [ "$ATTACH_ICS" = "1" ]; then
   fi
 fi
 
-BODY=$(jq -n --arg c "$CONTENT" --arg uid "$MENTION_USER_ID" '
+# Discordの本文上限は2000文字。件数が多い日は超えることがあるため切り詰める
+TRUNCATED=$(truncate_for_discord "$CONTENT")
+
+BODY=$(jq -n --argjson c "$TRUNCATED" --arg uid "$MENTION_USER_ID" '
   {content: $c} + (if $uid == "" then {} else {allowed_mentions: {parse: [], users: [$uid]}} end)')
 
 if [ -n "$ICS_PATH" ]; then
