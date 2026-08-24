@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-08-23 10:47 JST">
+<meta name="build-stamp" content="2026-08-24 16:20 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -819,6 +819,16 @@ function isStale(it){ return overdueDays(it)>=7; }
 function markSynced(kind){
   store.set("gh-last-sync", JSON.stringify({at:new Date().toISOString(), kind:kind}));
 }
+/* この端末がGitHub上のデータを最後に取得した時刻。
+   「同期する」の前にこれが古いままだと、古い内容で上書きしてしまう危険がある */
+function markPulled(){
+  store.set("gh-last-pulled", new Date().toISOString());
+}
+function hoursSincePulled(){
+  var raw=store.get("gh-last-pulled");
+  if(!raw) return null; // 一度も取得していない（まだ判断材料がない）
+  return (Date.now()-new Date(raw).getTime())/3600000;
+}
 /* 「3時間前」のような相対表記にする。数字より状態が伝わりやすい */
 function lastSyncText(){
   var raw=store.get("gh-last-sync");
@@ -1255,7 +1265,9 @@ function renderSettings(){
     mkBtn("×","削除",false,function(){
       if(db.categories.length<=1){ toast("カテゴリは1つ以上必要です"); return; }
       var used=db.items.filter(function(i){ return i.cat===c; }).length;
-      if(used && !confirm("「"+c+"」を使っている予定が"+used+"件あります。削除するとその予定のカテゴリ表示は残りますが、選択肢からは消えます。よろしいですか？")) return;
+      var usedTpl=db.templates.filter(function(t){ return t.cat===c; }).length;
+      var total=used+usedTpl;
+      if(total && !confirm("「"+c+"」を使っている予定・テンプレートが"+total+"件あります。削除すると表示は残りますが、選択肢からは消えます。よろしいですか？")) return;
       db.categories=db.categories.filter(function(x){return x!==c;});
       if(filter===c) filter="ALL";
       save(); render();
@@ -1617,6 +1629,7 @@ function pullFromGitHub(g,s5){
       if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
       save(); render();
       markSynced("読み込み");
+      markPulled();
       statusEl.textContent="読み込みました（"+n+"件）。";
       toast("GitHubから"+n+"件を読み込みました");
     })
@@ -1644,6 +1657,52 @@ function syncToGitHub(g,s5){
   var statusEl=s5.querySelector("#ghStatus");
   var cfg=ghConfig(g,statusEl);
   if(!cfg) return;
+
+  // この端末がGitHub上のデータを24時間以上取得していない場合、
+  // 他の端末で更新された内容を上書きしてしまう恐れがあるので確認を挟む
+  var hours=hoursSincePulled();
+  if(hours!==null && hours>=24){
+    var days=Math.floor(hours/24);
+    var ok=confirm(
+      "この端末が最後にGitHubの内容を取得してから "+days+"日以上 経っています。\n\n"+
+      "他の端末で登録・更新した内容があると、今の同期でそれが上書きされて消える可能性があります。\n\n"+
+      "続ける前に、今GitHub上にある内容をバックアップとして保存します。よろしいですか？"
+    );
+    if(!ok){ statusEl.textContent="同期を中止しました。心配な場合は先に「GitHubから読み込む」をお試しください。"; return; }
+    statusEl.textContent="安全のため、現在の内容をバックアップしています…";
+    backupRemoteBeforeOverwrite(cfg).then(function(){ doSync(cfg,statusEl); });
+    return;
+  }
+  doSync(cfg,statusEl);
+}
+
+/* 上書きされてしまう前に、GitHub上の現在の内容を別ファイルとして保存しておく */
+function backupRemoteBeforeOverwrite(cfg){
+  return fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(),
+               {headers:Object.assign({},cfg.headers,{"Accept":"application/vnd.github.raw"}), cache:"no-store"})
+    .then(function(res){ return res.ok ? res.text() : null; })
+    .then(function(text){
+      if(!text) return; // 既存データが無ければバックアップ不要
+      // rawが効かずAPIのJSON(sha等を含む)が返ることがあるため、その場合は中身を取り出す
+      if(text.charAt(0)==="{"){
+        try{
+          var j=JSON.parse(text);
+          if(j.content&&j.encoding==="base64") text=base64ToUtf8(j.content);
+        }catch(e){}
+      }
+      var stamp=new Date().toISOString().replace(/[:T]/g,"-").slice(0,16);
+      var path="backups/data-"+stamp+".json";
+      var bak=utf8ToBase64(text);
+      var api="https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo+"/contents/"+path;
+      return fetch(api,{method:"PUT",
+        headers:Object.assign({"Content-Type":"application/json"},cfg.headers),
+        body:JSON.stringify({message:"上書き前の自動バックアップ", content:bak, branch:cfg.branch})
+      }).catch(function(){}); // バックアップに失敗しても同期自体は止めない
+    })
+    .catch(function(){});
+}
+
+function doSync(cfg,statusEl){
   statusEl.textContent="同期しています…";
   var api=cfg.api, branch=cfg.branch, headers=cfg.headers;
   var payload={items:db.items, templates:db.templates, categories:db.categories};
@@ -1679,6 +1738,7 @@ function syncToGitHub(g,s5){
     .then(function(res){
       if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
       markSynced("同期");
+      markPulled(); // 自分が今アップロードした内容＝この端末の最新状態、として扱う
       statusEl.textContent="同期しました。次の朝のダイジェストから反映されます。";
       toast("GitHubに同期しました");
     })
