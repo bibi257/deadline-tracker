@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-09-01 14:32 JST">
+<meta name="build-stamp" content="2026-09-01 14:35 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -76,19 +76,16 @@ header{
 .count{text-align:right;line-height:1}
 .count b{font-family:"Oswald";font-size:30px;font-weight:600;display:block}
 .count span{font-size:11px;color:var(--ink-2);letter-spacing:.1em}
-.tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
-.tabs::-webkit-scrollbar{display:none}
+/* 画面幅を決め打ちで判定せず、入るだけ並べて入らなければ自動で折り返す。
+   1マス最低68pxを確保しつつ、余った幅は均等に配る */
+.tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(68px,1fr));gap:2px 0}
 .tab{
-  border:0;background:none;padding:9px 12px;font-size:13px;font-weight:500;color:var(--ink-3);
-  border-bottom:2px solid transparent;white-space:nowrap
+  border:0;background:none;padding:9px 4px;font-size:12.5px;font-weight:500;color:var(--ink-3);
+  border-bottom:2px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  text-align:center
 }
 .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
-.tab-badge{display:inline-block;margin-left:5px;background:var(--red);color:#fff;font-size:10.5px;font-weight:700;line-height:1;padding:2px 5px;border-radius:8px;vertical-align:1px}
-/* スマホ幅では横スクロールをやめ、4列×2行に折り返す（1行の帯を上下に流さず全タブを見せるため） */
-@media (max-width:480px){
-  .tabs{display:grid;grid-template-columns:repeat(4,1fr);overflow-x:visible;gap:2px 0}
-  .tab{padding:9px 3px;font-size:12px;overflow:hidden;text-overflow:ellipsis;text-align:center}
-}
+.tab-badge{display:inline-block;margin-left:4px;background:var(--red);color:#fff;font-size:10px;font-weight:700;line-height:1;padding:2px 4px;border-radius:8px;vertical-align:1px}
 
 /* ---- filter ---- */
 .filters{display:flex;flex-wrap:wrap;gap:6px;padding:12px 0 2px}
