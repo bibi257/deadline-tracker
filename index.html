@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-09-01 14:35 JST">
+<meta name="build-stamp" content="2026-09-01 14:43 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -343,7 +343,7 @@ var store={
   set:function(k,v){ if(hasLS){try{localStorage.setItem(k,v);}catch(e){toast("保存できませんでした（空き容量を確認してください）");}} else {mem[k]=v;} }
 };
 
-var db={items:[],templates:[],categories:["仕事","提出物","支払い","プライベート","その他"],settings:{dayHour:9,theme:"auto"}};
+var db={items:[],templates:[],categories:["仕事","提出物","支払い","プライベート","その他"],settings:{dayHour:9,theme:"auto"},updatedAt:null};
 function load(){
   var raw=store.get(KEY); if(!raw) return;
   try{
@@ -353,9 +353,14 @@ function load(){
     if(d&&Array.isArray(d.templates)) db.templates=d.templates;
     if(d&&Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
     if(d&&d.settings) db.settings=Object.assign(db.settings,d.settings);
+    if(d&&d.updatedAt) db.updatedAt=d.updatedAt;
   }catch(e){}
 }
-function save(){ store.set(KEY,JSON.stringify(db)); }
+/* 通常の保存。呼ぶたびに「この端末で今変更した」時刻を刻む */
+function save(){ db.updatedAt=new Date().toISOString(); store.set(KEY,JSON.stringify(db)); }
+/* GitHubから受け取った内容をそのまま保存するとき用。
+   updatedAtは呼び出し側でリモートの値に合わせてから使うため、ここでは上書きしない */
+function saveRaw(){ store.set(KEY,JSON.stringify(db)); }
 
 /* ========== 日付ユーティリティ ========== */
 function pad(n){ return (n<10?"0":"")+n; }
@@ -776,7 +781,7 @@ function autoSyncIfConfigured(){
   var api="https://api.github.com/repos/"+saved.owner+"/"+saved.repo+"/contents/data.json";
   var branch=saved.branch||"main";
   var headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"};
-  var content=utf8ToBase64(JSON.stringify({items:db.items, templates:db.templates, categories:db.categories},null,2));
+  var content=utf8ToBase64(JSON.stringify({items:db.items, templates:db.templates, categories:db.categories, updatedAt:db.updatedAt},null,2));
 
   function fetchSha(){
     return fetch(api+"?ref="+encodeURIComponent(branch)+"&_="+Date.now(),{headers:headers, cache:"no-store"})
@@ -1334,6 +1339,7 @@ function renderSettings(){
   // 端末間の同期（GitHub）
   var s5=h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+
     '<p>締切データ（data.json）をPrivateリポジトリに置き、端末間で受け渡します。<b>同期する</b>でこの端末の内容を送り、<b>読み込む</b>で他の端末から送られた内容を取り込みます。毎朝のDiscord送信も同じデータを見ています。</p>'+
+    '<p style="font-size:12px;color:var(--ink-3)">トークンを保存している端末では、この端末に未同期の変更が無いときに限り、GitHub上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
     '<div class="two"><label class="field"><span>GitHubユーザー名 / Organization</span><input type="text" id="ghOwner" placeholder="例：yamada-taro"></label>'+
     '<label class="field"><span>データ用リポジトリ名（Private推奨）</span><input type="text" id="ghRepo" placeholder="例：deadline-data"></label></div>'+
     '<label class="field"><span>ブランチ</span><input type="text" id="ghBranch" value="main"></label>'+
@@ -1410,6 +1416,71 @@ function guessRepoFromURL(){
 }
 
 /* 同期・読み込みで共通の入力チェック。問題なければ設定を返す */
+/* 設定画面を開いていなくても使える、保存済みのGitHub設定の読み取り。
+   トークンを保存していない端末では自動受け入れ機能自体が動かない（安全側） */
+function getStoredGhConfig(){
+  var saved=JSON.parse(store.get("gh-sync")||"{}");
+  var token=store.get("gh-token");
+  if(!saved.owner||!saved.repo||!token) return null;
+  return {
+    owner:saved.owner, repo:saved.repo, branch:saved.branch||"main",
+    api:"https://api.github.com/repos/"+saved.owner+"/"+saved.repo+"/contents/data.json",
+    headers:{"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"}
+  };
+}
+
+/* この端末のデータが「前回GitHubと一致していた状態から何も変わっていない」ときだけ、
+   GitHub上の新しい内容を自動で取り込む。
+   ローカルにまだ送っていない変更がある場合は、データを失わないよう自動では上書きしない */
+var _staleNoticeShown=false;
+function autoPullIfStale(){
+  var cfg=getStoredGhConfig();
+  if(!cfg) return; // 同期の設定自体が無ければ何もしない
+
+  var rawHeaders=Object.assign({}, cfg.headers, {"Accept":"application/vnd.github.raw"});
+  fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(), {headers:rawHeaders, cache:"no-store"})
+    .then(function(res){
+      if(!res.ok) return null; // 404やネットワーク不調などは静かに諦める(自動処理のため)
+      return res.text();
+    })
+    .then(function(text){
+      if(!text) return;
+      var d;
+      try{ d=JSON.parse(text); }catch(e){ return; }
+      if(d && !Array.isArray(d.items) && d.content && d.encoding==="base64"){
+        try{ d=JSON.parse(base64ToUtf8(d.content)); }catch(e){ return; }
+      }
+      // 比較に必要な情報(件数・時刻)が無いデータは判断できないので何もしない
+      if(!d || !Array.isArray(d.items) || !d.updatedAt) return;
+
+      var known=store.get("gh-known-updatedAt"); // 前回GitHubと一致していた時点の時刻
+      var localAt=db.updatedAt;
+      if(!known || !localAt) return; // 一度も同期していない端末は対象外(必ず手動の一回目を経由させる)
+
+      var remoteChanged=(d.updatedAt>known);   // 前回同期時点からGitHub側が変わったか
+      var localChanged=(localAt!==known);       // 前回同期時点からこの端末で変更したか
+      if(!remoteChanged) return; // GitHub側に新しい内容が無ければ何もしない
+
+      if(!localChanged){
+        // ローカルは前回同期時点のまま変更されていない → 安全に取り込める
+        db.items=d.items;
+        if(Array.isArray(d.templates)) db.templates=d.templates;
+        if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
+        db.updatedAt=d.updatedAt;
+        saveRaw(); render();
+        markPulled();
+        markSynced("自動反映");
+        store.set("gh-known-updatedAt", d.updatedAt);
+        toast("他の端末で更新された内容を自動で反映しました");
+      } else if(!_staleNoticeShown){
+        // 双方が前回同期後に変更されている(競合) → 自動上書きはしない。一度だけ知らせる
+        _staleNoticeShown=true;
+        toast("GitHubに新しい内容がありますが、この端末の未同期の変更を守るため自動反映していません");
+      }
+    })
+    .catch(function(){});
+}
+
 function ghConfig(g,statusEl){
   var owner=g("ghOwner").value.trim(), repo=g("ghRepo").value.trim(),
       branch=g("ghBranch").value.trim()||"main", token=g("ghToken").value.trim();
@@ -1629,9 +1700,12 @@ function pullFromGitHub(g,s5){
       db.items=d.items;
       if(Array.isArray(d.templates)) db.templates=d.templates;
       if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
-      save(); render();
+      // 取り込んだ内容の時刻をそのまま引き継ぐ（今の時刻で上書きすると比較の基準が壊れるため）
+      db.updatedAt=d.updatedAt||new Date().toISOString();
+      saveRaw(); render();
       markSynced("読み込み");
       markPulled();
+      store.set("gh-known-updatedAt", db.updatedAt); // GitHub側もこの時刻の内容と一致した
       statusEl.textContent="読み込みました（"+n+"件）。";
       toast("GitHubから"+n+"件を読み込みました");
     })
@@ -1707,7 +1781,9 @@ function backupRemoteBeforeOverwrite(cfg){
 function doSync(cfg,statusEl){
   statusEl.textContent="同期しています…";
   var api=cfg.api, branch=cfg.branch, headers=cfg.headers;
-  var payload={items:db.items, templates:db.templates, categories:db.categories};
+  // 一度も保存していない端末はupdatedAtが無いので、送る直前に確定させる
+  if(!db.updatedAt) db.updatedAt=new Date().toISOString();
+  var payload={items:db.items, templates:db.templates, categories:db.categories, updatedAt:db.updatedAt};
   var content=utf8ToBase64(JSON.stringify(payload,null,2));
 
   // 現在のsha(ファイルの版番号)を取得する。キャッシュされた古いshaを送ると409になるため無効化する
@@ -1741,6 +1817,7 @@ function doSync(cfg,statusEl){
       if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
       markSynced("同期");
       markPulled(); // 自分が今アップロードした内容＝この端末の最新状態、として扱う
+      store.set("gh-known-updatedAt", db.updatedAt); // GitHub側もこの時刻の内容と一致した
       statusEl.textContent="同期しました。次の朝のダイジェストから反映されます。";
       toast("GitHubに同期しました");
     })
@@ -2052,7 +2129,7 @@ function checkForUpdate(){
     })
     .catch(function(){});
 }
-document.addEventListener("visibilitychange",function(){ if(!document.hidden) checkForUpdate(); });
+document.addEventListener("visibilitychange",function(){ if(!document.hidden){ checkForUpdate(); autoPullIfStale(); } });
 
 /* ========== 起動 ========== */
 document.querySelectorAll(".tab").forEach(function(t){
@@ -2063,7 +2140,9 @@ load(); applyTheme(); render();
 handleExportParam();
 setInterval(render, 60000); // 残り時間を更新
 checkForUpdate();
+autoPullIfStale();
 setInterval(checkForUpdate, 10*60000); // 10分ごとに更新を確認
+setInterval(autoPullIfStale, 10*60000); // 10分ごとにGitHub側の新しい内容を確認
 })();
 </script>
 </body>
