@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-09-01 14:43 JST">
+<meta name="build-stamp" content="2026-09-07 13:11 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -343,24 +343,63 @@ var store={
   set:function(k,v){ if(hasLS){try{localStorage.setItem(k,v);}catch(e){toast("保存できませんでした（空き容量を確認してください）");}} else {mem[k]=v;} }
 };
 
-var db={items:[],templates:[],categories:["仕事","提出物","支払い","プライベート","その他"],settings:{dayHour:9,theme:"auto"},updatedAt:null};
+var db={items:[],templates:[],trash:[],quarantine:[],categories:["仕事","提出物","支払い","プライベート","その他"],settings:{dayHour:9,theme:"auto"},updatedAt:null};
 function load(){
   var raw=store.get(KEY); if(!raw) return;
   try{
     var d=JSON.parse(raw);
+    // ここ(自分自身のlocalStorage)は検証しない。既存の表示が急に消えて驚かせないため。
+    // 壊れたデータの検証は、外部由来のGitHubからの取り込み口(pullFromGitHub / autoPullIfStale)で行う
     if(d&&Array.isArray(d.items)) db.items=d.items;
     // templates は後から追加した項目。古いデータには無いので空配列で補う
     if(d&&Array.isArray(d.templates)) db.templates=d.templates;
+    // trash も同様に後から追加した項目
+    if(d&&Array.isArray(d.trash)) db.trash=d.trash;
+    if(d&&Array.isArray(d.quarantine)) db.quarantine=d.quarantine;
     if(d&&Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
     if(d&&d.settings) db.settings=Object.assign(db.settings,d.settings);
     if(d&&d.updatedAt) db.updatedAt=d.updatedAt;
   }catch(e){}
+  // ゴミ箱は30日を過ぎたものと、上限(30件)を超えた古いものを読み込み時に整理する
+  var cutoff=Date.now()-30*86400000;
+  db.trash=db.trash.filter(function(t){ return new Date(t.deletedAt).getTime()>=cutoff; });
+  if(db.trash.length>30) db.trash=db.trash.slice(db.trash.length-30);
+  // trashIdが無い古い形式のエントリには後付けで振る(実装変更前のデータとの互換)
+  db.trash.forEach(function(t){
+    if(!t.trashId) t.trashId="tr"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  });
 }
 /* 通常の保存。呼ぶたびに「この端末で今変更した」時刻を刻む */
 function save(){ db.updatedAt=new Date().toISOString(); store.set(KEY,JSON.stringify(db)); }
 /* GitHubから受け取った内容をそのまま保存するとき用。
    updatedAtは呼び出し側でリモートの値に合わせてから使うため、ここでは上書きしない */
 function saveRaw(){ store.set(KEY,JSON.stringify(db)); }
+
+/* 取り込んだ項目を検証する。取り込み口(load/pullFromGitHub/autoPullIfStale)でのみ使う。
+   必須(id・title・有効なdue)が壊れている項目は隔離し、それ以外の軽微な不正値は
+   既定値に補正して使い続けられるようにする */
+function sanitizeIncomingItems(rawItems){
+  var kept=[], quarantined=[];
+  (rawItems||[]).forEach(function(it){
+    if(!it || typeof it!=="object"){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"項目の形式が不正", raw:it}); return; }
+    if(typeof it.id!=="string" || !it.id){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"idが無い、または不正", raw:it}); return; }
+    if(typeof it.title!=="string" || !it.title.trim()){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"タイトルが無い、または不正", raw:it}); return; }
+    var due=new Date(it.due);
+    if(isNaN(due.getTime())){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"締切日(due)が不正な日付：「"+it.due+"」", raw:it}); return; }
+    // ここから先は軽微な不正。項目ごと隔離せず、既定値に補正して使う
+    var fixed=Object.assign({}, it);
+    if(fixed.start){
+      var s=new Date(fixed.start);
+      if(isNaN(s.getTime())) delete fixed.start; // 開始日が壊れていれば無かったことにする
+    }
+    if(fixed.rep && ["weekly","biweekly","monthly","yearly"].indexOf(fixed.rep)<0) fixed.rep="none";
+    if(fixed.rep && fixed.rep!=="none" && typeof fixed.repCount!=="number") fixed.repCount=0;
+    if(fixed.skip && !Array.isArray(fixed.skip)) delete fixed.skip;
+    if(typeof fixed.done!=="boolean") fixed.done=!!fixed.done;
+    kept.push(fixed);
+  });
+  return {kept:kept, quarantined:quarantined};
+}
 
 /* ========== 日付ユーティリティ ========== */
 function pad(n){ return (n<10?"0":"")+n; }
@@ -781,7 +820,8 @@ function autoSyncIfConfigured(){
   var api="https://api.github.com/repos/"+saved.owner+"/"+saved.repo+"/contents/data.json";
   var branch=saved.branch||"main";
   var headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"};
-  var content=utf8ToBase64(JSON.stringify({items:db.items, templates:db.templates, categories:db.categories, updatedAt:db.updatedAt},null,2));
+  var pushedAt=db.updatedAt; // 送信中に別の編集が入っても、送った時点の値を記録するため捕捉しておく
+  var content=utf8ToBase64(JSON.stringify({items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, updatedAt:db.updatedAt},null,2));
 
   function fetchSha(){
     return fetch(api+"?ref="+encodeURIComponent(branch)+"&_="+Date.now(),{headers:headers, cache:"no-store"})
@@ -800,7 +840,14 @@ function autoSyncIfConfigured(){
   }
   fetchSha().then(put)
     .then(function(res){ if(res.status===409) return fetchSha().then(put); return res; })
-    .then(function(res){ if(res.ok){ markSynced("自動同期"); toast("GitHubに自動同期しました"); } })
+    .then(function(res){
+      if(res.ok){
+        markSynced("自動同期");
+        markPulled(); // 送った内容＝この端末の最新状態としてよい
+        store.set("gh-known-updatedAt", pushedAt); // GitHubともこの時点で一致した
+        toast("GitHubに自動同期しました");
+      }
+    })
     .catch(function(){ /* 自動処理なので失敗しても通知しない */ });
 }
 
@@ -899,13 +946,17 @@ function saveAsTemplate(it){
   toast("テンプレート「"+name+"」を保存しました");
 }
 
-/* 削除は直前の1件だけ一時保持し、「元に戻す」で復元できるようにする */
+/* 削除は完全に消さずゴミ箱へ移す。トーストの「元に戻す」は直前の1件だけの最速手段、
+   ゴミ箱は30日以内ならいつでも設定タブから戻せる */
 var lastDeleted=null;
 function deleteItem(it){
   var idx=db.items.findIndex(function(x){ return x.id===it.id; });
   if(idx<0) return;
   lastDeleted={item:db.items[idx], index:idx};
   db.items.splice(idx,1);
+  var trashId="tr"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  db.trash.push({trashId:trashId, item:lastDeleted.item, deletedAt:new Date().toISOString()});
+  if(db.trash.length>30) db.trash.shift(); // 上限を超えたら最も古いものから消える
   save(); render();
   toast("「"+it.title+"」を削除しました", "元に戻す", undoDelete);
 }
@@ -913,10 +964,98 @@ function undoDelete(){
   if(!lastDeleted) return;
   var pos=Math.min(lastDeleted.index, db.items.length);
   db.items.splice(pos,0,lastDeleted.item);
+  // ゴミ箱に入れた直後の同一項目も取り除く(id一致・末尾付近を優先して探す)
+  for(var i=db.trash.length-1;i>=0;i--){
+    if(db.trash[i].item.id===lastDeleted.item.id){ db.trash.splice(i,1); break; }
+  }
   var restored=lastDeleted.item.title;
   lastDeleted=null;
   save(); render();
   toast("「"+restored+"」を元に戻しました");
+}
+/* ゴミ箱から個別に復元する。同じidが既に一覧にある場合(自動pull等で復活済み)は
+   上書きせず、その旨を知らせるだけにする */
+function restoreFromTrash(trashId){
+  var idx=db.trash.findIndex(function(t){ return t.trashId===trashId; });
+  if(idx<0) return;
+  var entry=db.trash[idx];
+  if(db.items.some(function(x){ return x.id===entry.item.id; })){
+    toast("同じ締切が既に一覧にあるため、復元しませんでした");
+    db.trash.splice(idx,1); save(); render();
+    return;
+  }
+  db.items.push(entry.item);
+  db.trash.splice(idx,1);
+  save(); render();
+  toast("「"+entry.item.title+"」を元に戻しました");
+}
+function purgeTrashItem(trashId){
+  db.trash=db.trash.filter(function(t){ return t.trashId!==trashId; });
+  save(); render();
+}
+/* 隔離した項目を、登録ダイアログを使って修復する。
+   壊れたidをそのまま使うと既存の編集ロジックと整合しないため、
+   「新規登録」として開き、保存できたら隔離から取り除く方式にする */
+var fixingQuarantineIndex=null;
+function openQuarantineFixDialog(qi){
+  var q=db.quarantine[qi];
+  if(!q) return;
+  fixingQuarantineIndex=qi;
+  var raw=q.raw||{};
+  // dueが不正な場合はダイアログを開ける形にするため、仮に今日を入れておく（保存時に必ず選び直させる）
+  var seed={
+    title:(typeof raw.title==="string")?raw.title:"",
+    due:(function(){ var d=new Date(raw.due); return isNaN(d.getTime())?new Date().toISOString():raw.due; })(),
+    cat:(typeof raw.cat==="string"&&db.categories.indexOf(raw.cat)>=0)?raw.cat:db.categories[0],
+    memo:(typeof raw.memo==="string")?raw.memo:""
+  };
+  openDialog(null); // 新規登録として開く
+  document.getElementById("fTitle").value=seed.title;
+  document.getElementById("fMemo").value=seed.memo;
+  document.getElementById("fCat").value=seed.cat;
+  var d=new Date(seed.due);
+  document.getElementById("fDate").value=toLocalISO(d);
+  toast("内容を修正してから保存してください");
+}
+
+function purgeAllTrash(){
+  if(!db.trash.length){ toast("ゴミ箱は空です"); return; }
+  if(!confirm("ゴミ箱の"+db.trash.length+"件をすべて完全に削除します。元に戻せません。よろしいですか？")) return;
+  db.trash=[];
+  save(); render();
+  toast("ゴミ箱を空にしました");
+}
+
+/* 隔離した項目のタイトル・締切日を直して、一覧に戻す */
+function repairQuarantineItem(qid){
+  var idx=db.quarantine.findIndex(function(q){ return q.qid===qid; });
+  if(idx<0) return;
+  var raw=db.quarantine[idx].raw||{};
+  var title=prompt("タイトルを入力してください", raw.title||"");
+  if(title===null) return;
+  title=title.trim();
+  if(!title){ toast("タイトルが空です"); return; }
+  var dueStr=prompt("締切日を入力してください（例：2026-09-15）", "");
+  if(dueStr===null) return;
+  var due=new Date(dueStr+"T23:59:00");
+  if(isNaN(due.getTime())){ toast("日付の形式が正しくありません"); return; }
+  var id=(typeof raw.id==="string"&&raw.id)?raw.id:("d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6));
+  if(db.items.some(function(x){ return x.id===id; })){
+    toast("同じidの締切が既に一覧にあるため、新しいidで登録します");
+    id="d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  }
+  db.items.push({
+    id:id, title:title, due:due.toISOString(),
+    cat:(typeof raw.cat==="string"&&db.categories.indexOf(raw.cat)>=0)?raw.cat:db.categories[0],
+    memo:typeof raw.memo==="string"?raw.memo:"", done:false, created:new Date().toISOString()
+  });
+  db.quarantine.splice(idx,1);
+  save(); render();
+  toast("「"+title+"」として一覧に戻しました");
+}
+function purgeQuarantineItem(qid){
+  db.quarantine=db.quarantine.filter(function(q){ return q.qid!==qid; });
+  save(); render();
 }
 
 function isRepeating(it){ return !!(it.rep&&it.rep!=="none"); }
@@ -1228,7 +1367,7 @@ function renderSettings(){
   var s1=h('<div class="sec"><h3>当日リマインドの時刻</h3><p>カレンダーに書き出すとき、締切当日の通知をこの時刻に入れます。1週間前・前日の通知は締切と同じ時刻に鳴ります。</p></div>');
   var sel=h('<select style="max-width:160px"></select>');
   for(var hh=5;hh<=22;hh++){ var o=document.createElement("option"); o.value=hh; o.textContent=hh+":00"; if(hh===db.settings.dayHour) o.selected=true; sel.appendChild(o); }
-  sel.onchange=function(){ db.settings.dayHour=parseInt(sel.value,10); save(); toast("当日リマインドを "+sel.value+":00 にしました"); };
+  sel.onchange=function(){ db.settings.dayHour=parseInt(sel.value,10); saveRaw(); toast("当日リマインドを "+sel.value+":00 にしました"); }; // 設定は同期対象外なのでupdatedAtは進めない
   s1.appendChild(sel); main.appendChild(s1);
 
   // テンプレート
@@ -1255,6 +1394,85 @@ function renderSettings(){
     });
   }
   main.appendChild(sT);
+
+  // ゴミ箱
+  var trashSorted=db.trash.slice().sort(function(a,b){ return new Date(b.deletedAt)-new Date(a.deletedAt); });
+  var sTr=h('<div class="sec"><h3>ゴミ箱</h3>'+
+    '<p>削除した締切は30日間ここに残ります（最大30件）。一覧の「元に戻す」トーストは5秒で消えますが、こちらはいつでも復元できます。</p>'+
+    '<div class="cat-list"></div></div>');
+  var trList=sTr.querySelector(".cat-list");
+  if(!trashSorted.length){
+    trList.appendChild(h('<p style="font-size:12.5px;color:var(--ink-3);margin:0">ゴミ箱は空です。</p>'));
+  } else {
+    trashSorted.forEach(function(t){
+      var d=new Date(t.deletedAt);
+      var when=(d.getMonth()+1)+"/"+d.getDate()+" "+pad(d.getHours())+":"+pad(d.getMinutes())+" に削除";
+      var row=h('<div class="cat-row"><span class="cat-name">'+escHtml(t.item.title)+
+        '<br><span style="font-size:11.5px;color:var(--ink-3)">'+escHtml(when)+'</span></span>'+
+        '<div class="cat-btns"></div></div>');
+      var back=h('<button class="act" title="元に戻す">戻す</button>');
+      back.onclick=function(){ restoreFromTrash(t.trashId); };
+      var del=h('<button class="act" title="完全に削除">×</button>');
+      del.onclick=function(){
+        if(!confirm("「"+t.item.title+"」を完全に削除します。元に戻せません。よろしいですか？")) return;
+        purgeTrashItem(t.trashId);
+      };
+      row.querySelector(".cat-btns").append(back,del);
+      trList.appendChild(row);
+    });
+    var emptyBtn=h('<button class="act danger" style="margin-top:4px">ゴミ箱を空にする</button>');
+    emptyBtn.onclick=purgeAllTrash;
+    sTr.appendChild(emptyBtn);
+  }
+  main.appendChild(sTr);
+
+  // 隔離（読み込み時に形式が不正で除外された項目）
+  if(db.quarantine.length){
+    var sQ=h('<div class="sec"><h3 style="color:var(--red)">隔離された項目（'+db.quarantine.length+'件）</h3>'+
+      '<p>GitHubから読み込んだ内容のうち、必須項目（タイトル・締切日など）が壊れていたため取り込めなかったものです。修復するとこの端末の一覧に戻ります。放置しても他の機能には影響しません。</p>'+
+      '<div class="cat-list"></div></div>');
+    var qList=sQ.querySelector(".cat-list");
+    db.quarantine.forEach(function(q,qi){
+      var rawTitle=(q.raw&&typeof q.raw.title==="string")?q.raw.title:"(タイトル不明)";
+      var row=h('<div class="cat-row"><span class="cat-name">'+escHtml(rawTitle)+
+        '<br><span style="font-size:11.5px;color:var(--red)">'+escHtml(q.reason)+'</span></span>'+
+        '<div class="cat-btns"></div></div>');
+      var fix=h('<button class="act" title="修復">修復</button>');
+      fix.onclick=function(){ openQuarantineFixDialog(qi); };
+      var del=h('<button class="act" title="削除">×</button>');
+      del.onclick=function(){
+        if(!confirm("この隔離項目を削除します。よろしいですか？")) return;
+        db.quarantine.splice(qi,1); save(); render();
+      };
+      row.querySelector(".cat-btns").append(fix,del);
+      qList.appendChild(row);
+    });
+    main.appendChild(sQ);
+  }
+
+  // 隔離（形式が不正で取り込めなかった項目）
+  if(db.quarantine.length){
+    var sQ=h('<div class="sec"><h3>隔離された項目（'+db.quarantine.length+'件）</h3>'+
+      '<p>GitHubから読み込んだ内容のうち、形式が不正で取り込めなかったものです。タイトルと締切日を直せば一覧に戻せます。</p>'+
+      '<div class="cat-list"></div></div>');
+    var qList=sQ.querySelector(".cat-list");
+    db.quarantine.forEach(function(q){
+      var rawTitle=(q.raw&&typeof q.raw.title==="string")?q.raw.title:"(タイトル不明)";
+      var row=h('<div class="cat-row"><span class="cat-name">'+escHtml(rawTitle)+
+        '<br><span style="font-size:11.5px;color:var(--red)">'+escHtml(q.reason)+'</span></span>'+
+        '<div class="cat-btns"></div></div>');
+      var fix=h('<button class="act" title="修復して一覧に戻す">修復</button>');
+      fix.onclick=function(){ repairQuarantineItem(q.qid); };
+      var del=h('<button class="act" title="完全に削除">×</button>');
+      del.onclick=function(){
+        if(!confirm("この隔離項目を完全に削除します。よろしいですか？")) return;
+        purgeQuarantineItem(q.qid);
+      };
+      row.querySelector(".cat-btns").append(fix,del);
+      qList.appendChild(row);
+    });
+    main.appendChild(sQ);
+  }
 
   // カテゴリ
   var s2=h('<div class="sec"><h3>カテゴリ</h3><p>登録画面の選択肢と、フィルタの並び順になります。</p><div class="cat-list"></div></div>');
@@ -1295,7 +1513,7 @@ function renderSettings(){
   [["auto","自動"],["light","ライト"],["dark","ダーク"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", db.settings.theme===p[0]?"true":"false");
-    b.onclick=function(){ db.settings.theme=p[0]; save(); applyTheme(); render(); };
+    b.onclick=function(){ db.settings.theme=p[0]; saveRaw(); applyTheme(); render(); }; // 設定は同期対象外なのでupdatedAtは進めない
     s3.querySelector(".row").appendChild(b);
   });
   main.appendChild(s3);
@@ -1323,6 +1541,7 @@ function renderSettings(){
         if(!confirm("読み込むと現在のデータは置き換わります。続けますか？")) return;
         db.items=d.items;
         if(Array.isArray(d.templates)) db.templates=d.templates;
+        if(Array.isArray(d.trash)) db.trash=d.trash;
         if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
         if(d.settings) db.settings=Object.assign(db.settings,d.settings);
         save(); applyTheme(); render(); toast("読み込みました");
@@ -1356,6 +1575,13 @@ function renderSettings(){
   g("ghToken").value=store.get("gh-token")||"";
   g("ghRemember").checked=!!store.get("gh-token");
   if(!saved.owner&&guess.owner) s5.querySelector("#ghStatus").textContent="保存先の候補として "+guess.owner+"/"+guess.repo+" を入れました。実際のPrivateリポジトリ名に合わせて直してください。";
+  // このリポジトリが以前「Publicと承知の上」で確認済みなら、開くたびに気づけるよう常に出す
+  if(saved.owner && saved.repo && ackedPublicRepo(saved.owner, saved.repo)){
+    s5.insertBefore(
+      h('<p style="font-size:12.5px;color:var(--red);margin:0 0 10px">⚠️ 同期先「'+escHtml(saved.owner)+'/'+escHtml(saved.repo)+'」はPublicリポジトリです。締切の内容が誰でも見られます。</p>'),
+      s5.querySelector(".two")
+    );
+  }
   // 最後に同期した時刻。間が空いていると赤字にして気づけるようにする
   var ls=lastSyncText();
   var lsEl=h('<p style="font-size:12.5px;margin:0 0 12px;'+(ls&&ls.stale?'color:var(--red)':'color:var(--ink-2)')+'">'+
@@ -1395,7 +1621,7 @@ function renderSettings(){
       '<span>'+escHtml(p[1])+'<br><span style="font-size:11.5px;color:var(--ink-3)">'+escHtml(p[2])+'</span></span></label>');
     var cb=wrap.querySelector("input");
     cb.checked=!!db.settings[p[0]];
-    cb.onchange=function(){ db.settings[p[0]]=cb.checked; save(); toast(cb.checked?"有効にしました":"無効にしました"); };
+    cb.onchange=function(){ db.settings[p[0]]=cb.checked; saveRaw(); toast(cb.checked?"有効にしました":"無効にしました"); }; // 設定は同期対象外なのでupdatedAtは進めない
     s7.appendChild(wrap);
   });
   main.appendChild(s7);
@@ -1463,15 +1689,18 @@ function autoPullIfStale(){
 
       if(!localChanged){
         // ローカルは前回同期時点のまま変更されていない → 安全に取り込める
-        db.items=d.items;
+        var check=sanitizeIncomingItems(d.items);
+        db.items=check.kept;
+        if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
         if(Array.isArray(d.templates)) db.templates=d.templates;
+        if(Array.isArray(d.trash)) db.trash=d.trash;
         if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
         db.updatedAt=d.updatedAt;
         saveRaw(); render();
         markPulled();
         markSynced("自動反映");
         store.set("gh-known-updatedAt", d.updatedAt);
-        toast("他の端末で更新された内容を自動で反映しました");
+        toast("他の端末で更新された内容を自動で反映しました"+(check.quarantined.length?"（"+check.quarantined.length+"件は隔離）":""));
       } else if(!_staleNoticeShown){
         // 双方が前回同期後に変更されている(競合) → 自動上書きはしない。一度だけ知らせる
         _staleNoticeShown=true;
@@ -1479,6 +1708,42 @@ function autoPullIfStale(){
       }
     })
     .catch(function(){});
+}
+
+/* リポジトリがPublicかどうかを確認する。締切の中身が世界中に見える事故を防ぐため。
+   取得自体に失敗した場合は「わからない」を返し、同期は止めない（本来の機能を壊さないため） */
+function checkRepoVisibility(cfg){
+  return fetch("https://api.github.com/repos/"+cfg.owner+"/"+cfg.repo, {headers:cfg.headers, cache:"no-store"})
+    .then(function(res){ return res.ok ? res.json() : null; })
+    .then(function(j){ return j ? (j.private===false) : null; }) // true=Public, false=Private, null=不明
+    .catch(function(){ return null; });
+}
+/* 「このリポジトリはPublicと承知の上」を記録し、次回から再警告しないようにする */
+function ackedPublicRepo(owner,repo){
+  var key="gh-public-acked";
+  var list=JSON.parse(store.get(key)||"[]");
+  return list.indexOf(owner+"/"+repo)>=0;
+}
+function ackPublicRepo(owner,repo){
+  var key="gh-public-acked";
+  var list=JSON.parse(store.get(key)||"[]");
+  var id=owner+"/"+repo;
+  if(list.indexOf(id)<0){ list.push(id); store.set(key, JSON.stringify(list)); }
+}
+/* 同期・読み込みの前にPublic確認を挟む。安全なら/確認済みなら resolve、
+   ユーザーが中止すればrejectする */
+function guardPublicRepo(cfg){
+  if(ackedPublicRepo(cfg.owner,cfg.repo)) return Promise.resolve();
+  return checkRepoVisibility(cfg).then(function(isPublic){
+    if(isPublic!==true) return; // Private、または判定不能なら先へ進む
+    var ok=confirm(
+      "「"+cfg.owner+"/"+cfg.repo+"」はPublicリポジトリです。\n\n"+
+      "締切の内容（タイトル・メモなど）が誰でも見られる状態になります。\n\n"+
+      "本当にこのリポジトリを使い続けますか？"
+    );
+    if(!ok) return Promise.reject(new Error("__public_cancelled__"));
+    ackPublicRepo(cfg.owner,cfg.repo);
+  });
 }
 
 function ghConfig(g,statusEl){
@@ -1675,6 +1940,20 @@ function pullFromGitHub(g,s5){
   var statusEl=s5.querySelector("#ghStatus");
   var cfg=ghConfig(g,statusEl);
   if(!cfg) return;
+
+  statusEl.textContent="リポジトリの公開設定を確認しています…";
+  guardPublicRepo(cfg).then(function(){
+    proceedPull(cfg,statusEl);
+  }).catch(function(err){
+    if(err&&err.message==="__public_cancelled__"){
+      statusEl.textContent="読み込みを中止しました。";
+    } else {
+      proceedPull(cfg,statusEl);
+    }
+  });
+}
+
+function proceedPull(cfg,statusEl){
   statusEl.textContent="読み込んでいます…";
   // Acceptを後から上書きしてファイル本文を直接受け取る（順序を逆にすると効かない）
   var rawHeaders=Object.assign({}, cfg.headers, {"Accept":"application/vnd.github.raw"});
@@ -1692,13 +1971,18 @@ function pullFromGitHub(g,s5){
         d=JSON.parse(base64ToUtf8(d.content));
       }
       if(!d||!Array.isArray(d.items)) throw new Error("データの形式が読み取れません。");
-      var n=d.items.length;
+      var check=sanitizeIncomingItems(d.items);
+      var n=check.kept.length;
       if(db.items.length && !confirm("この端末の締切"+db.items.length+"件を、GitHub上の"+n+"件で置き換えます。よろしいですか？")){
         statusEl.textContent="読み込みを中止しました。";
         return;
       }
-      db.items=d.items;
+      db.items=check.kept;
+      if(check.quarantined.length){
+        db.quarantine=db.quarantine.concat(check.quarantined);
+      }
       if(Array.isArray(d.templates)) db.templates=d.templates;
+      if(Array.isArray(d.trash)) db.trash=d.trash;
       if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
       // 取り込んだ内容の時刻をそのまま引き継ぐ（今の時刻で上書きすると比較の基準が壊れるため）
       db.updatedAt=d.updatedAt||new Date().toISOString();
@@ -1706,8 +1990,8 @@ function pullFromGitHub(g,s5){
       markSynced("読み込み");
       markPulled();
       store.set("gh-known-updatedAt", db.updatedAt); // GitHub側もこの時刻の内容と一致した
-      statusEl.textContent="読み込みました（"+n+"件）。";
-      toast("GitHubから"+n+"件を読み込みました");
+      statusEl.textContent="読み込みました（"+n+"件）。"+(check.quarantined.length?(" "+check.quarantined.length+"件は形式が不正のため隔離しました（設定タブで確認できます）。"):"");
+      toast("GitHubから"+n+"件を読み込みました"+(check.quarantined.length?"（"+check.quarantined.length+"件は隔離）":""));
     })
     .catch(function(err){
       var m=err.message||"";
@@ -1734,6 +2018,20 @@ function syncToGitHub(g,s5){
   var cfg=ghConfig(g,statusEl);
   if(!cfg) return;
 
+  statusEl.textContent="リポジトリの公開設定を確認しています…";
+  guardPublicRepo(cfg).then(function(){
+    proceedSync(cfg,statusEl);
+  }).catch(function(err){
+    if(err&&err.message==="__public_cancelled__"){
+      statusEl.textContent="同期を中止しました。";
+    } else {
+      // 確認自体が失敗した場合は、安全側に倒して同期は進める
+      proceedSync(cfg,statusEl);
+    }
+  });
+}
+
+function proceedSync(cfg,statusEl){
   // この端末がGitHub上のデータを24時間以上取得していない場合、
   // 他の端末で更新された内容を上書きしてしまう恐れがあるので確認を挟む
   var hours=hoursSincePulled();
@@ -1783,7 +2081,8 @@ function doSync(cfg,statusEl){
   var api=cfg.api, branch=cfg.branch, headers=cfg.headers;
   // 一度も保存していない端末はupdatedAtが無いので、送る直前に確定させる
   if(!db.updatedAt) db.updatedAt=new Date().toISOString();
-  var payload={items:db.items, templates:db.templates, categories:db.categories, updatedAt:db.updatedAt};
+  var pushedAt=db.updatedAt; // 送信中の編集に影響されないよう、送った時点の値を捕捉
+  var payload={items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, updatedAt:db.updatedAt};
   var content=utf8ToBase64(JSON.stringify(payload,null,2));
 
   // 現在のsha(ファイルの版番号)を取得する。キャッシュされた古いshaを送ると409になるため無効化する
@@ -1817,7 +2116,7 @@ function doSync(cfg,statusEl){
       if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
       markSynced("同期");
       markPulled(); // 自分が今アップロードした内容＝この端末の最新状態、として扱う
-      store.set("gh-known-updatedAt", db.updatedAt); // GitHub側もこの時刻の内容と一致した
+      store.set("gh-known-updatedAt", pushedAt); // GitHub側もこの時刻の内容と一致した
       statusEl.textContent="同期しました。次の朝のダイジェストから反映されます。";
       toast("GitHubに同期しました");
     })
@@ -1830,6 +2129,11 @@ function doSync(cfg,statusEl){
 
 /* ========== 登録・編集 ========== */
 var dlg=document.getElementById("dlg"), dlgForm=document.getElementById("dlgForm");
+dlg.addEventListener("close",function(){
+  // キャンセル等で閉じた場合、隔離修復中の状態が残っているとバグの元になるためリセットする
+  // (保存成功時は既にnullにしている。ここで消えるのは「修復せず閉じた」場合のみ)
+  fixingQuarantineIndex=null;
+});
 function openDialog(item){
   editingId=item?item.id:null;
   document.getElementById("dlgTitle").textContent=item?"締切を編集":"締切を登録";
@@ -1941,15 +2245,22 @@ dlgForm.addEventListener("submit",function(e){
   var repCount=(rep==="none")?0:parseInt(document.getElementById("fRepCount").value,10);
 
   if(editingId){
+    var found=false;
     db.items.forEach(function(i){
       if(i.id!==editingId) return;
+      found=true;
       i.title=title; i.due=due.toISOString(); i.cat=document.getElementById("fCat").value;
       i.rep=rep; i.repCount=repCount; i.memo=document.getElementById("fMemo").value.trim();
       if(allDay) i.allDay=true; else delete i.allDay;
       if(start) i.start=start.toISOString(); else delete i.start;
       i.seq=(i.seq||0)+1;
     });
-    toast("更新しました。通知を変えるには.icsを取り込み直してください");
+    if(found){
+      toast("更新しました。通知を変えるには.icsを取り込み直してください");
+    } else {
+      // 自動反映などで、編集中にこの締切が他の端末から削除されていた場合
+      toast("この締切は他の端末で削除されていたため、更新できませんでした");
+    }
   } else {
     var it={
       id:"d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
@@ -1961,6 +2272,12 @@ dlgForm.addEventListener("submit",function(e){
     if(allDay) it.allDay=true;
     db.items.push(it);
     toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
+    // 隔離項目の修復中だった場合は、保存できたので隔離から取り除く
+    if(fixingQuarantineIndex!==null){
+      db.quarantine.splice(fixingQuarantineIndex,1);
+      fixingQuarantineIndex=null;
+      toast("修復して一覧に戻しました");
+    }
   }
   save(); render();
   autoSyncIfConfigured();
@@ -2099,6 +2416,19 @@ function handleExportParam(){
   if(history.replaceState) history.replaceState(null,"",location.pathname);
 }
 
+/* ホーム画面ショートカットからの起動(?action=add / ?action=week)を処理する */
+function handleActionParam(){
+  var q=new URLSearchParams(location.search);
+  var action=q.get("action");
+  if(!action) return;
+  if(action==="week"){
+    view="week"; render();
+  } else if(action==="add"){
+    setTimeout(function(){ openDialog(null); }, 300);
+  }
+  if(history.replaceState) history.replaceState(null,"",location.pathname);
+}
+
 /* ========== オフライン対応 ==========
    一度開いておけば、電波が悪い場所でもアプリの画面自体は開けるようにする。
    データはlocalStorageにあるので、この登録自体は失敗しても致命的ではない */
@@ -2138,6 +2468,7 @@ document.querySelectorAll(".tab").forEach(function(t){
 document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
 load(); applyTheme(); render();
 handleExportParam();
+handleActionParam();
 setInterval(render, 60000); // 残り時間を更新
 checkForUpdate();
 autoPullIfStale();
