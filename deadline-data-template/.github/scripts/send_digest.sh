@@ -145,6 +145,83 @@ send_backup(){
     "$WEBHOOK_URL" >/dev/null || echo "バックアップの添付に失敗しました" >&2
 }
 
+# 週次レビュー本文を組み立てて送る（来週7日間の見通し・今週の完了数・滞留件数）
+send_weekly_review(){
+  local today_jst week_start week_end
+  today_jst=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+
+  # 来週7日間(明日から7日間)の締切を、非繰り返し・繰り返しの展開なしでそのまま曜日別に拾う
+  # (繰り返しの複雑な展開はアプリ側の役割とし、ここでは次回締切日が来週内のものだけ拾う簡易版)
+  local NEXT7=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" '
+    [ .items[]? | select(.done|not)
+      | . + {epoch: (.due | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
+      | select(.epoch > $now and .epoch <= ($now + 7*86400))
+    ] | sort_by(.epoch) | .[]
+    | [ (.epoch|tostring), .title, (.cat // "その他"), .due, ((.allDay // false)|tostring), (.rep // "none") ]
+    | join("\u001f")
+  ')
+
+  local BY_DAY=""
+  local d off dow label DAY_LINES
+  for off in 0 1 2 3 4 5 6; do
+    d=$(TZ=Asia/Tokyo date -d "${today_jst} +$((off+1)) days" +%Y-%m-%d)
+    dow=$(jp_dow "${d}T00:00:00")
+    label=$(TZ=Asia/Tokyo date -d "$d" "+%-m/%-d（${dow}）")
+    DAY_LINES=""
+    if [ -n "$NEXT7" ]; then
+      while IFS=$'\x1f' read -r epoch title cat due allday rep; do
+        local due_key; due_key=$(TZ=Asia/Tokyo date -d "@$epoch" +%Y-%m-%d)
+        if [ "$due_key" = "$d" ]; then
+          local mark="-"
+          [ "$rep" != "none" ] && mark="🔁"
+          DAY_LINES="${DAY_LINES}${mark} ${title}　\`${cat}\`"$'\n'
+        fi
+      done <<< "$NEXT7"
+    fi
+    if [ -n "$DAY_LINES" ]; then
+      BY_DAY="${BY_DAY}**${label}**"$'\n'"${DAY_LINES}"$'\n'
+    fi
+  done
+  [ -z "$BY_DAY" ] && BY_DAY="来週の締切はまだ登録されていません。"$'\n'
+
+  # 今週(過去7日)に完了した件数
+  local DONE_COUNT
+  DONE_COUNT=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" '
+    [ .items[]? | select(.done and .doneAt)
+      | select((.doneAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) > ($now - 7*86400))
+    ] | length')
+
+  # 7日以上の滞留件数
+  local STALE_COUNT
+  STALE_COUNT=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" '
+    [ .items[]? | select(.done|not)
+      | . + {epoch: (.due | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
+      | select(.epoch < ($now - 7*86400))
+    ] | length')
+
+  local CONTENT="# 📅 来週の見通し"$'\n'"### $(TZ=Asia/Tokyo date -d "@${NOW_EPOCH}" "+%-m月%-d日（$(jp_dow now)）")の週次レビュー"$'\n\n'
+  CONTENT="${CONTENT}## 🗓️ 来週7日間"$'\n'"${BY_DAY}"
+  CONTENT="${CONTENT}"$'\n'"## 📊 この1週間"$'\n'"- 完了：${DONE_COUNT}件"
+  if [ "$STALE_COUNT" -gt 0 ]; then
+    CONTENT="${CONTENT}"$'\n'"- ⚠️ 7日以上の滞留：${STALE_COUNT}件"
+  fi
+  if [ -n "$APP_URL" ]; then
+    CONTENT="${CONTENT}"$'\n\n'"## 🔗 リンク"$'\n'"- [アプリを開く](${APP_URL})"
+  fi
+
+  local TRUNCATED BODY
+  TRUNCATED=$(truncate_for_discord "$CONTENT")
+  BODY=$(jq -n --argjson c "$TRUNCATED" --arg uid "$MENTION_USER_ID" '
+    {content: $c} + (if $uid == "" then {} else {allowed_mentions: {parse: [], users: [$uid]}} end)')
+  curl -sf -H "Content-Type: application/json" -d "$BODY" "$WEBHOOK_URL" >/dev/null
+}
+
+# 週次レビュー（日曜夜のcron、または手動実行で DIGEST_MODE=weekly のとき）
+if [ "${DIGEST_MODE:-}" = "weekly" ]; then
+  send_weekly_review
+  exit 0
+fi
+
 # 定期予定のセクションを組み立てる（次回の締切日を表示）
 REP_LINES=""
 if [ -n "$REP_ROWS" ]; then
