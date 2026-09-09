@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-09-07 13:11 JST">
+<meta name="build-stamp" content="2026-09-09 18:19 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -298,6 +298,9 @@ html[data-theme="dark"] .toast{color:#101317}
     </label>
     <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
       <input type="checkbox" id="fAllDay" style="width:auto">終日（時刻を決めない）
+    </label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
+      <input type="checkbox" id="fAutoComplete" style="width:auto">期限を過ぎたら自動的に完了にする（超過として扱わない）
     </label>
     <div class="two" id="startRow" style="display:none">
       <label class="field"><span>開始日</span><input type="date" id="fStart"></label>
@@ -771,6 +774,7 @@ function cardOf(it){
       '<div class="meta"><span class="cat">'+escHtml(it.cat||"その他")+'</span><span class="num">'+
       escHtml(it.start?(fmtDue(new Date(it.start),it.allDay)+" 〜 "+fmtDue(d,it.allDay)):fmtDue(d,it.allDay))+'</span>'+
       (it.allDay?'<span class="cat">終日</span>':"")+
+      (it.autoComplete?'<span class="cat">自動完了</span>':"")+
       (it.rep&&it.rep!=="none"?'<span class="cat">'+({weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"}[it.rep])+
         (it.repCount>0?" 残"+it.repCount+"回":"")+'</span>':"")+'</div>'+
       (it.memo?'<p class="memo">'+escHtml(it.memo)+'</p>':"")+
@@ -915,6 +919,7 @@ function applyTemplate(id){
   document.getElementById("fRep").value=t.rep||"none";
   document.getElementById("fRepCount").value=String(t.repCount==null?15:t.repCount);
   document.getElementById("fAllDay").checked=!!t.allDay;
+  document.getElementById("fAutoComplete").checked=!!t.autoComplete;
   document.getElementById("fTime").value=t.timeOfDay||"09:00";
   document.getElementById("fSpan").checked=false;
   syncDialogRows();
@@ -940,6 +945,7 @@ function saveAsTemplate(it){
     id:"t"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
     name:name, title:it.title, cat:it.cat, memo:it.memo||"",
     allDay:!!it.allDay, rep:it.rep||"none", repCount:it.repCount||0,
+    autoComplete:!!it.autoComplete,
     timeOfDay:it.allDay?"09:00":(pad(d.getHours())+":"+pad(d.getMinutes()))
   });
   save(); render();
@@ -2165,6 +2171,7 @@ function openDialog(item){
     document.getElementById("fRepCount").value=String(item.repCount==null?15:item.repCount);
     document.getElementById("fMemo").value=item.memo||"";
     document.getElementById("fAllDay").checked=!!item.allDay;
+    document.getElementById("fAutoComplete").checked=!!item.autoComplete;
     var hasStart=!!item.start;
     document.getElementById("fSpan").checked=hasStart;
     if(hasStart){
@@ -2223,6 +2230,7 @@ dlgForm.addEventListener("submit",function(e){
   var title=document.getElementById("fTitle").value.trim();
   var date=document.getElementById("fDate").value;
   var allDay=document.getElementById("fAllDay").checked;
+  var autoComplete=document.getElementById("fAutoComplete").checked;
   // 終日は内部的に「その日の23:59」を締切として扱い、表示では時刻を出さない
   var time=allDay?"23:59":(document.getElementById("fTime").value||"09:00");
   if(!title||!date){
@@ -2252,6 +2260,7 @@ dlgForm.addEventListener("submit",function(e){
       i.title=title; i.due=due.toISOString(); i.cat=document.getElementById("fCat").value;
       i.rep=rep; i.repCount=repCount; i.memo=document.getElementById("fMemo").value.trim();
       if(allDay) i.allDay=true; else delete i.allDay;
+      if(autoComplete) i.autoComplete=true; else delete i.autoComplete;
       if(start) i.start=start.toISOString(); else delete i.start;
       i.seq=(i.seq||0)+1;
     });
@@ -2270,6 +2279,7 @@ dlgForm.addEventListener("submit",function(e){
     };
     if(start) it.start=start.toISOString();
     if(allDay) it.allDay=true;
+    if(autoComplete) it.autoComplete=true;
     db.items.push(it);
     toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
     // 隔離項目の修復中だった場合は、保存できたので隔離から取り除く
@@ -2284,7 +2294,7 @@ dlgForm.addEventListener("submit",function(e){
   autoNotifyIfConfigured();
 });
 
-function complete(it){
+function applyCompletion(it){
   it.done=true; it.doneAt=new Date().toISOString();
   if(it.rep&&it.rep!=="none"){
     // 繰り返しはカレンダー側で先の回まで展開しているため、ここでは複製しない。
@@ -2300,14 +2310,41 @@ function complete(it){
       it.due=n.toISOString();
       if(left>1) it.repCount=left-1;
       it.seq=(it.seq||0)+1;
-      toast("完了。次回は "+fmtDue(n)+" です");
-    } else {
-      toast("繰り返しの最終回を完了しました");
+      return {repeating:true, next:n};
     }
+    return {repeating:true, final:true};
+  }
+  return {repeating:false};
+}
+
+function complete(it){
+  var r=applyCompletion(it);
+  if(r.repeating){
+    toast(r.final?"繰り返しの最終回を完了しました":"完了。次回は "+fmtDue(r.next)+" です");
   } else {
     toast("完了にしました");
   }
   save(); render();
+}
+
+/* 「期限を過ぎたら自動的に完了にする」を付けた締切を、実際に期限を過ぎたタイミングで
+   完了処理する。起動時と定期チェックの両方から呼ぶ */
+function autoCompleteOverdueItems(){
+  var now=new Date();
+  var affected=0;
+  db.items.forEach(function(it){
+    if(it.done || !it.autoComplete) return;
+    if(parseItemDate(it)>=now) return; // まだ期限内
+    applyCompletion(it);
+    affected++;
+  });
+  if(affected>0){
+    save();
+    toast(affected===1?"期限を過ぎた締切を自動で完了にしました":"期限を過ぎた"+affected+"件を自動で完了にしました");
+    autoSyncIfConfigured();
+    autoNotifyIfConfigured();
+  }
+  return affected;
 }
 
 /* 繰り返し1回分だけ日付を進める */
@@ -2466,10 +2503,10 @@ document.querySelectorAll(".tab").forEach(function(t){
   t.onclick=function(){ view=t.dataset.view; window.scrollTo(0,0); render(); };
 });
 document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
-load(); applyTheme(); render();
+load(); autoCompleteOverdueItems(); applyTheme(); render();
 handleExportParam();
 handleActionParam();
-setInterval(render, 60000); // 残り時間を更新
+setInterval(function(){ autoCompleteOverdueItems(); render(); }, 60000); // 残り時間の更新とあわせて自動完了も確認
 checkForUpdate();
 autoPullIfStale();
 setInterval(checkForUpdate, 10*60000); // 10分ごとに更新を確認
