@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # 毎朝、近日中の締切をDiscordにまとめて送るスクリプト。
 # GitHub Actionsのcronから呼ばれる。ubuntu-latestに標準で入っているcurl/jq/dateだけで動く。
+#
+# 動作確認用の環境変数:
+#   DRY_RUN=1          Discordへ送らず、送る内容を標準出力に表示する
+#   NOW="2026-10-01 07:00"  「現在時刻」を差し替える(JSTとして解釈)。日付をまたぐ挙動の確認用
+#   DIGEST_MODE=weekly 週次レビューを送る
 set -euo pipefail
 
 # このスクリプトが置かれているディレクトリ（build_ics.py の場所）
@@ -9,8 +14,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---- 設定（ここを書き換えれば他の設定は不要） ------------------------------
 # 通知先のDiscordウェブフックURL。
 # ※このリポジトリがPublicの場合、このURLは誰でも閲覧できます。
+#   リポジトリの Settings → Secrets and variables → Actions に
+#   DISCORD_WEBHOOK_URL を登録すると、そちらが優先して使われます。
 #   悪用されたときはDiscordのチャンネル設定→連携サービス→ウェブフックから削除し、
-#   新しいURLを発行してここを書き換えてください。
+#   新しいURLを発行してここ(またはSecret)を書き換えてください。
 DEFAULT_WEBHOOK_URL=""
 # 毎朝メンションで呼び出すユーザーID。メンション不要なら空文字にする
 MENTION_USER_ID=""
@@ -34,11 +41,78 @@ ICS_DAY_HOUR="9"
 DATA_FILE="${DATA_FILE:-data.json}"
 WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-$DEFAULT_WEBHOOK_URL}"
 WINDOW_DAYS="${WINDOW_DAYS:-$DEFAULT_WINDOW_DAYS}"
+DRY_RUN="${DRY_RUN:-0}"
+
+if [ -z "$WEBHOOK_URL" ] && [ "$DRY_RUN" != "1" ]; then
+  echo "エラー: DiscordのWebhook URLが未設定です。send_digest.sh 冒頭の DEFAULT_WEBHOOK_URL に記入するか、" >&2
+  echo "       リポジトリの Secret に DISCORD_WEBHOOK_URL を登録してください。" >&2
+  exit 1
+fi
+
+# 「現在時刻」。NOW を指定すると差し替えられる（動作確認用）
+if [ -n "${NOW:-}" ]; then
+  NOW_EPOCH=$(TZ=Asia/Tokyo date -d "$NOW" +%s)
+else
+  NOW_EPOCH=$(date +%s)
+fi
+WINDOW_EPOCH=$(( NOW_EPOCH + WINDOW_DAYS*86400 ))
+TODAY_KEY=$(TZ=Asia/Tokyo date -d "@$NOW_EPOCH" +%Y-%m-%d)
+# 今日(JST)の0時。JSTに夏時間は無いので日付の加減算は86400秒単位でよい
+TODAY_START=$(TZ=Asia/Tokyo date -d "$TODAY_KEY" +%s)
 
 MENTION=""
 if [ -n "$MENTION_USER_ID" ]; then
-  MENTION="<@${MENTION_USER_ID}> "
+  MENTION="<@${MENTION_USER_ID}> "$'\n'
 fi
+
+# ---- Discordへの送信 --------------------------------------------------------
+# 一時的なエラー(429/5xx)は数回リトライする。DRY_RUN=1 なら送らずに表示だけする
+post_json(){  # $1=JSON本文
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "----- [DRY_RUN] 送信内容 -----"
+    echo "$1" | jq -r '.content'
+    return 0
+  fi
+  curl -sf --retry 3 --retry-delay 2 \
+    -H "Content-Type: application/json" -d "$1" "$WEBHOOK_URL" >/dev/null
+}
+post_with_file(){  # $1=JSON本文 $2=ファイルパス $3=ファイル名 $4=MIMEタイプ
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "----- [DRY_RUN] 送信内容（添付: $3）-----"
+    echo "$1" | jq -r '.content'
+    return 0
+  fi
+  # payload_json は --form-string で渡す（本文中の ; や < を curl に解釈させない）
+  curl -sf --retry 3 --retry-delay 2 \
+    --form-string "payload_json=$1" \
+    -F "files[0]=@$2;filename=$3;type=$4" \
+    "$WEBHOOK_URL" >/dev/null
+}
+# 本文(テキスト)を送る。メンションは指定ユーザーだけ許可する
+send_content(){  # $1=本文 $2=添付ファイルパス(省略可) $3=ファイル名 $4=MIMEタイプ
+  local truncated body
+  # Discordの本文上限は2000文字。件数が多い日は超えることがあるため切り詰める
+  truncated=$(truncate_for_discord "$1")
+  body=$(jq -n --argjson c "$truncated" --arg uid "$MENTION_USER_ID" '
+    {content: $c} + (if $uid == "" then {} else {allowed_mentions: {parse: [], users: [$uid]}} end)')
+  if [ -n "${2:-}" ]; then
+    post_with_file "$body" "$2" "$3" "$4" || post_json "$body"
+  else
+    post_json "$body"
+  fi
+}
+
+# Discordの本文上限(2000文字)を超えないよう切り詰める。
+# ロケールがPOSIXの環境ではcutやwcが日本語を正しく1文字として数えないことがあるため、
+# UTF-8を確実に扱えるjqで文字数を数えて切る
+truncate_for_discord(){
+  local text="$1" limit=1850
+  printf '%s' "$text" | jq -Rs --argjson limit "$limit" '
+    if (length > $limit) then
+      (.[0:$limit] + "\n\n…（件数が多いため省略しました。詳しくはアプリでご確認ください）")
+    else . end'
+}
+# ---------------------------------------------------------------------------
 
 # data.json を読み込む(存在しないならその旨だけ送って終了)
 JSON=""
@@ -49,47 +123,87 @@ elif [ -f "$DATA_FILE" ]; then
 fi
 
 if [ -z "$JSON" ] || ! echo "$JSON" | jq -e '.items' >/dev/null 2>&1; then
-  curl -sf -H "Content-Type: application/json" \
-    -d '{"content":"⚠️ 締切データ(data.json)がまだ同期されていません。アプリの設定タブから「GitHubに同期する」を実行してください。"}' \
-    "$WEBHOOK_URL" >/dev/null
+  post_json '{"content":"⚠️ 締切データ(data.json)がまだ同期されていません。アプリの設定タブから「GitHubに同期する」を実行してください。"}'
   exit 0
 fi
 
-NOW_EPOCH=$(date +%s)
-WINDOW_EPOCH=$(( NOW_EPOCH + WINDOW_DAYS*86400 ))
+# 締切(due)が無い・日時として読めない項目は、全体を止めないよう除外して警告だけ出す
+BROKEN=$(echo "$JSON" | jq -r '
+  [ .items[]? | select(.done|not)
+    | select((.due | type) != "string"
+             or ((.due | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) == null)) ]
+  | map(.title // .id // "?" | tostring | gsub("[\n\r]"; " ")) | join("、")')
+if [ -n "$BROKEN" ]; then
+  echo "締切日時が読めない項目を除外しました: $BROKEN" >&2
+fi
+
+# 各jqで共通して使う関数
+#   ep       : ISO8601(ミリ秒つき可)をepoch秒に
+#   ok       : 締切日時が読める項目だけ通す
+#   add_rep  : 繰り返しを n 回分進めた日時。月・年単位はJSTの暦で進め、
+#              月末(31日など)は各月の末日に丸める。$anchor はアプリが記録した基準日(repDay)
+#   next_occ : 基準時刻 $t 以降で最初の回(取りやめた回=skip は飛ばす)
+#   rows_safe: 1行1件で渡すため、タイトル等の改行と区切り文字を除く
+JQ_LIB='
+def ep: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+def ok: (.due | type) == "string" and ((.due | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) != null);
+def jstkey: (. + 32400) | strftime("%Y-%m-%d");
+def add_rep($rep; $n; $anchor):
+  if $n == 0 then .
+  elif $rep == "weekly" then . + $n*7*86400
+  elif $rep == "biweekly" then . + $n*14*86400
+  elif $rep == "monthly" or $rep == "yearly" then
+    ((. + 32400) | gmtime) as $t
+    | ($t[1] + (if $rep == "monthly" then $n else $n*12 end)) as $mo
+    | ($t[0] + ($mo / 12 | floor)) as $y
+    | ($mo % 12) as $m
+    | ([$y, $m + 1, 0, 0, 0, 0, 0, 0] | mktime | gmtime | .[2]) as $last
+    | ([$y, $m, ([($anchor // $t[2]), $last] | min), $t[3], $t[4], ($t[5] | floor), 0, 0] | mktime) - 32400
+  else . end;
+def next_occ($t):
+  (.due | ep) as $b | (.rep // "none") as $r | (.skip // []) as $sk | (.repDay // null) as $a
+  | (first(range(0; 1100) as $n
+      | ($b | add_rep($r; $n; $a))
+      | select(. >= $t)
+      | select(jstkey as $k | $sk | any(.[]; . == $k) | not)) // $b);
+def clean: tostring | gsub("[\n\r\u001f]"; " ");
+'
 
 # 未完了かつ「期限切れ」または「WINDOW_DAYS以内」の項目を、締切が近い順に抽出
-# 未完了かつ「期限切れ」または「WINDOW_DAYS以内」の項目を、締切が近い順に抽出
-# 繰り返し(rep)のあるものは「定期予定」として分けて扱う
 # 期間つきは開始日を基準に並べる（アプリの表示と揃える）
-ROWS=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" --argjson win "$WINDOW_EPOCH" '
-  [ .items[]? | select(.done|not)
-    | select((.rep // "none") == "none")
-    | . + {epoch: (.due | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
-    | . + {refep: ((.start // .due) | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
+# 繰り返し(rep)のあるものは下の「定期予定」で扱うが、
+# 自動完了(autoComplete)でないものの締切が過ぎていれば「期限切れ」にも入れる
+ROWS=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" --argjson win "$WINDOW_EPOCH" "$JQ_LIB"'
+  [ .items[]? | select(.done|not) | select(ok)
+    | (.rep // "none") as $rep
+    | . + {epoch: (.due | ep)}
+    | select($rep == "none" or ((.autoComplete|not) and .epoch < $now))
+    | . + {refep: (if $rep == "none" then ((.start // .due) | ep) else .epoch end)}
     | select(.refep <= $win)
   ] | sort_by(.refep) | .[]
-  | [ (.epoch|tostring), .title, (.cat // "その他"), .due, (.start // ""), ((.allDay // false)|tostring), (.refep|tostring) ]
+  | [ (.epoch|tostring), (.title // "" | clean), (.cat // "その他" | clean), .due, (.start // ""),
+      ((.allDay // false)|tostring), (.refep|tostring), (.rep // "none") ]
   | join("\u001f")
 ')
 
-# 定期予定。直近の締切日(=次回)が近い順。期間の指定に関わらず全件出す
-REP_ROWS=$(echo "$JSON" | jq -r '
-  [ .items[]? | select(.done|not)
+# 定期予定。次回(今から先で最初の回)が近い順。期間の指定に関わらず全件出す
+# data.json の due は「アプリで最後に進めた回」のままのことがあるので、ここで次回を計算し直す
+REP_ROWS=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" "$JQ_LIB"'
+  [ .items[]? | select(.done|not) | select(ok)
     | select((.rep // "none") != "none")
-    | . + {epoch: (.due | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
+    | . + {epoch: next_occ($now)}
   ] | sort_by(.epoch) | .[]
-  | [ (.epoch|tostring), .title, (.cat // "その他"), .due, .rep, ((.allDay // false)|tostring) ]
+  | [ (.epoch|tostring), (.title // "" | clean), (.cat // "その他" | clean), .due, .rep, ((.allDay // false)|tostring) ]
   | join("\u001f")
 ')
 
-# 曜日を日本語で返す
+# 曜日を日本語で返す（$1 は date -d に渡せる文字列。"@epoch" も可）
 jp_dow(){ case "$(TZ=Asia/Tokyo date -d "$1" +%u)" in
     1) echo 月;; 2) echo 火;; 3) echo 水;; 4) echo 木;;
     5) echo 金;; 6) echo 土;; 7) echo 日;; esac; }
 
 # 日時をJSTで整形する。終日なら時刻を出さない
-fmt_when(){  # $1=ISO日時 $2=allDay
+fmt_when(){  # $1=ISO日時 または @epoch  $2=allDay
   local dow; dow=$(jp_dow "$1")
   if [ "$2" = "true" ]; then
     TZ=Asia/Tokyo date -d "$1" "+%-m/%-d（${dow}）" 2>/dev/null || echo "$1"
@@ -97,16 +211,17 @@ fmt_when(){  # $1=ISO日時 $2=allDay
     TZ=Asia/Tokyo date -d "$1" "+%-m/%-d（${dow}） %H:%M" 2>/dev/null || echo "$1"
   fi
 }
+# 今日(JST)から見て何日後かを返す。過去なら負の数
+days_from_today(){  # $1=epoch
+  local key; key=$(TZ=Asia/Tokyo date -d "@$1" +%Y-%m-%d)
+  echo $(( ( $(TZ=Asia/Tokyo date -d "$key" +%s) - TODAY_START ) / 86400 ))
+}
 # 残り日数の文言を作る
 fmt_remain(){  # $1=基準epoch $2=締切epoch $3=開始があるか
   local ref="$1" due="$2" has_start="$3"
-  local today ref_day diff
-  today=$(TZ=Asia/Tokyo date +%Y-%m-%d)
-  ref_day=$(TZ=Asia/Tokyo date -d "@$ref" +%Y-%m-%d)
-  diff=$(( ( $(date -d "$ref_day" +%s) - $(date -d "$today" +%s) ) / 86400 ))
+  local diff; diff=$(days_from_today "$ref")
   if [ "$due" -lt "$NOW_EPOCH" ]; then
-    local od
-    od=$(( ( $(date -d "$today" +%s) - $(date -d "$(TZ=Asia/Tokyo date -d "@$due" +%Y-%m-%d)" +%s) ) / 86400 ))
+    local od; od=$(( -$(days_from_today "$due") ))
     if [ "$od" -eq 0 ]; then echo "期限切れ"; else echo "${od} 日 超過"; fi
   elif [ "$diff" -lt 0 ]; then
     echo "進行中"
@@ -120,59 +235,43 @@ fmt_remain(){  # $1=基準epoch $2=締切epoch $3=開始があるか
 }
 
 # 指定曜日(JST)なら data.json をファイルとして添付し、控えを残す
-# Discordの本文上限(2000文字)を超えないよう切り詰める。
-# ロケールがPOSIXの環境ではcutやwcが日本語を正しく1文字として数えないことがあるため、
-# UTF-8を確実に扱えるjqで文字数を数えて切る
-truncate_for_discord(){
-  local text="$1" limit=1850
-  echo "$text" | jq -Rs --argjson limit "$limit" '
-    if (length > $limit) then
-      (.[0:$limit] + "\n\n…（件数が多いため省略しました。詳しくはアプリでご確認ください）")
-    else . end'
-}
-
 send_backup(){
   [ "$BACKUP_DOW" = "0" ] && return 0
-  [ "$(TZ=Asia/Tokyo date +%u)" = "$BACKUP_DOW" ] || return 0
-  local stamp count tmp
-  stamp=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+  [ "$(TZ=Asia/Tokyo date -d "@$NOW_EPOCH" +%u)" = "$BACKUP_DOW" ] || return 0
+  local stamp count tmp body
+  stamp="$TODAY_KEY"
   count=$(echo "$JSON" | jq '[.items[]?] | length')
-  tmp="/tmp/deadline-backup-${stamp}.json"
+  tmp="${RUNNER_TEMP:-/tmp}/deadline-backup-${stamp}.json"
   printf '%s' "$JSON" > "$tmp"
-  curl -sf \
-    -F "payload_json={\"content\":\"🗄️ 週次バックアップ（${stamp} / 全${count}件）　アプリの設定タブ→「JSONを読み込む」で復元できます。\"}" \
-    -F "files[0]=@${tmp};filename=deadline-backup-${stamp}.json;type=application/json" \
-    "$WEBHOOK_URL" >/dev/null || echo "バックアップの添付に失敗しました" >&2
+  body=$(jq -n --arg c "🗄️ 週次バックアップ（${stamp} / 全${count}件）　アプリの設定タブ→「JSONを読み込む」で復元できます。" '{content: $c}')
+  post_with_file "$body" "$tmp" "deadline-backup-${stamp}.json" "application/json" \
+    || echo "バックアップの添付に失敗しました" >&2
 }
 
 # 週次レビュー本文を組み立てて送る（来週7日間の見通し・今週の完了数・滞留件数）
 send_weekly_review(){
-  local today_jst week_start week_end
-  today_jst=$(TZ=Asia/Tokyo date +%Y-%m-%d)
-
-  # 来週7日間(明日から7日間)の締切を、非繰り返し・繰り返しの展開なしでそのまま曜日別に拾う
-  # (繰り返しの複雑な展開はアプリ側の役割とし、ここでは次回締切日が来週内のものだけ拾う簡易版)
-  local NEXT7=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" '
-    [ .items[]? | select(.done|not)
-      | . + {epoch: (.due | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
-      | select(.epoch > $now and .epoch <= ($now + 7*86400))
+  # 対象は「明日0時〜8日後0時(JST)」の7日間。繰り返しは次回の日付で拾う
+  local ws=$(( TODAY_START + 86400 )) we=$(( TODAY_START + 8*86400 ))
+  local NEXT7
+  NEXT7=$(echo "$JSON" | jq -r --argjson ws "$ws" --argjson we "$we" "$JQ_LIB"'
+    [ .items[]? | select(.done|not) | select(ok)
+      | . + {epoch: (if (.rep // "none") == "none" then (.due | ep) else next_occ($ws) end)}
+      | select(.epoch >= $ws and .epoch < $we)
     ] | sort_by(.epoch) | .[]
-    | [ (.epoch|tostring), .title, (.cat // "その他"), .due, ((.allDay // false)|tostring), (.rep // "none") ]
+    | [ (.epoch | jstkey), (.title // "" | clean), (.cat // "その他" | clean), (.rep // "none") ]
     | join("\u001f")
   ')
 
-  local BY_DAY=""
-  local d off dow label DAY_LINES
-  for off in 0 1 2 3 4 5 6; do
-    d=$(TZ=Asia/Tokyo date -d "${today_jst} +$((off+1)) days" +%Y-%m-%d)
-    dow=$(jp_dow "${d}T00:00:00")
+  local BY_DAY="" off d dow label DAY_LINES key title cat rep mark
+  for off in 1 2 3 4 5 6 7; do
+    d=$(TZ=Asia/Tokyo date -d "@$(( TODAY_START + off*86400 ))" +%Y-%m-%d)
+    dow=$(jp_dow "$d")
     label=$(TZ=Asia/Tokyo date -d "$d" "+%-m/%-d（${dow}）")
     DAY_LINES=""
     if [ -n "$NEXT7" ]; then
-      while IFS=$'\x1f' read -r epoch title cat due allday rep; do
-        local due_key; due_key=$(TZ=Asia/Tokyo date -d "@$epoch" +%Y-%m-%d)
-        if [ "$due_key" = "$d" ]; then
-          local mark="-"
+      while IFS=$'\x1f' read -r key title cat rep; do
+        if [ "$key" = "$d" ]; then
+          mark="-"
           [ "$rep" != "none" ] && mark="🔁"
           DAY_LINES="${DAY_LINES}${mark} ${title}　\`${cat}\`"$'\n'
         fi
@@ -186,20 +285,20 @@ send_weekly_review(){
 
   # 今週(過去7日)に完了した件数
   local DONE_COUNT
-  DONE_COUNT=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" '
+  DONE_COUNT=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" "$JQ_LIB"'
     [ .items[]? | select(.done and .doneAt)
-      | select((.doneAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) > ($now - 7*86400))
+      | select((.doneAt | try ep catch 0) > ($now - 7*86400))
     ] | length')
 
-  # 7日以上の滞留件数
+  # 7日以上の滞留件数（自動完了の繰り返しは、締切が過ぎても次回へ進むだけなので数えない）
   local STALE_COUNT
-  STALE_COUNT=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" '
-    [ .items[]? | select(.done|not)
-      | . + {epoch: (.due | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)}
-      | select(.epoch < ($now - 7*86400))
+  STALE_COUNT=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" "$JQ_LIB"'
+    [ .items[]? | select(.done|not) | select(ok)
+      | select(((.rep // "none") != "none" and .autoComplete) | not)
+      | select((.due | ep) < ($now - 7*86400))
     ] | length')
 
-  local CONTENT="# 📅 来週の見通し"$'\n'"### $(TZ=Asia/Tokyo date -d "@${NOW_EPOCH}" "+%-m月%-d日（$(jp_dow now)）")の週次レビュー"$'\n\n'
+  local CONTENT="# 📅 来週の見通し"$'\n'"### $(TZ=Asia/Tokyo date -d "@${NOW_EPOCH}" "+%-m月%-d日（$(jp_dow "@$NOW_EPOCH")）")の週次レビュー"$'\n\n'
   CONTENT="${CONTENT}## 🗓️ 来週7日間"$'\n'"${BY_DAY}"
   CONTENT="${CONTENT}"$'\n'"## 📊 この1週間"$'\n'"- 完了：${DONE_COUNT}件"
   if [ "$STALE_COUNT" -gt 0 ]; then
@@ -209,11 +308,7 @@ send_weekly_review(){
     CONTENT="${CONTENT}"$'\n\n'"## 🔗 リンク"$'\n'"- [アプリを開く](${APP_URL})"
   fi
 
-  local TRUNCATED BODY
-  TRUNCATED=$(truncate_for_discord "$CONTENT")
-  BODY=$(jq -n --argjson c "$TRUNCATED" --arg uid "$MENTION_USER_ID" '
-    {content: $c} + (if $uid == "" then {} else {allowed_mentions: {parse: [], users: [$uid]}} end)')
-  curl -sf -H "Content-Type: application/json" -d "$BODY" "$WEBHOOK_URL" >/dev/null
+  send_content "$CONTENT"
 }
 
 # 週次レビュー（日曜夜のcron、または手動実行で DIGEST_MODE=weekly のとき）
@@ -222,11 +317,11 @@ if [ "${DIGEST_MODE:-}" = "weekly" ]; then
   exit 0
 fi
 
-# 定期予定のセクションを組み立てる（次回の締切日を表示）
+# 定期予定のセクションを組み立てる（次回の締切日と残り日数を表示）
 REP_LINES=""
 if [ -n "$REP_ROWS" ]; then
   while IFS=$'\x1f' read -r epoch title cat due rep allday; do
-    RDATE=$(fmt_when "$due" "$allday")
+    RDATE=$(fmt_when "@$epoch" "$allday")
     case "$rep" in
       weekly)   RLABEL="毎週" ;;
       biweekly) RLABEL="隔週" ;;
@@ -234,7 +329,9 @@ if [ -n "$REP_ROWS" ]; then
       yearly)   RLABEL="毎年" ;;
       *)        RLABEL="$rep" ;;
     esac
-    REP_LINES="${REP_LINES}- **${title}**　\`${cat}\`　${RLABEL}"$'\n'"  次は ${RDATE}"$'\n'
+    RDIFF=$(days_from_today "$epoch")
+    if [ "$RDIFF" -eq 0 ]; then RREMAIN="今日"; else RREMAIN="${RDIFF} 日後"; fi
+    REP_LINES="${REP_LINES}- **${title}**　\`${cat}\`　${RLABEL}"$'\n'"  次は ${RDATE}　── ${RREMAIN}"$'\n'
   done <<< "$REP_ROWS"
 fi
 
@@ -243,7 +340,7 @@ if [ -n "$REP_LINES" ]; then
   REP_SECTION=$'\n'"## 🔁 定期予定"$'\n'"${REP_LINES}"
 fi
 
-TODAY_JST=$(TZ=Asia/Tokyo date "+%-m月%-d日（$(jp_dow now)）")
+TODAY_JST=$(TZ=Asia/Tokyo date -d "@$NOW_EPOCH" "+%-m月%-d日（$(jp_dow "@$NOW_EPOCH")）")
 LINK_SECTION=""
 if [ -n "$APP_URL" ]; then
   LINK_SECTION=$'\n'"## 🔗 リンク"$'\n'"- [アプリを開く](${APP_URL})"$'\n'"- [カレンダーに入れる](${APP_URL}?export=all)"$'\n'
@@ -253,8 +350,7 @@ if [ -z "$ROWS" ]; then
   CONTENT="# 📋 締切トラッカー"$'\n'"### ${TODAY_JST}の連絡"$'\n\n'
   CONTENT="${CONTENT}## ⏳ ${WINDOW_DAYS}日以内の締切"$'\n'"-# 予定はありません"$'\n'
   CONTENT="${CONTENT}${REP_SECTION}${LINK_SECTION}"
-  BODY=$(truncate_for_discord "$CONTENT" | jq '{content: .}')
-  curl -sf -H "Content-Type: application/json" -d "$BODY" "$WEBHOOK_URL" >/dev/null
+  send_content "$CONTENT"
   send_backup
   exit 0
 fi
@@ -267,29 +363,29 @@ OVERDUE_COUNT=0
 STALE_COUNT=0
 TODAY_COUNT=0
 SOON_COUNT=0
-TODAY_KEY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
-while IFS=$'\x1f' read -r epoch title cat due start allday refep; do
+while IFS=$'\x1f' read -r epoch title cat due start allday refep rep; do
   JDATE=$(fmt_when "$due" "$allday")
   if [ -n "$start" ]; then
     SDATE=$(fmt_when "$start" "$allday")
-    JDATE="${SDATE} 〜 ${JDATE}"
+    # 終日で開始日と締切日が同じなら1つだけ出す
+    [ "$SDATE" != "$JDATE" ] && JDATE="${SDATE} 〜 ${JDATE}"
   fi
   REMAIN=$(fmt_remain "$refep" "$epoch" "$start")
-  ENTRY="- **${title}**　\`${cat}\`"$'\n'"  ${JDATE}　── ${REMAIN}"$'\n'
-  REF_KEY=$(TZ=Asia/Tokyo date -d "@$refep" +%Y-%m-%d)
+  MARK=""
+  [ "$rep" != "none" ] && MARK="🔁 "
+  ENTRY="- ${MARK}**${title}**　\`${cat}\`"$'\n'"  ${JDATE}　── ${REMAIN}"$'\n'
   if [ "$epoch" -lt "$NOW_EPOCH" ]; then
     OVER_LINES="${OVER_LINES}${ENTRY}"
     OVERDUE_COUNT=$((OVERDUE_COUNT+1))
     # 7日以上放置されているものは別途警告する
-    DUE_KEY=$(TZ=Asia/Tokyo date -d "@$epoch" +%Y-%m-%d)
-    ELAPSED=$(( ( $(date -d "$TODAY_KEY" +%s) - $(date -d "$DUE_KEY" +%s) ) / 86400 ))
+    ELAPSED=$(( -$(days_from_today "$epoch") ))
     if [ "$ELAPSED" -ge 7 ]; then
       STALE_COUNT=$((STALE_COUNT+1))
       if [ "$STALE_COUNT" -le 3 ]; then
-        STALE_LINES="${STALE_LINES}- **${title}**　\`${cat}\`"$'\n'"  $(fmt_when "$due" "$allday") 締切 ── ${ELAPSED}日経過"$'\n'
+        STALE_LINES="${STALE_LINES}- ${MARK}**${title}**　\`${cat}\`"$'\n'"  $(fmt_when "$due" "$allday") 締切 ── ${ELAPSED}日経過"$'\n'
       fi
     fi
-  elif [ "$REF_KEY" = "$TODAY_KEY" ]; then
+  elif [ "$(days_from_today "$refep")" -eq 0 ]; then
     TODAY_LINES="${TODAY_LINES}${ENTRY}"
     TODAY_COUNT=$((TODAY_COUNT+1))
   else
@@ -298,7 +394,7 @@ while IFS=$'\x1f' read -r epoch title cat due start allday refep; do
   fi
 done <<< "$ROWS"
 
-CONTENT="${MENTION}"$'\n'"# 📋 締切トラッカー"$'\n'"### ${TODAY_JST}の連絡"$'\n'
+CONTENT="${MENTION}# 📋 締切トラッカー"$'\n'"### ${TODAY_JST}の連絡"$'\n'
 if [ "$STALE_COUNT" -gt 0 ]; then
   CONTENT="${CONTENT}"$'\n'"## ⚠️ 長く残っています（${STALE_COUNT}件）"$'\n'"${STALE_LINES}"
   if [ "$STALE_COUNT" -gt 3 ]; then
@@ -322,28 +418,21 @@ CONTENT="${CONTENT}${REP_SECTION}${LINK_SECTION}"
 
 # 未完了全件の.icsを作って添付する（失敗しても本文だけは必ず送る）
 ICS_PATH=""
+ICS_NAME=""
 if [ "$ATTACH_ICS" = "1" ]; then
-  printf '%s' "$JSON" > /tmp/_digest_data.json
-  ICS_STAMP=$(TZ=Asia/Tokyo date +%Y-%m-%d)
-  if python3 "$SCRIPT_DIR/build_ics.py" /tmp/_digest_data.json "/tmp/deadlines-${ICS_STAMP}.ics" "$ICS_DAY_HOUR" >/dev/null 2>&1; then
-    ICS_PATH="/tmp/deadlines-${ICS_STAMP}.ics"
+  TMP_DIR="${RUNNER_TEMP:-/tmp}"
+  printf '%s' "$JSON" > "$TMP_DIR/_digest_data.json"
+  ICS_NAME="deadlines-${TODAY_KEY}.ics"
+  if python3 "$SCRIPT_DIR/build_ics.py" "$TMP_DIR/_digest_data.json" "$TMP_DIR/$ICS_NAME" "$ICS_DAY_HOUR" >/dev/null 2>&1; then
+    ICS_PATH="$TMP_DIR/$ICS_NAME"
     CONTENT="${CONTENT}"$'\n'"📎 下の.icsは長押し→「ファイルに保存」してから開いてください（直接タップすると照会カレンダーになります）"
   fi
 fi
 
-# Discordの本文上限は2000文字。件数が多い日は超えることがあるため切り詰める
-TRUNCATED=$(truncate_for_discord "$CONTENT")
-
-BODY=$(jq -n --argjson c "$TRUNCATED" --arg uid "$MENTION_USER_ID" '
-  {content: $c} + (if $uid == "" then {} else {allowed_mentions: {parse: [], users: [$uid]}} end)')
-
 if [ -n "$ICS_PATH" ]; then
-  curl -sf -F "payload_json=${BODY}" \
-    -F "files[0]=@${ICS_PATH};filename=deadlines-${ICS_STAMP}.ics;type=text/calendar" \
-    "$WEBHOOK_URL" >/dev/null \
-    || curl -sf -H "Content-Type: application/json" -d "$BODY" "$WEBHOOK_URL" >/dev/null
+  send_content "$CONTENT" "$ICS_PATH" "$ICS_NAME" "text/calendar"
 else
-  curl -sf -H "Content-Type: application/json" -d "$BODY" "$WEBHOOK_URL" >/dev/null
+  send_content "$CONTENT"
 fi
 
 send_backup

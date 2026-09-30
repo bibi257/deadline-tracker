@@ -4,7 +4,7 @@
 //
 // キャッシュ名を変えると古いキャッシュは自動で破棄される。
 // 中身（index.html等）を大きく更新したときは、この名前も変えると確実に切り替わる。
-const CACHE_NAME = "deadline-tracker-v2";
+const CACHE_NAME = "deadline-tracker-v3";
 const CORE_FILES = [
   "./",
   "./index.html",
@@ -42,10 +42,16 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     fetch(event.request)
       .then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        // 正常な応答だけを保存する。更新確認用の「?_=時刻」などクエリ付きのURLは
+        // 毎回別物として溜まり続けるので、クエリを外した1件として上書き保存する
+        if (res.ok) {
+          const copy = res.clone();
+          const key = url.origin + url.pathname;
+          caches.open(CACHE_NAME).then((cache) => cache.put(key, copy));
+        }
         return res;
       })
-      .catch(() => caches.match(event.request))
+      // オフライン時は、?export=all などクエリ付きで開かれても同じページを返す
+      .catch(() => caches.match(event.request, { ignoreSearch: true }))
   );
 });
