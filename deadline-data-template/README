@@ -20,7 +20,9 @@
 deadline-data（Private）
 ├── data.json          ← アプリが自動で作る。手動で置く必要はない
 └── .github/
-    ├── workflows/daily-digest.yml
+    ├── workflows/
+    │   ├── daily-digest.yml   毎朝の連絡と日曜夜の週次レビュー
+    │   └── check.yml          data.json やスクリプトの更新時に、送信せず動作確認（任意）
     └── scripts/
         ├── send_digest.sh
         └── build_ics.py
@@ -30,6 +32,7 @@ GitHub の Web 画面から作る場合は、**Add file → Create new file** �
 
 ```
 .github/workflows/daily-digest.yml
+.github/workflows/check.yml
 .github/scripts/send_digest.sh
 .github/scripts/build_ics.py
 ```
@@ -40,7 +43,14 @@ GitHub の Web 画面から作る場合は、**Add file → Create new file** �
 
 ## 設定
 
-`.github/scripts/send_digest.sh` の冒頭を編集する。**最低限、`DEFAULT_WEBHOOK_URL` の記入が必要**（空のままだと実行時にエラーで停止する）。
+`.github/scripts/send_digest.sh` の冒頭を編集する。**最低限、Webhook URL の設定が必要**（未設定だと「Webhook URLが未設定です」と表示して停止する）。
+
+Webhook URL は次のどちらかで設定する。
+
+- リポジトリの **Settings → Secrets and variables → Actions** に `DISCORD_WEBHOOK_URL` として登録する（推奨。ファイルに URL が残らない）
+- `send_digest.sh` の `DEFAULT_WEBHOOK_URL` に直接書く（Secret が登録されていればそちらが優先）
+
+> アプリの「Discordへ今すぐ送る」で Webhook URL 欄を空欄にすると、このスクリプトの `DEFAULT_WEBHOOK_URL` を読み取って使う。Secret だけで運用する場合は、アプリ側の欄に URL を直接入力する。
 
 ```bash
 DEFAULT_WEBHOOK_URL=""      # 必須。Discordのチャンネル設定 → 連携サービス → ウェブフック で取得
@@ -61,10 +71,11 @@ Discord の設定 → 詳細設定 → 開発者モードをオンにすると�
 `.github/workflows/daily-digest.yml` の cron を編集する。
 
 ```yaml
-- cron: "47 21 * * *"   # UTC 21:47 = JST 6:47
+- cron: "47 21 * * *"   # UTC 21:47 = JST 6:47（毎朝）
+- cron: "45 12 * * 0"   # UTC 12:45 日曜 = JST 21:45 日曜（週次レビュー）
 ```
 
-UTC 基準（`UTC = JST − 9時間`）。GitHub の cron は混雑時に遅れるため、「0分ちょうど」は避けた方が安定する。数十分の遅延は仕様上ありうる。
+UTC 基準（`UTC = JST − 9時間`）。GitHub の cron は混雑時に遅れるため、「0分ちょうど」は避けた方が安定する。数十分〜数時間の遅延は仕様上ありうる。週次レビューの cron を変えるときは、同じファイルの `run:` にある `"45 12 * * 0"` も同じ値に揃えること。
 
 ---
 
@@ -72,9 +83,17 @@ UTC 基準（`UTC = JST − 9時間`）。GitHub の cron は混雑時に遅れ�
 
 1. Private リポジトリの **Actions** タブを開く
 2. 左の「締切ダイジェストをDiscordへ送る」を選ぶ
-3. **Run workflow** を押す
+3. **Run workflow** を押す（送信モードで `weekly` を選ぶと週次レビュー）
 
-数十秒で Discord にメッセージが届けば成功。`data.json` がまだ無い場合は、その旨の警告が届く（アプリの設定タブから「GitHubに同期する」を実行すると作られる）。
+数十秒で Discord にメッセージが届けば成功。**dry_run** にチェックして実行すると、Discord には送らずログに本文だけを表示する。
+
+手元で確かめる場合（`bash`・`jq`・`python3` がある環境）:
+
+```sh
+DRY_RUN=1 bash .github/scripts/send_digest.sh                         # 毎朝の連絡
+DRY_RUN=1 DIGEST_MODE=weekly bash .github/scripts/send_digest.sh      # 週次レビュー
+DRY_RUN=1 NOW="2026-10-05 06:47" bash .github/scripts/send_digest.sh  # 日時を指定(JST)
+````data.json` がまだ無い場合は、その旨の警告が届く（アプリの設定タブから「GitHubに同期する」を実行すると作られる）。
 
 > スケジュール実行は cron の時刻にしか動かない。ファイルを差し替えたら、翌朝を待たずに **Run workflow** で1回試しておくと、壊れたまま気づかない事態を防げる。
 

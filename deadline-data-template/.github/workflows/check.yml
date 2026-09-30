@@ -1,0 +1,39 @@
+name: スクリプトとデータの検証
+
+# data.json やスクリプトが更新されたとき、Discordへは送らずに
+# 「エラーなく通知文と.icsを作れるか」だけを確かめる
+on:
+  push:
+    paths:
+      - "data.json"
+      - ".github/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v7
+
+      - name: data.json がJSONとして正しいか
+        run: jq -e '.items | type == "array"' data.json
+
+      - name: スクリプトの構文チェック
+        run: |
+          bash -n .github/scripts/send_digest.sh
+          python3 -m py_compile .github/scripts/build_ics.py
+
+      - name: 毎朝の通知を試しに作る（送信しない）
+        run: DRY_RUN=1 bash .github/scripts/send_digest.sh
+
+      - name: 週次レビューを試しに作る（送信しない）
+        run: DRY_RUN=1 DIGEST_MODE=weekly bash .github/scripts/send_digest.sh
+
+      - name: .ics を試しに作る
+        run: |
+          python3 .github/scripts/build_ics.py data.json "$RUNNER_TEMP/test.ics" || [ $? -eq 2 ]  # 2 = 未完了が0件で書き出すものが無い

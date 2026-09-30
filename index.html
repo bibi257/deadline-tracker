@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-09-09 18:19 JST">
+<meta name="build-stamp" content="2026-09-30 15:00 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -645,26 +645,33 @@ function veventOf(it){
   if(repeating){
     var freq={weekly:"FREQ=WEEKLY",biweekly:"FREQ=WEEKLY;INTERVAL=2",monthly:"FREQ=MONTHLY",yearly:"FREQ=YEARLY"}[it.rep];
     if(freq) L.push("RRULE:"+freq+(it.repCount>0?";COUNT="+it.repCount:""));
-    // 取りやめた回はEXDATEで除外する
+    // 取りやめた回はEXDATEで除外する。skipのキーは各回の「締切日」だが、
+    // EXDATEは各回のDTSTARTと一致させる必要があるため、開始までの差だけずらす
     if(it.skip&&it.skip.length){
       it.skip.forEach(function(k){
         var parts=k.split("-");
+        var exDue=new Date(+parts[0],+parts[1]-1,+parts[2],due.getHours(),due.getMinutes(),0);
+        if(isNaN(exDue.getTime())) return;
         if(it.allDay){
-          L.push("EXDATE;VALUE=DATE:"+parts.join(""));
+          var s0=it.start?new Date(it.start):due;
+          var dayGap=daysBetween(s0,due);
+          L.push("EXDATE;VALUE=DATE:"+dateOnly(new Date(exDue.getFullYear(),exDue.getMonth(),exDue.getDate()-dayGap)));
         } else {
-          var ex=new Date(+parts[0],+parts[1]-1,+parts[2],due.getHours(),due.getMinutes(),0);
-          L.push("EXDATE:"+utc(ex));
+          L.push("EXDATE:"+utc(new Date(exDue.getTime()-(end-begin))));
         }
       });
     }
   }
 
   if(repeating){
-    // 毎回鳴らすため相対時間で指定する。締切＝予定の終了なので終了基準に揃える
-    L=L.concat(relAlarm(7*24*60, it.title+"：あと1週間", true));
-    L=L.concat(relAlarm(24*60,   it.title+"：明日が締切", true));
+    // 毎回鳴らすため相対時間で指定する。締切＝予定の終了なので終了基準に揃える。
+    // 終日予定の終了(DTEND)は翌日0時なので、締切(23:59)との差を足して
+    // 繰り返しでない予定と同じ時刻に鳴るようにする
+    var gap=it.allDay?Math.round((new Date(due.getFullYear(),due.getMonth(),due.getDate()+1)-due)/60000):0;
+    L=L.concat(relAlarm(7*24*60+gap, it.title+"：あと1週間", true));
+    L=L.concat(relAlarm(24*60+gap,   it.title+"：明日が締切", true));
     var minsFrom9=(due.getHours()-db.settings.dayHour)*60+due.getMinutes();
-    if(minsFrom9>0) L=L.concat(relAlarm(minsFrom9, it.title+"：今日が締切", true));
+    if(minsFrom9>0) L=L.concat(relAlarm(minsFrom9+gap, it.title+"：今日が締切", true));
   } else {
     L=L.concat(alarm(new Date(due.getTime()-7*86400000), it.title+"：あと1週間"));
     L=L.concat(alarm(new Date(due.getTime()-86400000), it.title+"：明日が締切"));
@@ -711,10 +718,11 @@ function render(){
   var now=new Date();
   document.getElementById("todayLabel").textContent =
     now.getFullYear()+"年"+(now.getMonth()+1)+"月"+now.getDate()+"日（"+DOW[now.getDay()]+"）";
-  // ヘッダーの件数は締切のみを数える（定期予定は常時あるため除く）
+  // ヘッダーの「7日以内」は締切のみを数える（定期予定は常時あるため除く）。
+  // 期限切れには、完了にし忘れた定期予定も含める（自動完了のものは期限を過ぎると次回へ進むので入らない）
   var onceOnly=activeItems().filter(function(i){ return !isRepeating(i); });
   var soon=onceOnly.filter(function(i){ var d=refDate(i); return parseItemDate(i)>=now && daysBetween(now,d)<=7; });
-  var over=onceOnly.filter(function(i){ return parseItemDate(i)<now; });
+  var over=activeItems().filter(function(i){ return parseItemDate(i)<now; });
   if(view==="rep"){
     var reps=activeItems().filter(isRepeating);
     document.getElementById("cntNum").textContent=reps.length;
@@ -796,6 +804,9 @@ function cardOf(it){
       el.querySelector(".body").appendChild(note);
     } else {
       add("完了にする","",function(){ complete(it); });
+      if(st==="over" && !isRepeating(it)){
+        add("明日に延期","",function(){ postpone(it); });
+      }
       if(isRepeating(it)){
         var key0=toLocalISO(parseItemDate(it));
         add("この回は休み","",function(){
@@ -807,7 +818,7 @@ function cardOf(it){
       add("雛形に保存","",function(){ saveAsTemplate(it); });
     }
   } else {
-    add("戻す","",function(){ it.done=false; save(); render(); });
+    add("戻す","",function(){ it.done=false; delete it.doneAt; save(); render(); scheduleAutoSync(); });
   }
   add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ deleteItem(it); } });
   return el;
@@ -816,43 +827,85 @@ function cardOf(it){
 /* 締切を登録・編集したとき、設定が揃っていれば自動で同期する。
    同期先やトークンが未設定なら何もしない（初回利用者の邪魔をしない） */
 function autoSyncIfConfigured(){
+  clearTimeout(_autoSyncTimer); _autoSyncTimer=null;
   if(!db.settings.autoSync) return;
-  var saved=JSON.parse(store.get("gh-sync")||"{}");
-  var token=store.get("gh-token");
-  if(!saved.owner||!saved.repo||!token) return;
+  var cfg=getStoredGhConfig();
+  if(!cfg) return;
 
-  var api="https://api.github.com/repos/"+saved.owner+"/"+saved.repo+"/contents/data.json";
-  var branch=saved.branch||"main";
-  var headers={"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"};
   var pushedAt=db.updatedAt; // 送信中に別の編集が入っても、送った時点の値を記録するため捕捉しておく
-  var content=utf8ToBase64(JSON.stringify({items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, updatedAt:db.updatedAt},null,2));
+  var content=utf8ToBase64(JSON.stringify(syncPayload(),null,2));
 
-  function fetchSha(){
-    return fetch(api+"?ref="+encodeURIComponent(branch)+"&_="+Date.now(),{headers:headers, cache:"no-store"})
-      .then(function(res){
-        if(res.status===404) return null;
-        if(!res.ok) throw new Error("HTTP "+res.status);
-        return res.json().then(function(j){ return j.sha; });
-      });
-  }
   function put(sha){
-    var body={message:"締切データを自動同期（"+new Date().toLocaleString("ja-JP")+"）",content:content,branch:branch};
+    var body={message:"締切データを自動同期（"+new Date().toLocaleString("ja-JP")+"）",content:content,branch:cfg.branch};
     if(sha) body.sha=sha;
-    return fetch(api,{method:"PUT",
-      headers:Object.assign({"Content-Type":"application/json"},headers),
+    return fetch(cfg.api,{method:"PUT",
+      headers:Object.assign({"Content-Type":"application/json"},cfg.headers),
       body:JSON.stringify(body)});
   }
-  fetchSha().then(put)
-    .then(function(res){ if(res.status===409) return fetchSha().then(put); return res; })
+  // GitHub上に「この端末がまだ取り込んでいない他の端末の更新」があれば、上書きして消さないよう止める
+  function checkedPut(){
+    return fetchRemoteState(cfg).then(function(r){
+      if(remoteHasUnknownChanges(r)){
+        if(!_autoSyncBlockedShown){
+          _autoSyncBlockedShown=true;
+          toast("GitHubに他の端末の更新があるため、自動同期を止めました。設定タブで読み込むか同期するかを選んでください");
+        }
+        return null;
+      }
+      return put(r.sha);
+    });
+  }
+  checkedPut()
+    .then(function(res){ if(res && res.status===409) return checkedPut(); return res; })
     .then(function(res){
-      if(res.ok){
+      if(res && res.ok){
         markSynced("自動同期");
         markPulled(); // 送った内容＝この端末の最新状態としてよい
         store.set("gh-known-updatedAt", pushedAt); // GitHubともこの時点で一致した
+        _autoSyncBlockedShown=false;
         toast("GitHubに自動同期しました");
       }
     })
     .catch(function(){ /* 自動処理なので失敗しても通知しない */ });
+}
+/* 完了・削除などの操作は続けて行うことが多いので、少し待ってからまとめて1回だけ自動同期する。
+   画面を閉じる(アプリを切り替える)ときは待たずにすぐ送る */
+var _autoSyncTimer=null, _autoSyncBlockedShown=false;
+function scheduleAutoSync(){
+  if(!db.settings.autoSync) return;
+  clearTimeout(_autoSyncTimer);
+  _autoSyncTimer=setTimeout(autoSyncIfConfigured, 3000);
+}
+function flushAutoSync(){ if(_autoSyncTimer) autoSyncIfConfigured(); }
+
+/* GitHubへ送る内容。設定(テーマ等)とこの端末専用の隔離データは含めない */
+function syncPayload(){
+  return {items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, updatedAt:db.updatedAt};
+}
+/* GitHub上のdata.jsonの版(sha)と更新時刻を取得する。まだ無ければ sha:null */
+function fetchRemoteState(cfg){
+  return fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(),{headers:cfg.headers, cache:"no-store"})
+    .then(function(res){
+      if(res.status===404) return {sha:null, updatedAt:null};
+      if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
+      return res.json().then(function(j){
+        var at=null;
+        try{ if(j.content) at=JSON.parse(base64ToUtf8(j.content)).updatedAt||null; }catch(e){}
+        return {sha:j.sha, updatedAt:at};
+      });
+    });
+}
+/* GitHub上に、この端末が前回の同期・読み込み以降に知らない更新があるか */
+function remoteHasUnknownChanges(r){
+  if(!r.sha) return false;                      // まだファイルが無い
+  var known=store.get("gh-known-updatedAt");
+  if(!known) return true;                       // 一度も同期していない端末は、既存の内容を知らない
+  return !!(r.updatedAt && r.updatedAt>known);
+}
+
+/* Discordの本文上限は2000文字。超える分は切り詰める */
+function fitDiscord(text){
+  return text.length>1900 ? text.slice(0,1880)+"\n…（件数が多いため省略しました）" : text;
 }
 
 /* 締切を登録・編集したとき、設定が揃っていればDiscordへ通知する */
@@ -861,7 +914,7 @@ function autoNotifyIfConfigured(){
   var hook=store.get("dc-hook");
   if(!hook) return;
   fetch(hook,{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({content:buildDigestText()})}).catch(function(){});
+    body:JSON.stringify({content:fitDiscord(buildDigestText())})}).catch(function(){});
 }
 
 /* 期限切れからの経過日数。滞留（長く放置されている状態）の判定に使う */
@@ -917,7 +970,7 @@ function applyTemplate(id){
   document.getElementById("fMemo").value=t.memo||"";
   document.getElementById("fCat").value=(db.categories.indexOf(t.cat)>=0)?t.cat:db.categories[0];
   document.getElementById("fRep").value=t.rep||"none";
-  document.getElementById("fRepCount").value=String(t.repCount==null?15:t.repCount);
+  setRepCountValue(t.repCount==null?15:t.repCount);
   document.getElementById("fAllDay").checked=!!t.allDay;
   document.getElementById("fAutoComplete").checked=!!t.autoComplete;
   document.getElementById("fTime").value=t.timeOfDay||"09:00";
@@ -965,6 +1018,7 @@ function deleteItem(it){
   if(db.trash.length>30) db.trash.shift(); // 上限を超えたら最も古いものから消える
   save(); render();
   toast("「"+it.title+"」を削除しました", "元に戻す", undoDelete);
+  scheduleAutoSync();
 }
 function undoDelete(){
   if(!lastDeleted) return;
@@ -978,6 +1032,25 @@ function undoDelete(){
   lastDeleted=null;
   save(); render();
   toast("「"+restored+"」を元に戻しました");
+  scheduleAutoSync();
+}
+/* 期限を過ぎた締切を「明日の同じ時刻」へ延ばす。期間つきは開始日も同じだけずらす */
+function postpone(it){
+  var due=parseItemDate(it), t=new Date();
+  var nd=new Date(t.getFullYear(),t.getMonth(),t.getDate()+1,due.getHours(),due.getMinutes());
+  var before={due:it.due, start:it.start};
+  var shift=nd-due;
+  it.due=nd.toISOString();
+  if(it.start) it.start=new Date(new Date(it.start).getTime()+shift).toISOString();
+  it.seq=(it.seq||0)+1;
+  save(); render();
+  toast("締切を "+fmtDue(nd,it.allDay)+" に延期しました", "元に戻す", function(){
+    it.due=before.due;
+    if(before.start) it.start=before.start; else delete it.start;
+    it.seq=(it.seq||0)+1;
+    save(); render(); scheduleAutoSync();
+  });
+  scheduleAutoSync();
 }
 /* ゴミ箱から個別に復元する。同じidが既に一覧にある場合(自動pull等で復活済み)は
    上書きせず、その旨を知らせるだけにする */
@@ -994,6 +1067,7 @@ function restoreFromTrash(trashId){
   db.trash.splice(idx,1);
   save(); render();
   toast("「"+entry.item.title+"」を元に戻しました");
+  scheduleAutoSync();
 }
 function purgeTrashItem(trashId){
   db.trash=db.trash.filter(function(t){ return t.trashId!==trashId; });
@@ -1002,11 +1076,10 @@ function purgeTrashItem(trashId){
 /* 隔離した項目を、登録ダイアログを使って修復する。
    壊れたidをそのまま使うと既存の編集ロジックと整合しないため、
    「新規登録」として開き、保存できたら隔離から取り除く方式にする */
-var fixingQuarantineIndex=null;
-function openQuarantineFixDialog(qi){
-  var q=db.quarantine[qi];
+var fixingQuarantineId=null;
+function openQuarantineFixDialog(qid){
+  var q=db.quarantine.filter(function(x){ return x.qid===qid; })[0];
   if(!q) return;
-  fixingQuarantineIndex=qi;
   var raw=q.raw||{};
   // dueが不正な場合はダイアログを開ける形にするため、仮に今日を入れておく（保存時に必ず選び直させる）
   var seed={
@@ -1016,11 +1089,13 @@ function openQuarantineFixDialog(qi){
     memo:(typeof raw.memo==="string")?raw.memo:""
   };
   openDialog(null); // 新規登録として開く
+  fixingQuarantineId=qid; // openDialogの後に設定する（開く処理でリセットされないように）
   document.getElementById("fTitle").value=seed.title;
   document.getElementById("fMemo").value=seed.memo;
   document.getElementById("fCat").value=seed.cat;
   var d=new Date(seed.due);
   document.getElementById("fDate").value=toLocalISO(d);
+  syncDialogRows();
   toast("内容を修正してから保存してください");
 }
 
@@ -1032,33 +1107,6 @@ function purgeAllTrash(){
   toast("ゴミ箱を空にしました");
 }
 
-/* 隔離した項目のタイトル・締切日を直して、一覧に戻す */
-function repairQuarantineItem(qid){
-  var idx=db.quarantine.findIndex(function(q){ return q.qid===qid; });
-  if(idx<0) return;
-  var raw=db.quarantine[idx].raw||{};
-  var title=prompt("タイトルを入力してください", raw.title||"");
-  if(title===null) return;
-  title=title.trim();
-  if(!title){ toast("タイトルが空です"); return; }
-  var dueStr=prompt("締切日を入力してください（例：2026-09-15）", "");
-  if(dueStr===null) return;
-  var due=new Date(dueStr+"T23:59:00");
-  if(isNaN(due.getTime())){ toast("日付の形式が正しくありません"); return; }
-  var id=(typeof raw.id==="string"&&raw.id)?raw.id:("d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6));
-  if(db.items.some(function(x){ return x.id===id; })){
-    toast("同じidの締切が既に一覧にあるため、新しいidで登録します");
-    id="d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-  }
-  db.items.push({
-    id:id, title:title, due:due.toISOString(),
-    cat:(typeof raw.cat==="string"&&db.categories.indexOf(raw.cat)>=0)?raw.cat:db.categories[0],
-    memo:typeof raw.memo==="string"?raw.memo:"", done:false, created:new Date().toISOString()
-  });
-  db.quarantine.splice(idx,1);
-  save(); render();
-  toast("「"+title+"」として一覧に戻しました");
-}
 function purgeQuarantineItem(qid){
   db.quarantine=db.quarantine.filter(function(q){ return q.qid!==qid; });
   save(); render();
@@ -1137,8 +1185,9 @@ function renderListBody(){
 /* 期限を過ぎたものだけを集める。経過が長いものほど上に出す */
 function renderOverdue(){
   main.appendChild(filterBar());
+  // 完了にし忘れた定期予定の回もここに出す（完了にすると次回へ進む）
   var list=activeItems()
-    .filter(function(i){ return (filter==="ALL"||i.cat===filter)&&!isRepeating(i)&&parseItemDate(i)<new Date(); })
+    .filter(function(i){ return (filter==="ALL"||i.cat===filter)&&parseItemDate(i)<new Date(); })
     .sort(function(a,b){ return overdueDays(b)-overdueDays(a); });
 
   if(!list.length){
@@ -1170,8 +1219,10 @@ function renderOverdue(){
     var target=list.filter(isStale);
     if(!target.length){ toast("7日以上のものはありません"); return; }
     if(!confirm(target.length+"件をまとめて完了にします。よろしいですか？")) return;
-    target.forEach(function(i){ i.done=true; i.doneAt=new Date().toISOString(); });
+    // 定期予定は done にすると次回以降も消えるため、通常の完了処理(次回へ進める)を通す
+    target.forEach(function(i){ applyCompletion(i); });
     save(); render(); toast(target.length+"件を完了にしました");
+    scheduleAutoSync();
   };
   main.appendChild(bulk);
 }
@@ -1435,31 +1486,7 @@ function renderSettings(){
   // 隔離（読み込み時に形式が不正で除外された項目）
   if(db.quarantine.length){
     var sQ=h('<div class="sec"><h3 style="color:var(--red)">隔離された項目（'+db.quarantine.length+'件）</h3>'+
-      '<p>GitHubから読み込んだ内容のうち、必須項目（タイトル・締切日など）が壊れていたため取り込めなかったものです。修復するとこの端末の一覧に戻ります。放置しても他の機能には影響しません。</p>'+
-      '<div class="cat-list"></div></div>');
-    var qList=sQ.querySelector(".cat-list");
-    db.quarantine.forEach(function(q,qi){
-      var rawTitle=(q.raw&&typeof q.raw.title==="string")?q.raw.title:"(タイトル不明)";
-      var row=h('<div class="cat-row"><span class="cat-name">'+escHtml(rawTitle)+
-        '<br><span style="font-size:11.5px;color:var(--red)">'+escHtml(q.reason)+'</span></span>'+
-        '<div class="cat-btns"></div></div>');
-      var fix=h('<button class="act" title="修復">修復</button>');
-      fix.onclick=function(){ openQuarantineFixDialog(qi); };
-      var del=h('<button class="act" title="削除">×</button>');
-      del.onclick=function(){
-        if(!confirm("この隔離項目を削除します。よろしいですか？")) return;
-        db.quarantine.splice(qi,1); save(); render();
-      };
-      row.querySelector(".cat-btns").append(fix,del);
-      qList.appendChild(row);
-    });
-    main.appendChild(sQ);
-  }
-
-  // 隔離（形式が不正で取り込めなかった項目）
-  if(db.quarantine.length){
-    var sQ=h('<div class="sec"><h3>隔離された項目（'+db.quarantine.length+'件）</h3>'+
-      '<p>GitHubから読み込んだ内容のうち、形式が不正で取り込めなかったものです。タイトルと締切日を直せば一覧に戻せます。</p>'+
+      '<p>GitHubなどから読み込んだ内容のうち、必須項目（タイトル・締切日など）が壊れていたため取り込めなかったものです。「修復」で内容を直して保存すると一覧に戻ります。放置しても他の機能には影響しません。</p>'+
       '<div class="cat-list"></div></div>');
     var qList=sQ.querySelector(".cat-list");
     db.quarantine.forEach(function(q){
@@ -1468,7 +1495,7 @@ function renderSettings(){
         '<br><span style="font-size:11.5px;color:var(--red)">'+escHtml(q.reason)+'</span></span>'+
         '<div class="cat-btns"></div></div>');
       var fix=h('<button class="act" title="修復して一覧に戻す">修復</button>');
-      fix.onclick=function(){ repairQuarantineItem(q.qid); };
+      fix.onclick=function(){ openQuarantineFixDialog(q.qid); };
       var del=h('<button class="act" title="完全に削除">×</button>');
       del.onclick=function(){
         if(!confirm("この隔離項目を完全に削除します。よろしいですか？")) return;
@@ -1545,12 +1572,16 @@ function renderSettings(){
         var d=JSON.parse(fr.result);
         if(!d||!Array.isArray(d.items)) throw 0;
         if(!confirm("読み込むと現在のデータは置き換わります。続けますか？")) return;
-        db.items=d.items;
+        // 手で編集したファイルなどで壊れた項目があっても、全体を読み込めるよう検証する
+        var check=sanitizeIncomingItems(d.items);
+        db.items=check.kept;
+        if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
         if(Array.isArray(d.templates)) db.templates=d.templates;
         if(Array.isArray(d.trash)) db.trash=d.trash;
         if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
         if(d.settings) db.settings=Object.assign(db.settings,d.settings);
-        save(); applyTheme(); render(); toast("読み込みました");
+        save(); applyTheme(); render();
+        toast("読み込みました"+(check.quarantined.length?"（"+check.quarantined.length+"件は形式が不正のため隔離）":""));
       }catch(e){ toast("このファイルは読み込めません。書き出したJSONを選んでください"); }
       file.value="";
     };
@@ -1702,7 +1733,7 @@ function autoPullIfStale(){
         if(Array.isArray(d.trash)) db.trash=d.trash;
         if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
         db.updatedAt=d.updatedAt;
-        saveRaw(); render();
+        saveRaw(); softRender();
         markPulled();
         markSynced("自動反映");
         store.set("gh-known-updatedAt", d.updatedAt);
@@ -1809,7 +1840,8 @@ function buildDigestText(){
   var now=new Date();
   var win=new Date(now.getTime()+7*86400000);
   var all=activeItems().filter(function(i){ return !isRepeating(i); });
-  var over=all.filter(function(i){ return parseItemDate(i)<now; }).sort(sortByDue);
+  // 期限切れには、完了にし忘れた定期予定の回も含める（毎朝の通知と同じ扱い）
+  var over=activeItems().filter(function(i){ return parseItemDate(i)<now; }).sort(sortByDue);
   var today=all.filter(function(i){ return parseItemDate(i)>=now && daysBetween(now,refDate(i))===0; }).sort(sortByDue);
   var soon=all.filter(function(i){ var n=daysBetween(now,refDate(i)); return parseItemDate(i)>=now && n>0 && refDate(i)<=win; }).sort(sortByDue);
   var reps=activeItems().filter(isRepeating).sort(sortByDue);
@@ -1818,7 +1850,7 @@ function buildDigestText(){
     var d=parseItemDate(i);
     var when=i.start?(fmtDue(new Date(i.start),i.allDay)+" 〜 "+fmtDue(d,i.allDay)):fmtDue(d,i.allDay);
     var r=remainText(i);
-    return "- **"+i.title+"**　`"+(i.cat||"その他")+"`\n  "+when+"　── "+r.n+" "+r.u;
+    return "- "+(isRepeating(i)?"🔁 ":"")+"**"+i.title+"**　`"+(i.cat||"その他")+"`\n  "+when+"　── "+r.n+" "+r.u;
   }
 
   var t="# 📋 締切トラッカー\n";
@@ -1829,7 +1861,7 @@ function buildDigestText(){
   if(stale.length){
     t+="\n## ⚠️ 長く残っています（"+stale.length+"件）\n";
     stale.slice(0,3).forEach(function(i){
-      t+="- **"+i.title+"**　`"+(i.cat||"その他")+"`\n  "+fmtDue(parseItemDate(i),i.allDay)+" 締切 ── "+overdueDays(i)+"日経過\n";
+      t+="- "+(isRepeating(i)?"🔁 ":"")+"**"+i.title+"**　`"+(i.cat||"その他")+"`\n  "+fmtDue(parseItemDate(i),i.allDay)+" 締切 ── "+overdueDays(i)+"日経過\n";
     });
     if(stale.length>3) t+="-# ほか "+(stale.length-3)+" 件\n";
     t+="-# 完了か削除をおすすめします\n";
@@ -1850,10 +1882,15 @@ function buildDigestText(){
 
   if(reps.length){
     var labels={weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"};
+    // 締切が過ぎたままの回があっても、「次は」には今より先の回を出す
+    var nexts=reps.map(function(i){ return {i:i, n:upcomingDue(i)}; })
+      .sort(function(a,b){ return (a.n?a.n.getTime():Infinity)-(b.n?b.n.getTime():Infinity); });
     t+="\n## 🔁 定期予定\n";
-    reps.forEach(function(i){
+    nexts.forEach(function(x){
+      var i=x.i, days=x.n?daysBetween(now,x.n):null;
       t+="- **"+i.title+"**　`"+(i.cat||"その他")+"`　"+(labels[i.rep]||i.rep)+"\n"+
-         "  次は "+fmtDue(parseItemDate(i),i.allDay)+"\n";
+         (x.n ? "  次は "+fmtDue(x.n,i.allDay)+"　── "+(days===0?"今日":days+" 日後")+"\n"
+              : "  -# 予定していた回数をすべて終えました\n");
     });
   }
 
@@ -1873,11 +1910,7 @@ function sendToDiscord(s6,s5){
 
   function post(url){
     statusEl.textContent="送信しています…";
-    var text=buildDigestText();
-    // Discordの本文上限は2000文字。超える分は切り詰めて送る
-    if(text.length>1900){
-      text=text.slice(0,1880)+"\n…（件数が多いため省略しました）";
-    }
+    var text=fitDiscord(buildDigestText());
     return fetch(url,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -2050,10 +2083,10 @@ function proceedSync(cfg,statusEl){
     );
     if(!ok){ statusEl.textContent="同期を中止しました。心配な場合は先に「GitHubから読み込む」をお試しください。"; return; }
     statusEl.textContent="安全のため、現在の内容をバックアップしています…";
-    backupRemoteBeforeOverwrite(cfg).then(function(){ doSync(cfg,statusEl); });
+    backupRemoteBeforeOverwrite(cfg).then(function(){ doSync(cfg,statusEl,true); });
     return;
   }
-  doSync(cfg,statusEl);
+  doSync(cfg,statusEl,false);
 }
 
 /* 上書きされてしまう前に、GitHub上の現在の内容を別ファイルとして保存しておく */
@@ -2082,7 +2115,7 @@ function backupRemoteBeforeOverwrite(cfg){
     .catch(function(){});
 }
 
-function doSync(cfg,statusEl){
+function doSync(cfg,statusEl,backedUp){
   statusEl.textContent="同期しています…";
   var api=cfg.api, branch=cfg.branch, headers=cfg.headers;
   // 一度も保存していない端末はupdatedAtが無いので、送る直前に確定させる
@@ -2110,7 +2143,20 @@ function doSync(cfg,statusEl){
       body:JSON.stringify(body)});
   }
 
-  fetchSha()
+  // GitHub上に、この端末が取り込んでいない他の端末の更新がある場合は、上書き前に確認する
+  // （24時間以内に取得していても、その後に別の端末が同期していれば消えてしまうため）
+  fetchRemoteState(cfg)
+    .then(function(r){
+      if(backedUp || !remoteHasUnknownChanges(r)) return r.sha;
+      var ok=confirm(
+        "GitHub上に、この端末がまだ読み込んでいない新しい内容があります（他の端末で同期された可能性があります）。\n\n"+
+        "このまま同期すると、その内容はこの端末の内容で上書きされます。\n"+
+        "上書き前の内容は backups/ に保存します。続けますか？\n\n"+
+        "（先に他の端末の内容を取り込みたい場合は「キャンセル」→「GitHubから読み込む」）"
+      );
+      if(!ok) throw new Error("__sync_cancelled__");
+      return backupRemoteBeforeOverwrite(cfg).then(function(){ return r.sha; });
+    })
     .then(put)
     .then(function(res){
       if(res.status===409){ // 版が競合したら最新shaを取り直して1度だけやり直す
@@ -2128,6 +2174,7 @@ function doSync(cfg,statusEl){
     })
     .catch(function(err){
       var m=err.message||"";
+      if(m==="__sync_cancelled__"){ statusEl.textContent="同期を中止しました。「GitHubから読み込む」で他の端末の内容を取り込めます。"; return; }
       var hint=ghHint(m);
       statusEl.textContent="同期に失敗しました："+m+(hint?"　→ "+hint:"");
     });
@@ -2138,7 +2185,7 @@ var dlg=document.getElementById("dlg"), dlgForm=document.getElementById("dlgForm
 dlg.addEventListener("close",function(){
   // キャンセル等で閉じた場合、隔離修復中の状態が残っているとバグの元になるためリセットする
   // (保存成功時は既にnullにしている。ここで消えるのは「修復せず閉じた」場合のみ)
-  fixingQuarantineIndex=null;
+  fixingQuarantineId=null;
 });
 function openDialog(item){
   editingId=item?item.id:null;
@@ -2168,7 +2215,7 @@ function openDialog(item){
     document.getElementById("fTime").value=pad(d.getHours())+":"+pad(d.getMinutes());
     catSel.value=item.cat||db.categories[0];
     document.getElementById("fRep").value=item.rep||"none";
-    document.getElementById("fRepCount").value=String(item.repCount==null?15:item.repCount);
+    setRepCountValue(item.repCount==null?15:item.repCount);
     document.getElementById("fMemo").value=item.memo||"";
     document.getElementById("fAllDay").checked=!!item.allDay;
     document.getElementById("fAutoComplete").checked=!!item.autoComplete;
@@ -2186,11 +2233,25 @@ function openDialog(item){
     document.getElementById("fTime").value="09:00";
     document.getElementById("fStart").value=toLocalISO(base);
     document.getElementById("fStartTime").value="09:00";
-    document.getElementById("fRepCount").value="15";
+    setRepCountValue(15);
     catSel.value=(filter!=="ALL"&&db.categories.indexOf(filter)>=0)?filter:db.categories[0];
   }
   syncDialogRows();
   dlg.showModal();
+}
+
+/* 繰り返し回数の選択肢に値を入れる。完了で残り回数が減ると選択肢に無い数(14回など)になり、
+   そのまま保存すると回数が壊れる(NaN)ため、無い数は「残りN回」として一時的に選択肢へ足す */
+function setRepCountValue(n){
+  var sel=document.getElementById("fRepCount");
+  Array.prototype.slice.call(sel.querySelectorAll("option[data-extra]")).forEach(function(o){ o.remove(); });
+  var v=String(n);
+  if(!sel.querySelector('option[value="'+v+'"]')){
+    var o=document.createElement("option");
+    o.value=v; o.textContent="残り"+v+"回"; o.setAttribute("data-extra","1");
+    sel.insertBefore(o, sel.firstChild);
+  }
+  sel.value=v;
 }
 
 /* チェックや選択に応じて、関係のある入力欄だけを出す */
@@ -2250,7 +2311,7 @@ dlgForm.addEventListener("submit",function(e){
     }
   }
   var rep=document.getElementById("fRep").value;
-  var repCount=(rep==="none")?0:parseInt(document.getElementById("fRepCount").value,10);
+  var repCount=(rep==="none")?0:(parseInt(document.getElementById("fRepCount").value,10)||0);
 
   if(editingId){
     var found=false;
@@ -2262,6 +2323,7 @@ dlgForm.addEventListener("submit",function(e){
       if(allDay) i.allDay=true; else delete i.allDay;
       if(autoComplete) i.autoComplete=true; else delete i.autoComplete;
       if(start) i.start=start.toISOString(); else delete i.start;
+      delete i.repDay; // 締切日を選び直したので、月末丸めの基準日も新しい日付から取り直す
       i.seq=(i.seq||0)+1;
     });
     if(found){
@@ -2283,9 +2345,10 @@ dlgForm.addEventListener("submit",function(e){
     db.items.push(it);
     toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
     // 隔離項目の修復中だった場合は、保存できたので隔離から取り除く
-    if(fixingQuarantineIndex!==null){
-      db.quarantine.splice(fixingQuarantineIndex,1);
-      fixingQuarantineIndex=null;
+    if(fixingQuarantineId!==null){
+      var fq=fixingQuarantineId;
+      db.quarantine=db.quarantine.filter(function(q){ return q.qid!==fq; });
+      fixingQuarantineId=null;
       toast("修復して一覧に戻しました");
     }
   }
@@ -2299,32 +2362,60 @@ function applyCompletion(it){
   if(it.rep&&it.rep!=="none"){
     // 繰り返しはカレンダー側で先の回まで展開しているため、ここでは複製しない。
     // 「この回だけ完了」にすると次回以降が消えるので、締切日を次回へ進める。
-    var n=nextOccurrence(parseItemDate(it), it.rep);
-    var left=(it.repCount||0);
-    if(left===0 || left>1){
+    // 自動完了のものは、しばらく開いていなかった場合に備えて「今より先の回」まで一度に進める
+    // （1回ずつだと、1分ごとの確認のたびに進んで自動同期・通知が何度も走るため）
+    var now=new Date();
+    var ok=advanceRepeating(it);
+    while(ok && it.autoComplete && parseItemDate(it)<now) ok=advanceRepeating(it);
+    if(ok){
       it.done=false; delete it.doneAt;
-      if(it.start){
-        var span=parseItemDate(it)-new Date(it.start);
-        it.start=new Date(n.getTime()-span).toISOString();
-      }
-      it.due=n.toISOString();
-      if(left>1) it.repCount=left-1;
-      it.seq=(it.seq||0)+1;
-      return {repeating:true, next:n};
+      return {repeating:true, next:parseItemDate(it)};
     }
     return {repeating:true, final:true};
   }
   return {repeating:false};
 }
 
+/* 繰り返しの締切を1回分進める。取りやめた回(skip)は飛ばし、回数指定があれば残り回数も減らす。
+   もう次の回が無い（最終回だった）ときは何も変えずに false を返す */
+function advanceRepeating(it){
+  var skip=it.skip||[];
+  var anchor=anchorDayOf(it);
+  var due=parseItemDate(it), span=it.start?(due-new Date(it.start)):0;
+  var left=it.repCount||0;
+  do{
+    if(left===1) return false; // 残り1回＝今の回が最終回
+    if(left>1) left--;
+    due=nextOccurrence(due, it.rep, anchor);
+  } while(skip.indexOf(toLocalISO(due))>=0);
+  // 月末(31日など)で丸めた後も元の日付に戻れるよう、基準の日を覚えておく
+  if((it.rep==="monthly"||it.rep==="yearly") && !it.repDay) it.repDay=anchor;
+  it.due=due.toISOString();
+  if(it.start) it.start=new Date(due.getTime()-span).toISOString();
+  if(it.repCount) it.repCount=left;
+  it.seq=(it.seq||0)+1;
+  return true;
+}
+/* 月・年単位の繰り返しの基準日（何日の予定か） */
+function anchorDayOf(it){ return it.repDay || parseItemDate(it).getDate(); }
+
+/* 次に来る回の締切。完了にし忘れて締切が過ぎている定期予定でも「今より先の回」を返す（表示用・元データは変えない）。
+   回数指定を使い切っていれば null */
+function upcomingDue(it){
+  var c=Object.assign({},it), now=new Date(), guard=0;
+  while(parseItemDate(c)<now && guard++<3000){ if(!advanceRepeating(c)) return null; }
+  return parseItemDate(c);
+}
+
 function complete(it){
   var r=applyCompletion(it);
   if(r.repeating){
-    toast(r.final?"繰り返しの最終回を完了しました":"完了。次回は "+fmtDue(r.next)+" です");
+    toast(r.final?"繰り返しの最終回を完了しました":"完了。次回は "+fmtDue(r.next,it.allDay)+" です");
   } else {
     toast("完了にしました");
   }
   save(); render();
+  scheduleAutoSync();
 }
 
 /* 「期限を過ぎたら自動的に完了にする」を付けた締切を、実際に期限を過ぎたタイミングで
@@ -2341,19 +2432,23 @@ function autoCompleteOverdueItems(){
   if(affected>0){
     save();
     toast(affected===1?"期限を過ぎた締切を自動で完了にしました":"期限を過ぎた"+affected+"件を自動で完了にしました");
-    autoSyncIfConfigured();
-    autoNotifyIfConfigured();
+    scheduleAutoSync();
   }
   return affected;
 }
 
-/* 繰り返し1回分だけ日付を進める */
-function nextOccurrence(d, rep){
+/* 繰り返し1回分だけ日付を進める。月・年単位は基準日(anchorDay)を保ち、
+   その月に無い日(31日・2/29など)は月末に丸める。
+   （setMonthのままだと 1/31 の翌月が 3/3 になってしまうため） */
+function nextOccurrence(d, rep, anchorDay){
   var n=new Date(d);
   if(rep==="weekly") n.setDate(d.getDate()+7);
   else if(rep==="biweekly") n.setDate(d.getDate()+14);
-  else if(rep==="monthly") n.setMonth(d.getMonth()+1);
-  else if(rep==="yearly") n.setFullYear(d.getFullYear()+1);
+  else if(rep==="monthly"||rep==="yearly"){
+    var y=d.getFullYear()+(rep==="yearly"?1:0), m=d.getMonth()+(rep==="monthly"?1:0);
+    var last=new Date(y,m+1,0).getDate();
+    n=new Date(y,m,Math.min(anchorDay||d.getDate(),last),d.getHours(),d.getMinutes(),d.getSeconds());
+  }
   return n;
 }
 
@@ -2362,7 +2457,7 @@ function expandOccurrences(it, fromDate, toDate){
   var out=[];
   if(!it.rep||it.rep==="none"){ out.push(it); return out; }
   var skip=it.skip||[];  // 「この回だけ休み」にした日（YYYY-MM-DD）
-  var d=parseItemDate(it);
+  var d=parseItemDate(it), anchor=anchorDayOf(it);
   var span=it.start?(d-new Date(it.start)):0;
   var limit=(it.repCount&&it.repCount>0)?it.repCount:60; // 無期限でも60回で打ち切る
   for(var k=0;k<limit;k++){
@@ -2375,20 +2470,28 @@ function expandOccurrences(it, fromDate, toDate){
       if(k>0){ copy.occurrence=k; copy.done=false; } // 2回目以降は未完了として扱う
       out.push(copy);
     }
-    d=nextOccurrence(d, it.rep);
+    d=nextOccurrence(d, it.rep, anchor);
   }
   return out;
 }
 
-/* 繰り返しのうち、指定日の回だけを取りやめる */
+/* 繰り返しのうち、指定日の回だけを取りやめる。
+   取りやめたのが「次の回」そのものなら、締切を次の回へ進める
+   （進めないと、取りやめたはずの回が一覧で締切として残り、過ぎると超過になるため） */
 function skipOccurrence(id, dateKey){
+  var ended=false;
   db.items.forEach(function(i){
     if(i.id!==id) return;
-    i.skip=(i.skip||[]).concat([dateKey]);
-    i.seq=(i.seq||0)+1;
+    if((i.skip||[]).indexOf(dateKey)<0) i.skip=(i.skip||[]).concat([dateKey]);
+    if(toLocalISO(parseItemDate(i))===dateKey){
+      if(!advanceRepeating(i)){ i.done=true; i.doneAt=new Date().toISOString(); ended=true; }
+    } else {
+      i.seq=(i.seq||0)+1;
+    }
   });
   save(); render();
-  toast(dateKey+" の回を取りやめました");
+  toast(ended?dateKey+" の回を取りやめました（これが最終回でした）":dateKey+" の回を取りやめました");
+  scheduleAutoSync();
 }
 /* 取りやめを元に戻す */
 function unskipOccurrence(id, dateKey){
@@ -2399,6 +2502,7 @@ function unskipOccurrence(id, dateKey){
   });
   save(); render();
   toast(dateKey+" の回を戻しました");
+  scheduleAutoSync();
 }
 
 /* ========== テーマ・トースト ========== */
@@ -2485,8 +2589,9 @@ function checkForUpdate(){
     .then(function(res){ return res.ok?res.text():null; })
     .then(function(html){
       if(!html) return;
-      // ファイル内容の長さを簡易な版番号として使う
-      var build=html.length;
+      // ビルドスタンプ（無ければ内容の長さ）を版番号として使う
+      var m=html.match(/<meta name="build-stamp" content="([^"]*)">/);
+      var build=(m?m[1]:"")+"/"+html.length;
       if(APP_BUILD===null){ APP_BUILD=build; return; }
       if(build!==APP_BUILD){
         APP_BUILD=build;
@@ -2496,7 +2601,19 @@ function checkForUpdate(){
     })
     .catch(function(){});
 }
-document.addEventListener("visibilitychange",function(){ if(!document.hidden){ checkForUpdate(); autoPullIfStale(); } });
+document.addEventListener("visibilitychange",function(){
+  if(document.hidden){ flushAutoSync(); return; } // 閉じる前に、待っている自動同期を送る
+  checkForUpdate(); autoPullIfStale();
+});
+
+/* 定期的な再描画。入力欄を操作中や設定タブを開いているときは、
+   打ちかけの内容(検索語・トークンなど)が消えないよう描画を見送る */
+function softRender(){
+  var a=document.activeElement;
+  if(view==="set") return;
+  if(a && main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+  render();
+}
 
 /* ========== 起動 ========== */
 document.querySelectorAll(".tab").forEach(function(t){
@@ -2506,7 +2623,7 @@ document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
 load(); autoCompleteOverdueItems(); applyTheme(); render();
 handleExportParam();
 handleActionParam();
-setInterval(function(){ autoCompleteOverdueItems(); render(); }, 60000); // 残り時間の更新とあわせて自動完了も確認
+setInterval(function(){ autoCompleteOverdueItems(); softRender(); }, 60000); // 残り時間の更新とあわせて自動完了も確認
 checkForUpdate();
 autoPullIfStale();
 setInterval(checkForUpdate, 10*60000); // 10分ごとに更新を確認

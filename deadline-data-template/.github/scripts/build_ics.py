@@ -92,25 +92,39 @@ def vevent(it, day_hour):
         if freq:
             count = it.get("repCount") or 0
             lines.append("RRULE:" + freq + (";COUNT=%d" % count if count > 0 else ""))
-        # 取りやめた回は EXDATE で除外する
+        # 取りやめた回は EXDATE で除外する。skip のキーは各回の「締切日(JST)」だが、
+        # EXDATE は各回の DTSTART と一致させる必要があるため、開始までの差だけずらす
+        due_jst = due.astimezone(JST)
         for k in it.get("skip", []):
-            y, m, d = (int(x) for x in k.split("-"))
+            try:
+                y, m, d = (int(x) for x in k.split("-"))
+                ex_due = due_jst.replace(year=y, month=m, day=d)
+            except ValueError:
+                continue  # 壊れたキーは無視する
             if all_day:
-                lines.append("EXDATE;VALUE=DATE:%04d%02d%02d" % (y, m, d))
+                s_day = (start or due).astimezone(JST).date()
+                ex = ex_due.date() - (due_jst.date() - s_day)
+                lines.append("EXDATE;VALUE=DATE:" + ex.strftime("%Y%m%d"))
             else:
-                due_jst = due.astimezone(JST)
-                ex = due_jst.replace(year=y, month=m, day=d)
-                lines.append("EXDATE:" + utc(ex))
+                lines.append("EXDATE:" + utc(ex_due - (end - begin)))
 
     title = it.get("title", "")
     if repeating:
-        # 締切＝予定の終了なので、通知はすべて終了基準に揃える
-        lines += alarm_rel(7 * 24 * 60, title + "：あと1週間", True)
-        lines += alarm_rel(24 * 60, title + "：明日が締切", True)
+        # 締切＝予定の終了なので、通知はすべて終了基準に揃える。
+        # 終日予定の終了(DTEND)は翌日0時なので、締切(23:59など)との差を足して
+        # 繰り返しでない予定と同じ時刻に鳴るようにする
         due_jst = due.astimezone(JST)
+        if all_day:
+            end_jst = datetime.combine(due_jst.date() + timedelta(days=1),
+                                       datetime.min.time(), JST)
+            gap = int((end_jst - due_jst).total_seconds() // 60)
+        else:
+            gap = 0
+        lines += alarm_rel(7 * 24 * 60 + gap, title + "：あと1週間", True)
+        lines += alarm_rel(24 * 60 + gap, title + "：明日が締切", True)
         mins = (due_jst.hour - day_hour) * 60 + due_jst.minute
         if mins > 0:
-            lines += alarm_rel(mins, title + "：今日が締切", True)
+            lines += alarm_rel(mins + gap, title + "：今日が締切", True)
     else:
         lines += alarm_abs(due - timedelta(days=7), title + "：あと1週間")
         lines += alarm_abs(due - timedelta(days=1), title + "：明日が締切")
@@ -130,9 +144,18 @@ def main():
     with open(data_path, encoding="utf-8") as f:
         data = json.load(f)
 
-    items = [i for i in data.get("items", []) if not i.get("done")]
+    items = []
+    for i in data.get("items", []):
+        if i.get("done"):
+            continue
+        try:
+            parse_dt(i["due"])
+        except (KeyError, TypeError, ValueError, AttributeError):
+            print("締切日時が読めないため除外: %s" % i.get("title", i.get("id")), file=sys.stderr)
+            continue
+        items.append(i)
     if not items:
-        return 1  # 書き出すものが無い
+        return 2  # 書き出すものが無い（エラー時の1と区別する）
 
     items.sort(key=lambda i: parse_dt(i["due"]))
 
