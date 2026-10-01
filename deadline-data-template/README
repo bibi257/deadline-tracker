@@ -58,7 +58,7 @@ MENTION_USER_ID=""          # 任意。毎朝メンションで呼び出した�
 DEFAULT_WINDOW_DAYS="7"     # 何日以内の締切を対象にするか
 BACKUP_DOW="1"              # data.json を添付する曜日（1=月 … 7=日、0=添付しない）
 APP_URL=""                  # 任意。通知に載せるアプリのURL（https://<ユーザー名>.github.io/<リポジトリ名>/）
-ATTACH_ICS="0"              # .ics を添付するか（iOSでは照会カレンダーになるため既定は0）
+ATTACH_ICS="0"              # .ics を添付するか（iOSでは照会カレンダーになるため既定は0）。通知はアプリで設定したカテゴリごとの日数に従う
 ICS_DAY_HOUR="9"            # .ics 内の当日リマインド時刻
 ```
 
