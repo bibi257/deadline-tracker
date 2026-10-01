@@ -5,7 +5,8 @@
   - 期間つきの予定は DTSTART〜DTEND、それ以外は締切の30分間
   - 繰り返しは RRULE。通知は毎回鳴るよう相対トリガーにする
   - 繰り返しでない予定の通知は絶対時刻(UTC)
-  - 通知は「1週間前 / 前日 / 当日の指定時刻」の3件
+  - 通知はカテゴリごとの設定(catReminders: 何日前か)に従う。未設定なら「1週間前 / 前日 / 当日」
+    N日前は締切と同じ時刻、当日は「当日リマインドの時」に鳴る
 使い方: python3 build_ics.py <data.json> <出力先.ics> [当日リマインドの時]
 """
 import json
@@ -55,7 +56,35 @@ def alarm_rel(minutes_before, label, related_end):
             "TRIGGER%s:-PT%dM" % (rel, minutes_before), "END:VALARM"]
 
 
-def vevent(it, day_hour):
+REMINDER_DEFAULT = [7, 1, 0]
+
+
+def clean_reminders(v):
+    """data.json の catReminders を検証する（アプリの cleanCatReminders と同じ規則）。"""
+    out = {}
+    if not isinstance(v, dict):
+        return out
+    for k, arr in v.items():
+        if not isinstance(arr, list):
+            continue
+        ok = sorted({n for n in arr
+                     if isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= 60},
+                    reverse=True)
+        out[k] = ok
+    return out
+
+
+def reminder_label(n):
+    if n == 0:
+        return "今日が締切"
+    if n == 1:
+        return "明日が締切"
+    if n % 7 == 0:
+        return "あと%d週間" % (n // 7)
+    return "あと%d日" % n
+
+
+def vevent(it, day_hour, reminders=None):
     due = parse_dt(it["due"])
     start = parse_dt(it["start"]) if it.get("start") else None
     all_day = bool(it.get("allDay"))
@@ -109,6 +138,7 @@ def vevent(it, day_hour):
                 lines.append("EXDATE:" + utc(ex_due - (end - begin)))
 
     title = it.get("title", "")
+    days = (reminders or {}).get(it.get("cat") or "その他", REMINDER_DEFAULT)
     if repeating:
         # 締切＝予定の終了なので、通知はすべて終了基準に揃える。
         # 終日予定の終了(DTEND)は翌日0時なので、締切(23:59など)との差を足して
@@ -120,18 +150,22 @@ def vevent(it, day_hour):
             gap = int((end_jst - due_jst).total_seconds() // 60)
         else:
             gap = 0
-        lines += alarm_rel(7 * 24 * 60 + gap, title + "：あと1週間", True)
-        lines += alarm_rel(24 * 60 + gap, title + "：明日が締切", True)
-        mins = (due_jst.hour - day_hour) * 60 + due_jst.minute
-        if mins > 0:
-            lines += alarm_rel(mins + gap, title + "：今日が締切", True)
+        for n in days:
+            if n > 0:
+                lines += alarm_rel(n * 24 * 60 + gap, title + "：" + reminder_label(n), True)
+                continue
+            mins = (due_jst.hour - day_hour) * 60 + due_jst.minute
+            if mins > 0:
+                lines += alarm_rel(mins + gap, title + "：" + reminder_label(0), True)
     else:
-        lines += alarm_abs(due - timedelta(days=7), title + "：あと1週間")
-        lines += alarm_abs(due - timedelta(days=1), title + "：明日が締切")
         due_jst = due.astimezone(JST)
-        day_of = due_jst.replace(hour=day_hour, minute=0, second=0, microsecond=0)
-        if day_of < due_jst:
-            lines += alarm_abs(day_of, title + "：今日が締切")
+        for n in days:
+            if n > 0:
+                lines += alarm_abs(due - timedelta(days=n), title + "：" + reminder_label(n))
+                continue
+            day_of = due_jst.replace(hour=day_hour, minute=0, second=0, microsecond=0)
+            if day_of < due_jst:
+                lines += alarm_abs(day_of, title + "：" + reminder_label(0))
 
     lines.append("END:VEVENT")
     return lines
@@ -157,13 +191,15 @@ def main():
     if not items:
         return 2  # 書き出すものが無い（エラー時の1と区別する）
 
-    items.sort(key=lambda i: parse_dt(i["due"]))
+    # アプリと同じ並び順（期間つきは開始日、同じなら締切の早い順）
+    items.sort(key=lambda i: (parse_dt(i.get("start") or i["due"]), parse_dt(i["due"])))
 
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0",
              "PRODID:-//deadline-tracker//JP", "CALSCALE:GREGORIAN",
              "METHOD:PUBLISH"]
+    reminders = clean_reminders(data.get("catReminders"))
     for it in items:
-        lines += vevent(it, day_hour)
+        lines += vevent(it, day_hour, reminders)
     lines.append("END:VCALENDAR")
 
     with open(out_path, "w", encoding="utf-8", newline="") as f:
