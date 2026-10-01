@@ -37,3 +37,6 @@ jobs:
       - name: .ics を試しに作る
         run: |
           python3 .github/scripts/build_ics.py data.json "$RUNNER_TEMP/test.ics" || [ $? -eq 2 ]  # 2 = 未完了が0件で書き出すものが無い
+
+      - name: モーニングブリーフ用の feed.json を試しに作る
+        run: python3 .github/scripts/build_feed.py data.json "$RUNNER_TEMP/feed.json"
