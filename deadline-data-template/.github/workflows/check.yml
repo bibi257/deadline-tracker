@@ -40,3 +40,6 @@ jobs:
 
       - name: モーニングブリーフ用の feed.json を試しに作る
         run: python3 .github/scripts/build_feed.py data.json "$RUNNER_TEMP/feed.json"
+
+      - name: モーニングブリーフ用メールの本文を試しに作る（送信しない）
+        run: DRY_RUN=1 python3 .github/scripts/send_feed_mail.py "$RUNNER_TEMP/feed.json"
