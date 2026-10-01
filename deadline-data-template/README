@@ -118,3 +118,15 @@ DRY_RUN=1 NOW="2026-10-05 06:47" bash .github/scripts/send_digest.sh  # 日時�
 GitHub Actions の `ubuntu-latest` に標準で入っている `bash` / `curl` / `jq` / `python3` のみを使う。追加のインストールは不要。
 
 Private リポジトリでも Actions は無料枠（月2000分）で動く。このジョブは1回1分未満なので十分収まる。
+
+---
+
+## モーニングブリーフとの連携（任意）
+
+`.github/workflows/build-feed.yml` と `.github/scripts/build_feed.py` を置くと、`data.json` が更新されるたびに
+`feed.json`（未完了の締切の一覧。今日から14日先まで・期限切れを含む）がこのリポジトリに自動でコミットされる。
+Claude のモーニングブリーフなど、このリポジトリを読める仕組みから「今日の締切」を拾うのに使う。
+
+- `feed.json` はこの Private リポジトリの中だけに置く（メモも含むため、公開リポジトリへコピーしない）
+- 追加の Secret や PAT は不要（ワークフロー標準の `GITHUB_TOKEN` でコミットする）
+- 使わない場合は2つのファイルを置かなければよい
