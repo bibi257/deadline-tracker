@@ -14,6 +14,7 @@
 """
 import json
 import os
+import re
 import smtplib
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -75,6 +76,24 @@ def build_body(feed, target):
     return "\n".join(out)
 
 
+def _starttls():
+    s = smtplib.SMTP("smtp.gmail.com", 587, timeout=30)
+    try:
+        s.starttls()
+    except BaseException:
+        s.close()
+        raise
+    return s
+
+
+def _ssl():
+    return smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30)
+
+
+def _text(v):
+    return v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v)
+
+
 def main():
     with open(sys.argv[1], encoding="utf-8") as f:
         feed = json.load(f)
@@ -94,8 +113,9 @@ def main():
         print(body)
         return 0
 
-    addr = os.environ.get("GMAIL_ADDRESS", "").strip()
-    pw = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "")
+    # コピー時に混ざりやすい空白(全角・改行・ゼロ幅を含む)や引用符を取り除く
+    addr = re.sub(r"[\s\u200b\ufeff\"']", "", os.environ.get("GMAIL_ADDRESS", ""))
+    pw = re.sub(r"[\s\u200b\ufeff\"']", "", os.environ.get("GMAIL_APP_PASSWORD", ""))
     if not addr or not pw:
         print("GMAIL_ADDRESS / GMAIL_APP_PASSWORD の Secret が未設定のため、メールは送りません。", file=sys.stderr)
         return 0  # 未設定でもワークフロー全体は失敗扱いにしない
@@ -106,10 +126,42 @@ def main():
     msg["To"] = addr
     msg["Date"] = formatdate(localtime=False)
     msg["Message-ID"] = make_msgid(domain="deadline-tracker")
-    with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as s:
-        s.starttls()
-        s.login(addr, pw)
-        s.send_message(msg)
+    # Secret の中身は一部でもログに出さない。形が合っているかだけ伝える
+    if not re.fullmatch(r"[^@]+@[^@]+\.[^@]+", addr):
+        print("GMAIL_ADDRESS がメールアドレスの形ではありません。", file=sys.stderr)
+        return 1
+    if not re.fullmatch(r"[A-Za-z]{16}", pw):
+        print("GMAIL_APP_PASSWORD がアプリパスワード（英字16文字）の形ではありません。通常のログインパスワードでは送れません。", file=sys.stderr)
+
+    # 587(STARTTLS) で失敗したら 465(SSL) でもう一度試す。
+    # ただし送信が済んだ後の切断（QUIT の失敗など）では再送しない（二重送信を防ぐ）
+    last = None
+    for name, factory in (("587/STARTTLS", _starttls), ("465/SSL", _ssl)):
+        sent = False
+        try:
+            s = factory()
+            try:
+                s.login(addr, pw)
+                s.send_message(msg)
+                sent = True
+                s.quit()
+            finally:
+                s.close()
+            last = None
+            break
+        except smtplib.SMTPAuthenticationError as e:
+            print("認証に失敗しました（%s）: %s %s" % (name, e.smtp_code, _text(e.smtp_error)[:120]), file=sys.stderr)
+            print("→ アプリパスワードが正しいか、2段階認証が有効か、アドレスがそのアカウントのものか確認してください。", file=sys.stderr)
+            return 1
+        except (smtplib.SMTPException, OSError) as e:
+            if sent:
+                print("送信後の切断でエラーが出ました（%s）。送信自体は済んでいます: %s" % (name, type(e).__name__), file=sys.stderr)
+                last = None
+                break
+            print("送信に失敗しました（%s）: %s: %s" % (name, type(e).__name__, e), file=sys.stderr)
+            last = e
+    if last is not None:
+        return 1
     print("送信しました:", subject)
     return 0
 
