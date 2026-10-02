@@ -376,17 +376,37 @@ dialog::backdrop{background:rgba(20,19,17,.45)}
   .brand{font-size:19px}
 }
 
-/* ---- 完了の演出（判を押して畳む） ---- */
-.card.stamping{position:relative;overflow:hidden}
-.done-stamp{position:absolute;right:18px;top:50%;width:64px;height:64px;margin-top:-32px;
-  border:3px solid var(--red);border-radius:50%;color:var(--red);font-size:30px;font-weight:700;line-height:58px;text-align:center;
-  background:color-mix(in srgb,var(--card) 70%,transparent);pointer-events:none;
-  animation:stamp-in .34s cubic-bezier(.2,1.6,.4,1) both}
-@keyframes stamp-in{0%{opacity:0;transform:scale(2.2) rotate(-28deg)}70%{opacity:1}100%{opacity:.92;transform:scale(1) rotate(-12deg)}}
-.card.stamping .body,.card.stamping .left{transition:opacity .25s .25s}
-.card.stamping .body,.card.stamping .left{opacity:.45}
-.card.folding{transition:height .3s ease,opacity .3s ease,margin .3s ease,padding .3s ease;height:0!important;opacity:0;margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0}
-@media (prefers-reduced-motion:reduce){.done-stamp{animation:none}.card.folding{transition:none}}
+/* ---- 完了の演出（RPGのミッション達成風） ---- */
+.card.clearing .body,.card.clearing .left{opacity:.45;transition:opacity .25s}
+.card.folding{transition:height .3s ease,opacity .3s ease,margin .3s ease,padding .3s ease;height:0!important;opacity:0;margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0;overflow:hidden}
+.quest{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(10,9,8,.28);animation:q-fade .2s both;cursor:pointer}
+.quest.out{animation:q-fadeout .25s both}
+.quest-band{position:relative;width:100%;padding:18px 16px 16px;text-align:center;color:#F4EEDC;background:#121110;
+  border-top:2px solid #D9B44A;border-bottom:2px solid #D9B44A;box-shadow:0 0 0 4px #121110,0 0 0 5px #6E5A22;
+  animation:q-band .38s cubic-bezier(.2,.9,.2,1) both;overflow:visible}
+.quest-kicker{font-size:11px;letter-spacing:.42em;color:#D9B44A;font-weight:700;animation:q-up .3s .18s both}
+.quest-title{font-size:30px;font-weight:700;letter-spacing:.12em;line-height:1.3;color:#FFE9A3;
+  text-shadow:0 2px 0 #6E5A22,0 0 18px rgba(255,214,102,.45);animation:q-pop .45s .22s cubic-bezier(.2,1.6,.4,1) both}
+.quest-name{font-size:14px;margin-top:4px;color:#F4EEDC;max-width:560px;margin-left:auto;margin-right:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;animation:q-up .3s .34s both}
+.quest-sub{font-size:12px;color:#BDB6A3;animation:q-up .3s .38s both}
+.quest-reward{display:flex;justify-content:center;align-items:baseline;gap:10px;margin-top:8px;animation:q-up .3s .46s both}
+.quest-exp{font-size:20px;font-weight:700;color:#7FE0B0;letter-spacing:.04em}
+.quest-bonus{font-size:12px;color:#BDB6A3}
+.quest-lv{display:flex;justify-content:center;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:#F4EEDC;font-variant-numeric:tabular-nums;animation:q-up .3s .52s both}
+.quest-bar{width:160px;height:8px;border:1px solid #D9B44A;background:#2A2722;position:relative}
+.quest-bar b{position:absolute;left:0;top:0;bottom:0;background:#D9B44A;width:var(--to);animation:q-bar .7s .6s ease-out both}
+.quest-up{margin-top:8px;font-size:15px;font-weight:700;letter-spacing:.14em;color:#FFE9A3;animation:q-pop .45s 1s cubic-bezier(.2,1.6,.4,1) both}
+.quest-sparks{position:absolute;left:50%;top:50%;width:0;height:0;pointer-events:none}
+.quest-sparks i{position:absolute;width:7px;height:7px;margin:-3.5px;background:#FFE9A3;transform:rotate(45deg) scale(0);animation:q-spark .8s calc(.2s + var(--d)) ease-out both}
+@keyframes q-fade{from{opacity:0}to{opacity:1}}
+@keyframes q-fadeout{from{opacity:1}to{opacity:0}}
+@keyframes q-band{from{transform:scaleY(0);opacity:0}to{transform:scaleY(1);opacity:1}}
+@keyframes q-up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes q-pop{0%{opacity:0;transform:scale(.6)}100%{opacity:1;transform:scale(1)}}
+@keyframes q-bar{from{width:var(--from)}to{width:var(--to)}}
+@keyframes q-spark{0%{opacity:1;transform:translate(0,0) rotate(45deg) scale(.4)}60%{opacity:1}100%{opacity:0;transform:translate(var(--x),var(--y)) rotate(45deg) scale(1)}}
+@media (max-width:420px){.quest-title{font-size:25px}.quest-bar{width:120px}}
+@media (prefers-reduced-motion:reduce){.quest,.quest *{animation:none!important}.card.folding{transition:none}}
 </style>
 </head>
 <body>
@@ -2101,7 +2121,7 @@ function renderSettings(){
   main.appendChild(s3);
 
   // 完了の演出
-  var s3b=h('<div class="sec"><h3>完了の演出</h3><p>完了にしたとき、カードに「済」の判を押してから畳みます。端末で「視差効果を減らす」をオンにしている場合は出しません。</p><div class="row"></div></div>');
+  var s3b=h('<div class="sec"><h3>完了の演出</h3><p>完了にしたとき、RPGのミッション達成のような帯を出します（タップですぐ閉じます）。端末で「視差効果を減らす」をオンにしている場合は出しません。<br>いまの記録：Lv.'+levelOf(db.settings.exp)+'（累計 '+(db.settings.exp||0)+' EXP・この端末のみ）</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (db.settings.motion||"on")===p[0]?"true":"false");
@@ -3007,17 +3027,21 @@ function upcomingDue(it){
 }
 
 function complete(it, cardEl){
+  var dueBefore=parseItemDate(it);
   var r=applyCompletion(it);
-  if(r.repeating){
-    toast(r.final?"繰り返しの最終回を完了しました":"完了。次回は "+fmtDue(r.next,it.allDay)+" です");
-  } else {
-    toast("完了にしました");
-  }
-  // データは先に保存する（アニメーション中に閉じても完了は残る）。描き直しだけ演出のあとに回す
+  var reward=grantExp(dueBefore);
+  var sub;
+  if(r.repeating) sub=r.final?"繰り返しの最終回をクリア":"次回は "+fmtDue(r.next,it.allDay);
+  // データは先に保存する（演出中に閉じても完了は残る）。描き直しだけ演出のあとに回す
   save();
   scheduleAutoSync();
-  if(cardEl && motionOn()) playDoneStamp(cardEl, render);
-  else render();
+  if(cardEl && motionOn()){
+    playQuestClear(it.title, reward, sub);
+    foldCard(cardEl, render);
+  } else {
+    toast((sub?"完了。"+sub:"完了にしました")+"（EXP +"+reward.gain+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）");
+    render();
+  }
 }
 
 /* 完了の演出を使うか。設定でオフ、または端末側で「視差効果を減らす」なら使わない */
@@ -3026,12 +3050,52 @@ function motionOn(){
   return !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
 
-/* 完了の演出：カードに「済」の判を押し、少し置いてから畳む。終わったら then() で描き直す */
-function playDoneStamp(card, then){
-  if(card.classList.contains("stamping")) return;
-  card.classList.add("stamping");
+/* 経験値：期限内に早く終えるほど多い。100 EXP ごとにレベルが1上がる（この端末だけの記録） */
+var EXP_PER_LEVEL=100;
+function levelOf(exp){ return Math.floor((exp||0)/EXP_PER_LEVEL)+1; }
+function grantExp(due){
+  var days=(due-new Date())/86400000, gain, bonus="";
+  if(days<0){ gain=5; bonus="遅れてもクリア"; }
+  else if(days<1){ gain=10; bonus="期限内にクリア"; }
+  else { gain=10+Math.min(40, 5*Math.floor(days)); bonus="前倒しボーナス"; }
+  var before=db.settings.exp||0, after=before+gain;
+  db.settings.exp=after;
+  return {gain:gain, bonus:bonus, level:levelOf(after), levelUp:levelOf(after)>levelOf(before),
+          into:after%EXP_PER_LEVEL, fromInto:before%EXP_PER_LEVEL};
+}
+
+/* ミッション達成の演出：画面中央に帯を出し、タイトル・獲得EXP・レベルを見せて自動で消える。
+   タップでもすぐ閉じる。画面の操作は止めない（帯の外はそのまま触れる） */
+function playQuestClear(title, rw, sub){
+  var old=document.querySelector(".quest"); if(old) old.remove();
+  var fromPct=rw.levelUp?0:rw.fromInto/EXP_PER_LEVEL*100, toPct=rw.into/EXP_PER_LEVEL*100;
+  var sparks="";
+  for(var k=0;k<14;k++){
+    var a=k/14*Math.PI*2, d=90+(k%3)*38;
+    sparks+='<i style="--x:'+Math.round(Math.cos(a)*d*1.8)+'px;--y:'+Math.round(Math.sin(a)*d*.55)+'px;--d:'+(k%4)*40+'ms"></i>';
+  }
+  var el=h('<div class="quest" role="status" aria-live="polite">'+
+    '<div class="quest-band"><div class="quest-sparks" aria-hidden="true">'+sparks+'</div>'+
+      '<div class="quest-kicker">MISSION COMPLETE</div>'+
+      '<div class="quest-title">ミッション達成！</div>'+
+      '<div class="quest-name">「'+escHtml(title)+'」</div>'+
+      (sub?'<div class="quest-sub">'+escHtml(sub)+'</div>':'')+
+      '<div class="quest-reward"><span class="quest-exp">EXP +'+rw.gain+'</span><span class="quest-bonus">'+rw.bonus+'</span></div>'+
+      '<div class="quest-lv"><span>Lv.'+rw.level+'</span><span class="quest-bar"><b style="--from:'+fromPct+'%;--to:'+toPct+'%"></b></span><span>'+rw.into+'/'+EXP_PER_LEVEL+'</span></div>'+
+      (rw.levelUp?'<div class="quest-up">LEVEL UP!　Lv.'+(rw.level-1)+' → Lv.'+rw.level+'</div>':'')+
+    '</div></div>');
+  var gone=false;
+  function close(){ if(gone) return; gone=true; el.classList.add("out"); setTimeout(function(){ el.remove(); }, 260); }
+  el.onclick=close;
+  document.body.appendChild(el);
+  setTimeout(close, rw.levelUp?2600:2000);
+}
+
+/* 完了したカードを畳み、終わったら then() で描き直す。演出中はボタンを止めて二重処理を防ぐ */
+function foldCard(card, then){
+  if(card.classList.contains("clearing")) return;
+  card.classList.add("clearing");
   card.querySelectorAll("button").forEach(function(b){ b.disabled=true; });
-  card.appendChild(h('<span class="done-stamp" aria-hidden="true">済</span>'));
   var finished=false;
   function finish(){ if(finished) return; finished=true; then(); }
   setTimeout(function(){
@@ -3039,8 +3103,8 @@ function playDoneStamp(card, then){
     card.offsetHeight; // 高さを確定させてから畳む
     card.classList.add("folding");
     setTimeout(finish, 320);
-  }, 620);
-  setTimeout(finish, 1500); // 念のための保険（タブが裏に回ってタイマーが遅れた場合など）
+  }, 700);
+  setTimeout(finish, 1600); // 念のための保険（タブが裏に回ってタイマーが遅れた場合など）
 }
 
 /* 「期限を過ぎたら自動的に完了にする」を付けた締切を、実際に期限を過ぎたタイミングで
