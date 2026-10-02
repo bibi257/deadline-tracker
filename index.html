@@ -375,6 +375,18 @@ dialog::backdrop{background:rgba(20,19,17,.45)}
   .day{min-height:54px}
   .brand{font-size:19px}
 }
+
+/* ---- 完了の演出（判を押して畳む） ---- */
+.card.stamping{position:relative;overflow:hidden}
+.done-stamp{position:absolute;right:18px;top:50%;width:64px;height:64px;margin-top:-32px;
+  border:3px solid var(--red);border-radius:50%;color:var(--red);font-size:30px;font-weight:700;line-height:58px;text-align:center;
+  background:color-mix(in srgb,var(--card) 70%,transparent);pointer-events:none;
+  animation:stamp-in .34s cubic-bezier(.2,1.6,.4,1) both}
+@keyframes stamp-in{0%{opacity:0;transform:scale(2.2) rotate(-28deg)}70%{opacity:1}100%{opacity:.92;transform:scale(1) rotate(-12deg)}}
+.card.stamping .body,.card.stamping .left{transition:opacity .25s .25s}
+.card.stamping .body,.card.stamping .left{opacity:.45}
+.card.folding{transition:height .3s ease,opacity .3s ease,margin .3s ease,padding .3s ease;height:0!important;opacity:0;margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0}
+@media (prefers-reduced-motion:reduce){.done-stamp{animation:none}.card.folding{transition:none}}
 </style>
 </head>
 <body>
@@ -994,7 +1006,7 @@ function cardOf(it){
       var note=h('<div style="font-size:11.5px;color:var(--ink-3);margin-top:6px">完了・編集は「定期予定」タブから行ってください</div>');
       el.querySelector(".body").appendChild(note);
     } else {
-      add("完了にする","main",function(){ complete(it); });
+      add("完了にする","main",function(){ complete(it, el); });
       if(st==="over" && !isRepeating(it)){
         add("明日に延期","",function(){ postpone(it); });
       }
@@ -2088,6 +2100,16 @@ function renderSettings(){
   });
   main.appendChild(s3);
 
+  // 完了の演出
+  var s3b=h('<div class="sec"><h3>完了の演出</h3><p>完了にしたとき、カードに「済」の判を押してから畳みます。端末で「視差効果を減らす」をオンにしている場合は出しません。</p><div class="row"></div></div>');
+  [["on","あり"],["off","なし"]].forEach(function(p){
+    var b=h('<button class="chip">'+p[1]+'</button>');
+    b.setAttribute("aria-pressed", (db.settings.motion||"on")===p[0]?"true":"false");
+    b.onclick=function(){ db.settings.motion=p[0]; saveRaw(); render(); }; // 設定は同期対象外なのでupdatedAtは進めない
+    s3b.querySelector(".row").appendChild(b);
+  });
+  main.appendChild(s3b);
+
   // バックアップ
   var s4=h('<div class="sec"><h3>バックアップと復元</h3><p>データは端末ごとに保存されます。PCとiPhoneで同じ内容にしたいときは、書き出したファイルを読み込んでください。</p><div class="row"></div></div>');
   var bOut=h('<button class="btn">JSONで書き出す</button>');
@@ -2984,15 +3006,41 @@ function upcomingDue(it){
   return parseItemDate(c);
 }
 
-function complete(it){
+function complete(it, cardEl){
   var r=applyCompletion(it);
   if(r.repeating){
     toast(r.final?"繰り返しの最終回を完了しました":"完了。次回は "+fmtDue(r.next,it.allDay)+" です");
   } else {
     toast("完了にしました");
   }
-  save(); render();
+  // データは先に保存する（アニメーション中に閉じても完了は残る）。描き直しだけ演出のあとに回す
+  save();
   scheduleAutoSync();
+  if(cardEl && motionOn()) playDoneStamp(cardEl, render);
+  else render();
+}
+
+/* 完了の演出を使うか。設定でオフ、または端末側で「視差効果を減らす」なら使わない */
+function motionOn(){
+  if(db.settings.motion==="off") return false;
+  return !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
+/* 完了の演出：カードに「済」の判を押し、少し置いてから畳む。終わったら then() で描き直す */
+function playDoneStamp(card, then){
+  if(card.classList.contains("stamping")) return;
+  card.classList.add("stamping");
+  card.querySelectorAll("button").forEach(function(b){ b.disabled=true; });
+  card.appendChild(h('<span class="done-stamp" aria-hidden="true">済</span>'));
+  var finished=false;
+  function finish(){ if(finished) return; finished=true; then(); }
+  setTimeout(function(){
+    card.style.height=card.offsetHeight+"px";
+    card.offsetHeight; // 高さを確定させてから畳む
+    card.classList.add("folding");
+    setTimeout(finish, 320);
+  }, 620);
+  setTimeout(finish, 1500); // 念のための保険（タブが裏に回ってタイマーが遅れた場合など）
 }
 
 /* 「期限を過ぎたら自動的に完了にする」を付けた締切を、実際に期限を過ぎたタイミングで
