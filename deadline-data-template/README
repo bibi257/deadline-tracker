@@ -130,3 +130,6 @@ Claude のモーニングブリーフなど、このリポジトリを読める�
 - `feed.json` はこの Private リポジトリの中だけに置く（メモも含むため、公開リポジトリへコピーしない）
 - 追加の Secret や PAT は不要（ワークフロー標準の `GITHUB_TOKEN` でコミットする）
 - 使わない場合は2つのファイルを置かなければよい
+- Claude のモーニングブリーフなどが GitHub を直接読めない場合は、`.github/workflows/send-feed-mail.yml` と
+  `.github/scripts/send_feed_mail.py` も置くと、前日の夜と当日の早朝に締切一覧を**自分宛てのメール**（件名「【締切トラッカー】M/D（曜）の締切」）で送れる。
+  使うには Gmail のアプリパスワードを作り、Secret に `GMAIL_ADDRESS` と `GMAIL_APP_PASSWORD` を登録する（未登録なら送信を飛ばすだけ）
