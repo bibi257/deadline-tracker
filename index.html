@@ -241,6 +241,8 @@ header{
 .dot.done{background:var(--rule)}
 .dot.span{opacity:.4}
 .dot.routine{background:var(--routine)}
+.cal-opt{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);margin:-4px 0 10px;cursor:pointer}
+.cal-opt input{width:auto;margin:0;accent-color:var(--ink)}
 .sel-title{margin:16px 0 6px;font-size:12px;letter-spacing:.08em;color:var(--ink-2)}
 
 /* ---- 今週 ---- */
@@ -442,6 +444,9 @@ dialog::backdrop{background:rgba(20,19,17,.45)}
         <option value="12">12回</option><option value="15" selected>15回</option>
         <option value="30">30回</option><option value="0">終わりを決めない</option>
       </select>
+    </label>
+    <label id="calShowRow" style="display:none;gap:8px;align-items:center;font-size:13px;margin:-4px 0 12px">
+      <input type="checkbox" id="fCalShow" style="width:auto" checked>カレンダーに帯を表示する（オフにしても日付を押すと一覧には出ます）
     </label>
     <label class="field"><span>メモ</span><textarea id="fMemo" maxlength="500" placeholder="提出先・必要書類・関係者など"></textarea></label>
     <div class="dlg-acts">
@@ -968,6 +973,7 @@ function cardOf(it){
       escHtml(it.start?(fmtDue(new Date(it.start),it.allDay)+" 〜 "+fmtDue(d,it.allDay)):fmtDue(d,it.allDay))+'</span>'+
       (it.allDay?'<span class="cat">終日</span>':"")+
       (it.autoComplete?'<span class="cat">自動完了</span>':"")+
+      (isRepeating(it)&&it.calHide?'<span class="cat">カレンダー非表示</span>':"")+
       (it.rep&&it.rep!=="none"?'<span class="cat">'+({weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"}[it.rep])+
         (it.repCount>0?" 残"+it.repCount+"回":"")+'</span>':"")+'</div>'+
       (it.memo?'<p class="memo">'+escHtml(it.memo)+'</p>':"")+
@@ -1158,6 +1164,7 @@ function applyTemplate(id){
   setRepCountValue(t.repCount==null?15:t.repCount);
   document.getElementById("fAllDay").checked=!!t.allDay;
   document.getElementById("fAutoComplete").checked=!!t.autoComplete;
+  document.getElementById("fCalShow").checked=!t.calHide;
   document.getElementById("fTime").value=t.timeOfDay||"09:00";
   document.getElementById("fSpan").checked=false;
   syncDialogRows();
@@ -1183,7 +1190,7 @@ function saveAsTemplate(it){
     id:"t"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
     name:name, title:it.title, cat:it.cat, memo:it.memo||"",
     allDay:!!it.allDay, rep:it.rep||"none", repCount:it.repCount||0,
-    autoComplete:!!it.autoComplete,
+    autoComplete:!!it.autoComplete, calHide:!!it.calHide,
     timeOfDay:it.allDay?"09:00":(pad(d.getHours())+":"+pad(d.getMinutes()))
   });
   save(); render();
@@ -1840,6 +1847,12 @@ function renderCal(){
   head.querySelector(".row").append(prev,today,next);
   main.appendChild(head);
 
+  // 定期予定の帯をまとめて出し入れする（この端末だけの表示設定）
+  var showRoutine=store.get("cal-show-routine")!=="0";
+  var rtToggle=h('<label class="cal-opt"><input type="checkbox"'+(showRoutine?" checked":"")+'>定期予定の帯を表示</label>');
+  rtToggle.querySelector("input").onchange=function(){ store.set("cal-show-routine", this.checked?"1":"0"); render(); };
+  main.appendChild(rtToggle);
+
   var grid=h('<div class="grid"></div>');
   DOW.forEach(function(d,i){ grid.appendChild(h('<div class="dow'+(i===0?" sun":i===6?" sat":"")+'">'+d+'</div>')); });
   var first=new Date(y,m,1), start=new Date(y,m,1-first.getDay());
@@ -1867,7 +1880,8 @@ function renderCal(){
     var day=h('<button class="day'+(d.getMonth()!==m?" out":"")+(key===todayKey?" is-today":"")+(selDay===key?" sel":"")+(hol?" holiday":"")+'" '+
       (hol?'title="'+escHtml(hol)+'"':'')+'><span class="d">'+d.getDate()+'</span>'+
       (hol?'<span class="holname">'+escHtml(hol)+'</span>':'')+'</button>');
-    var hit=hitsOn(key);
+    // 帯：定期予定は、全体で隠しているときと、その予定だけ隠す設定のときは出さない
+    var hit=hitsOn(key).filter(function(i){ return !isRepeating(i) || (showRoutine && !i.calHide); });
     hit.slice(0,3).forEach(function(i){
       var isDue=(toLocalISO(new Date(i.due))===key);
       // 定期予定は緑、それ以外は緊急度の色。期間の途中は薄い帯にする
@@ -2746,6 +2760,7 @@ function openDialog(item){
     document.getElementById("fMemo").value=item.memo||"";
     document.getElementById("fAllDay").checked=!!item.allDay;
     document.getElementById("fAutoComplete").checked=!!item.autoComplete;
+    document.getElementById("fCalShow").checked=!item.calHide;
     var hasStart=!!item.start;
     document.getElementById("fSpan").checked=hasStart;
     if(hasStart){
@@ -2788,6 +2803,7 @@ function syncDialogRows(){
   document.getElementById("dueLabel").textContent=span?"終了日":"締切日";
   var rep=document.getElementById("fRep").value;
   document.getElementById("repCountRow").style.display=(rep==="none")?"none":"";
+  document.getElementById("calShowRow").style.display=(rep==="none")?"none":"flex";
   // 終日のときは時刻欄を隠す
   var allDay=document.getElementById("fAllDay").checked;
   var dueCell=document.querySelector(".dueTimeCell"), startCell=document.querySelector(".startTimeCell");
@@ -2868,6 +2884,8 @@ dlgForm.addEventListener("submit",function(e){
   }
   var rep=document.getElementById("fRep").value;
   var repCount=(rep==="none")?0:(parseInt(document.getElementById("fRepCount").value,10)||0);
+  // カレンダーの帯を出さない設定は、繰り返しの締切にだけ持たせる
+  var calHide=(rep!=="none") && !document.getElementById("fCalShow").checked;
 
   if(editingId){
     var found=false;
@@ -2878,6 +2896,7 @@ dlgForm.addEventListener("submit",function(e){
       i.rep=rep; i.repCount=repCount; i.memo=document.getElementById("fMemo").value.trim();
       if(allDay) i.allDay=true; else delete i.allDay;
       if(autoComplete) i.autoComplete=true; else delete i.autoComplete;
+      if(calHide) i.calHide=true; else delete i.calHide;
       if(start) i.start=start.toISOString(); else delete i.start;
       delete i.repDay; // 締切日を選び直したので、月末丸めの基準日も新しい日付から取り直す
       i.seq=(i.seq||0)+1;
@@ -2898,6 +2917,7 @@ dlgForm.addEventListener("submit",function(e){
     if(start) it.start=start.toISOString();
     if(allDay) it.allDay=true;
     if(autoComplete) it.autoComplete=true;
+    if(calHide) it.calHide=true;
     db.items.push(it);
     toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
     // 隔離項目の修復中だった場合は、保存できたので隔離から取り除く
