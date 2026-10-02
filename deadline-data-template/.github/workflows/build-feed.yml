@@ -5,7 +5,7 @@ name: モーニングブリーフ用フィードを更新
 on:
   push:
     branches: [main]
-    paths: ["data.json", ".github/scripts/build_feed.py"]
+    paths: ["data.json", ".github/scripts/build_feed.py", ".github/workflows/build-feed.yml"]
   schedule:
     # 毎日 UTC 21:17 = JST 6:17。日付が変わった後の範囲で作り直す安全網
     # （feed.json は絶対日付だけを持つので、実行が遅れても前日の生成物で「今日」を判断できる）
@@ -27,22 +27,24 @@ jobs:
       - name: リポジトリを取得
         uses: actions/checkout@v7
 
-      - name: feed.json を作る
-        run: python3 .github/scripts/build_feed.py data.json feed.json
-
-      - name: 変わっていればコミットする
+      - name: feed.json を作って、変わっていればコミットする
         # GITHUB_TOKEN による push は他のワークフローを起動しないので、ループにはならない。
-        # アプリの同期と同時になった場合に備え、取り込み直して数回やり直す
+        # アプリの同期が続けて届くと、先に走った回の feed.json と衝突することがある。
+        # 古い data.json から作ったものを rebase で押し込むと内容が古いまま残るので、
+        # 毎回 main の最新を取り直し、その data.json から作り直してから push する
         run: |
-          if git ls-files --error-unmatch feed.json >/dev/null 2>&1 && git diff --quiet -- feed.json; then
-            echo "feed.json に変更はありません"; exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add feed.json
-          git commit -q -m "モーニングブリーフ用フィードを更新"
-          for i in 1 2 3; do
-            if git pull -q --rebase origin main && git push -q origin HEAD:main; then exit 0; fi
+          for i in 1 2 3 4; do
+            git fetch -q origin main
+            git reset -q --hard origin/main
+            python3 .github/scripts/build_feed.py data.json feed.json
+            if git ls-files --error-unmatch feed.json >/dev/null 2>&1 && git diff --quiet -- feed.json; then
+              echo "feed.json に変更はありません"; exit 0
+            fi
+            git add feed.json
+            git commit -q -m "モーニングブリーフ用フィードを更新"
+            if git push -q origin HEAD:main; then exit 0; fi
             sleep $((i * 5))
           done
           echo "feed.json を push できませんでした" >&2
