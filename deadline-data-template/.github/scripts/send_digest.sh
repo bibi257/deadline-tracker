@@ -298,9 +298,59 @@ send_weekly_review(){
       | select((.due | ep) < ($now - 7*86400))
     ] | length')
 
+  # アプリが記録している「完了の記録」(completions)から、この1週間の完了のタイミングをまとめる。
+  # 記録が無い（古いアプリのデータ）場合は、従来どおり件数だけを出す
+  local WEEK_DONE
+  WEEK_DONE=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" "$JQ_LIB"'
+    def dow: ["日","月","火","水","木","金","土"][(. + 32400 | gmtime | .[6])];
+    def md: (. + 32400 | strftime("%m/%d") | sub("^0"; "") | sub("/0"; "/")) + "（" + dow + "）" + (. + 32400 | strftime(" %H:%M"));
+    def leadtxt: if .kind == "auto" then "自動完了"
+                 elif .lead < 0 then "締切を" + ((- .lead) | if . < 24 then "\(floor)時間" else "\(./24 | floor)日" end) + "過ぎて"
+                 elif .lead < 24 then "締切の\(.lead | floor)時間前"
+                 else "締切の\(.lead/24 | floor)日前" end;
+    def band: (. + 32400 | gmtime | .[3]) as $h
+      | if $h < 5 then "深夜（0〜5時）" elif $h < 12 then "朝（5〜12時）" elif $h < 18 then "昼（12〜18時）" else "夜（18〜24時）" end;
+    def r1: . * 10 | round / 10;
+    if (.completions | type) != "array" then empty else
+      ([ .completions[] | select(type == "object" and (.doneAt | type) == "string")
+         | . + {t: (.doneAt | try ep catch 0), lead: ((.lead // 0) | tonumber? // 0), kind: (.kind // "ontime"), exp: ((.exp // 0) | tonumber? // 0)} ]) as $all
+      | ([ $all[] | select(.t > ($now - 7*86400) and .t <= $now) ] | sort_by(.t)) as $w
+      | ([ $w[] | select(.kind != "auto") ]) as $man
+      | (((.expCarry // 0) | tonumber? // 0) + ([ $all[] | select(.t <= $now) | .exp ] | add // 0)) as $total
+      | ([ $w[] | .exp ] | add // 0) as $gain
+      | (($total / 100 | floor) + 1) as $lv
+      | (($total - $gain) / 100 | floor + 1) as $lv0
+      | [ "- 完了：\($w | length)件（前倒し \([$w[] | select(.kind == "early")] | length)・期限内 \([$w[] | select(.kind == "ontime")] | length)・遅れ \([$w[] | select(.kind == "late")] | length)・自動 \([$w[] | select(.kind == "auto")] | length)）",
+          (if ($man | length) > 0 then
+             ([ $man[] | .lead ] | add / length) as $avg
+             | "- 平均：" + (if $avg >= 0 then "締切の\($avg/24 | r1)日前に完了" else "締切を\(- $avg/24 | r1)日過ぎて完了" end)
+           else empty end),
+          (if ($man | length) > 0 then
+             ($man | group_by(.t | band) | max_by(length)) as $g
+             | "- 完了が多い時間帯：\($g[0].t | band)に\($g | length)件"
+           else empty end),
+          (if ($man | length) > 0 then ($man | max_by(.lead)) as $b | select($b.lead >= 24)
+             | "- 一番早く片付けた：「\($b.title // "" | clean)」（\($b | leadtxt)）" else empty end),
+          (if ([ $w[] | select(.kind == "late") ] | length) > 0 then
+             "- 遅れたもの：" + ([ $w[] | select(.kind == "late") | "「\(.title // "" | clean)」" ] | .[0:3] | join("・"))
+           else empty end),
+          "- 獲得EXP：+\($gain)（Lv.\($lv)・累計 \($total) EXP）" + (if $lv > $lv0 then "　🎉 Lv.\($lv0) → Lv.\($lv) にレベルアップ！" else "" end),
+          (if ($w | length) > 0 then
+             "\n### ✅ 完了したもの",
+             ([ $w | reverse | .[0:10][] | "- \(.t | md)　\(.title // "" | clean)　`\(.cat // "その他" | clean)`　\(leadtxt)" ] | .[]),
+             (if ($w | length) > 10 then "- ほか \(($w | length) - 10)件" else empty end)
+           else empty end)
+        ] | .[]
+    end
+  ' 2>/dev/null || true)
+
   local CONTENT="# 📅 来週の見通し"$'\n'"### $(TZ=Asia/Tokyo date -d "@${NOW_EPOCH}" "+%-m月%-d日（$(jp_dow "@$NOW_EPOCH")）")の週次レビュー"$'\n\n'
   CONTENT="${CONTENT}## 🗓️ 来週7日間"$'\n'"${BY_DAY}"
-  CONTENT="${CONTENT}"$'\n'"## 📊 この1週間"$'\n'"- 完了：${DONE_COUNT}件"
+  if [ -n "$WEEK_DONE" ]; then
+    CONTENT="${CONTENT}"$'\n'"## 🏆 この1週間の達成"$'\n'"${WEEK_DONE}"
+  else
+    CONTENT="${CONTENT}"$'\n'"## 📊 この1週間"$'\n'"- 完了：${DONE_COUNT}件"
+  fi
   if [ "$STALE_COUNT" -gt 0 ]; then
     CONTENT="${CONTENT}"$'\n'"- ⚠️ 7日以上の滞留：${STALE_COUNT}件"
   fi

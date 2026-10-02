@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-03 11:00 JST">
+<meta name="build-stamp" content="2026-10-03 13:00 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -501,7 +501,7 @@ var store={
   set:function(k,v){ if(hasLS){try{localStorage.setItem(k,v);}catch(e){toast("保存できませんでした（空き容量を確認してください）");}} else {mem[k]=v;} }
 };
 
-var db={items:[],templates:[],trash:[],quarantine:[],categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},settings:{dayHour:9,theme:"auto"},updatedAt:null};
+var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},settings:{dayHour:9,theme:"auto"},updatedAt:null};
 function load(){
   var raw=store.get(KEY); if(!raw) return;
   try{
@@ -518,7 +518,10 @@ function load(){
     if(d) db.catReminders=cleanCatReminders(d.catReminders);
     if(d&&d.settings) db.settings=Object.assign(db.settings,d.settings);
     if(d&&d.updatedAt) db.updatedAt=d.updatedAt;
+    if(d) adoptCompletions(d);
   }catch(e){}
+  // 以前この端末だけに持っていた経験値(settings.exp)は、同期される記録へ移す
+  if(db.settings.exp){ db.expCarry=(db.expCarry||0)+db.settings.exp; delete db.settings.exp; }
   // ゴミ箱は30日を過ぎたものと、上限(30件)を超えた古いものを読み込み時に整理する
   var cutoff=Date.now()-30*86400000;
   db.trash=db.trash.filter(function(t){ return new Date(t.deletedAt).getTime()>=cutoff; });
@@ -533,6 +536,28 @@ function save(){ db.updatedAt=new Date().toISOString(); store.set(KEY,JSON.strin
 /* GitHubから受け取った内容をそのまま保存するとき用。
    updatedAtは呼び出し側でリモートの値に合わせてから使うため、ここでは上書きしない */
 function saveRaw(){ store.set(KEY,JSON.stringify(db)); }
+
+/* 完了の記録（いつ・締切の何時間前に終えたか・獲得EXP）。data.json に入れて端末間で同期し、
+   週次レビューでまとめる。古い記録は上限を超えたら捨て、そのEXPだけ expCarry に繰り越す */
+var COMPLETION_LIMIT=500;
+function cleanCompletions(arr){
+  return (Array.isArray(arr)?arr:[]).filter(function(c){
+    return c && typeof c.id==="string" && !isNaN(new Date(c.doneAt).getTime());
+  }).map(function(c){ var x=Object.assign({},c); x.exp=Math.max(0,Number(x.exp)||0); return x; });
+}
+function adoptCompletions(d){
+  if(Array.isArray(d.completions)) db.completions=cleanCompletions(d.completions);
+  if(typeof d.expCarry==="number" && d.expCarry>=0) db.expCarry=d.expCarry;
+}
+function trimCompletions(){
+  while(db.completions.length>COMPLETION_LIMIT){
+    var c=db.completions.shift();
+    db.expCarry=(db.expCarry||0)+(c.exp||0);
+  }
+}
+function totalExp(){
+  return (db.expCarry||0)+db.completions.reduce(function(a,c){ return a+(c.exp||0); },0);
+}
 
 /* 取り込んだ項目を検証する。取り込み口(load/pullFromGitHub/autoPullIfStale)でのみ使う。
    必須(id・title・有効なdue)が壊れている項目は隔離し、それ以外の軽微な不正値は
@@ -1041,7 +1066,11 @@ function cardOf(it){
       add("雛形に保存","",function(){ saveAsTemplate(it); });
     }
   } else {
-    add("戻す","",function(){ it.done=false; delete it.doneAt; save(); render(); scheduleAutoSync(); });
+    add("戻す","",function(){
+      // 完了の記録とEXPも取り消す（同じ締切を何度も完了→戻すでEXPが増えないように）
+      if(it.doneLog) db.completions=db.completions.filter(function(c){ return c.id!==it.doneLog; });
+      it.done=false; delete it.doneAt; delete it.doneLog; save(); render(); scheduleAutoSync();
+    });
   }
   add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ deleteItem(it); } });
   return el;
@@ -1103,7 +1132,8 @@ function flushAutoSync(){ if(_autoSyncTimer) autoSyncIfConfigured(); }
 
 /* GitHubへ送る内容。設定(テーマ等)とこの端末専用の隔離データは含めない */
 function syncPayload(){
-  return {items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, catReminders:db.catReminders, updatedAt:db.updatedAt};
+  return {items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, catReminders:db.catReminders,
+          completions:db.completions, expCarry:db.expCarry||0, updatedAt:db.updatedAt};
 }
 /* GitHub上のdata.jsonの版(sha)と更新時刻を取得する。まだ無ければ sha:null */
 function fetchRemoteState(cfg){
@@ -1631,7 +1661,7 @@ function renderOverdue(){
     if(!target.length){ toast("7日以上のものはありません"); return; }
     if(!confirm(target.length+"件をまとめて完了にします。よろしいですか？")) return;
     // 定期予定は done にすると次回以降も消えるため、通常の完了処理(次回へ進める)を通す
-    target.forEach(function(i){ applyCompletion(i); });
+    target.forEach(function(i){ applyCompletion(i, "bulk"); });
     save(); render(); toast(target.length+"件を完了にしました");
     scheduleAutoSync();
   };
@@ -2121,7 +2151,7 @@ function renderSettings(){
   main.appendChild(s3);
 
   // 完了の演出
-  var s3b=h('<div class="sec"><h3>完了の演出</h3><p>完了にしたとき、RPGのミッション達成のような帯を出します（タップですぐ閉じます）。端末で「視差効果を減らす」をオンにしている場合は出しません。<br>いまの記録：Lv.'+levelOf(db.settings.exp)+'（累計 '+(db.settings.exp||0)+' EXP・この端末のみ）</p><div class="row"></div></div>');
+  var s3b=h('<div class="sec"><h3>完了の演出</h3><p>完了にしたとき、RPGのミッション達成のような帯を出します（タップですぐ閉じます）。端末で「視差効果を減らす」をオンにしている場合は出しません。<br>いまの記録：Lv.'+levelOf(totalExp())+'（累計 '+totalExp()+' EXP・完了 '+db.completions.length+' 件の記録）。記録は GitHub 同期で端末間に共有され、週次レビューにも載ります。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (db.settings.motion||"on")===p[0]?"true":"false");
@@ -2159,6 +2189,7 @@ function renderSettings(){
         if(Array.isArray(d.trash)) db.trash=d.trash;
         if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
+        adoptCompletions(d);
         if(d.settings) db.settings=Object.assign(db.settings,d.settings);
         save(); applyTheme(); render();
         toast("読み込みました"+(check.quarantined.length?"（"+check.quarantined.length+"件は形式が不正のため隔離）":""));
@@ -2313,6 +2344,7 @@ function autoPullIfStale(){
         if(Array.isArray(d.trash)) db.trash=d.trash;
         if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
+        adoptCompletions(d);
         db.updatedAt=d.updatedAt;
         saveRaw(); softRender();
         markPulled();
@@ -2605,6 +2637,7 @@ function proceedPull(cfg,statusEl){
       if(Array.isArray(d.trash)) db.trash=d.trash;
       if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
       if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
+      adoptCompletions(d);
       // 取り込んだ内容の時刻をそのまま引き継ぐ（今の時刻で上書きすると比較の基準が壊れるため）
       db.updatedAt=d.updatedAt||new Date().toISOString();
       saveRaw(); render();
@@ -2703,7 +2736,7 @@ function doSync(cfg,statusEl,backedUp){
   // 一度も保存していない端末はupdatedAtが無いので、送る直前に確定させる
   if(!db.updatedAt) db.updatedAt=new Date().toISOString();
   var pushedAt=db.updatedAt; // 送信中の編集に影響されないよう、送った時点の値を捕捉
-  var payload={items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, updatedAt:db.updatedAt};
+  var payload=syncPayload(); // 自動同期と同じ内容を送る（以前は catReminders が抜けていた）
   var content=utf8ToBase64(JSON.stringify(payload,null,2));
 
   // 現在のsha(ファイルの版番号)を取得する。キャッシュされた古いshaを送ると409になるため無効化する
@@ -2976,7 +3009,29 @@ dlgForm.addEventListener("submit",function(e){
   autoNotifyIfConfigured();
 });
 
-function applyCompletion(it){
+function applyCompletion(it, source){
+  var log=logCompletion(it, source||"manual");
+  var r=applyCompletionCore(it);
+  r.log=log;
+  if(!r.repeating || r.final) it.doneLog=log.id; // 「戻す」で記録も取り消せるよう、対応を残す
+  return r;
+}
+/* 完了を記録する。EXPは期限より前に終えるほど多い。自動完了は記録だけでEXPは付けない */
+function logCompletion(it, source){
+  var now=new Date(), due=parseItemDate(it), hours=(due-now)/3600000, kind, exp;
+  if(source==="auto"){ kind="auto"; exp=0; }
+  else if(hours<0){ kind="late"; exp=5; }
+  else if(hours<24){ kind="ontime"; exp=10; }
+  else { kind="early"; exp=10+Math.min(40, 5*Math.floor(hours/24)); }
+  var c={id:"c"+now.getTime().toString(36)+Math.random().toString(36).slice(2,6), itemId:it.id, title:it.title,
+         cat:it.cat||"その他", due:due.toISOString(), doneAt:now.toISOString(), lead:Math.round(hours*10)/10,
+         kind:kind, exp:exp, src:source};
+  if(isRepeating(it)) c.rep=true;
+  db.completions.push(c);
+  trimCompletions();
+  return c;
+}
+function applyCompletionCore(it){
   it.done=true; it.doneAt=new Date().toISOString();
   if(it.rep&&it.rep!=="none"){
     // 繰り返しはカレンダー側で先の回まで展開しているため、ここでは複製しない。
@@ -3027,9 +3082,9 @@ function upcomingDue(it){
 }
 
 function complete(it, cardEl){
-  var dueBefore=parseItemDate(it);
-  var r=applyCompletion(it);
-  var reward=grantExp(dueBefore);
+  var before=totalExp();
+  var r=applyCompletion(it, "manual");
+  var reward=rewardOf(r.log, before);
   var sub;
   if(r.repeating) sub=r.final?"繰り返しの最終回をクリア":"次回は "+fmtDue(r.next,it.allDay);
   // データは先に保存する（演出中に閉じても完了は残る）。描き直しだけ演出のあとに回す
@@ -3053,14 +3108,10 @@ function motionOn(){
 /* 経験値：期限内に早く終えるほど多い。100 EXP ごとにレベルが1上がる（この端末だけの記録） */
 var EXP_PER_LEVEL=100;
 function levelOf(exp){ return Math.floor((exp||0)/EXP_PER_LEVEL)+1; }
-function grantExp(due){
-  var days=(due-new Date())/86400000, gain, bonus="";
-  if(days<0){ gain=5; bonus="遅れてもクリア"; }
-  else if(days<1){ gain=10; bonus="期限内にクリア"; }
-  else { gain=10+Math.min(40, 5*Math.floor(days)); bonus="前倒しボーナス"; }
-  var before=db.settings.exp||0, after=before+gain;
-  db.settings.exp=after;
-  return {gain:gain, bonus:bonus, level:levelOf(after), levelUp:levelOf(after)>levelOf(before),
+var KIND_LABEL={early:"前倒しボーナス", ontime:"期限内にクリア", late:"遅れてもクリア", auto:"自動完了"};
+function rewardOf(log, before){
+  var after=before+log.exp;
+  return {gain:log.exp, bonus:KIND_LABEL[log.kind]||"", level:levelOf(after), levelUp:levelOf(after)>levelOf(before),
           into:after%EXP_PER_LEVEL, fromInto:before%EXP_PER_LEVEL};
 }
 
@@ -3115,7 +3166,7 @@ function autoCompleteOverdueItems(){
   db.items.forEach(function(it){
     if(it.done || !it.autoComplete) return;
     if(parseItemDate(it)>=now) return; // まだ期限内
-    applyCompletion(it);
+    applyCompletion(it, "auto");
     affected++;
   });
   if(affected>0){
