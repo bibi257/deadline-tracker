@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-03 10:00 JST">
+<meta name="build-stamp" content="2026-10-03 11:00 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -34,7 +34,7 @@
   --card:#FFFDF8;       /* 台帳の一枚 */
   --ink:#1C1B18;
   --ink-2:#5C5A52;
-  --ink-3:#8E8B80;
+  --ink-3:#6E6B61;
   --rule:#D9D4C7;       /* 罫線 */
   --rule-2:#E8E3D6;     /* 細い補助罫 */
   /* 状態色：ライトは全検査合格（紙色 #FFFDF8 地） */
@@ -54,7 +54,7 @@ html[data-theme="dark"]{
   --card:#1C1B18;
   --ink:#ECE8DE;
   --ink-2:#A8A396;
-  --ink-3:#77736A;
+  --ink-3:#8F8A7F;
   --rule:#36332D;
   --rule-2:#2A2824;
   /* ダーク：赤↔琥珀の色覚差が注意域（ΔE 6.3）のため判子の記号＋文字を必ず併記 */
@@ -81,7 +81,6 @@ button{cursor:pointer}
 .wrap{max-width:680px;margin:0 auto;padding:0 16px}
 
 /* 蛍光ペンの印（今日） */
-.hl{background:linear-gradient(transparent 55%,var(--mark) 55%);color:inherit;padding:0 2px}
 
 /* ---- 刊頭（ヘッダー） ---- */
 header{
@@ -233,12 +232,12 @@ header{
 .day:hover{background:var(--paper)}
 .day.out{background:transparent;color:var(--ink-3)}
 .day .d{font-family:var(--num);font-size:13px;color:var(--ink-2);align-self:flex-start;padding:0 2px}
-.day.is-today .d{background:linear-gradient(transparent 50%,var(--mark) 50%);color:var(--mark-ink);font-weight:600}
+.day.is-today .d,.day.is-today.holiday .d{background:var(--ink);color:var(--card);font-weight:600;line-height:1;padding:2px 4px 1px}
 .day.sel{outline:2px solid var(--ink);outline-offset:-2px}
 .day.holiday .d{color:var(--red)}
 .holname{font-size:8.5px;line-height:1.2;color:var(--red);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
 @media (max-width:420px){.holname{display:none}}
-.dot{height:3px;border-radius:1px;background:var(--ink-3)}
+.dot{height:4px;border-radius:1px;background:var(--ink-3)}
 .dot.over,.dot.today{background:var(--red)}.dot.soon{background:var(--amber)}.dot.near{background:var(--blue)}
 .dot.done{background:var(--rule)}
 .dot.span{opacity:.4}
@@ -252,7 +251,10 @@ header{
 .wday-head.tap{cursor:pointer}
 .wday-head.tap:hover .num{text-decoration:underline;text-underline-offset:3px}
 .wday-head .num{font-family:var(--num);font-size:18px;font-weight:600}
-.wday.is-today .wday-head .num{background:linear-gradient(transparent 55%,var(--mark) 55%);color:var(--mark-ink)}
+/* 今日：蛍光ペン風の帯は書体の上下余白で位置がずれるため、墨の反転ブロックにする */
+.wday.is-today{border-left:3px solid var(--ink);padding-left:6px;background:var(--card)}
+.wday.is-today .wday-head .num{display:inline-block;line-height:1;padding:3px 5px 2px;background:var(--ink);color:var(--card)}
+.wday.is-today .wtag{border-color:var(--ink);color:var(--ink);font-weight:700}
 .wday-head .wgo{font-size:11px;color:var(--ink-3)}
 .wdow{font-size:11.5px;color:var(--ink-3)}
 .wday-head.sun .num,.wday-head.sun .wdow{color:var(--red)}
