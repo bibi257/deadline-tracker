@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-03 13:00 JST">
+<meta name="build-stamp" content="2026-10-03 15:00 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -406,7 +406,15 @@ dialog::backdrop{background:rgba(20,19,17,.45)}
 @keyframes q-bar{from{width:var(--from)}to{width:var(--to)}}
 @keyframes q-spark{0%{opacity:1;transform:translate(0,0) rotate(45deg) scale(.4)}60%{opacity:1}100%{opacity:0;transform:translate(var(--x),var(--y)) rotate(45deg) scale(1)}}
 @media (max-width:420px){.quest-title{font-size:25px}.quest-bar{width:120px}}
-@media (prefers-reduced-motion:reduce){.quest,.quest *{animation:none!important}.card.folding{transition:none}}
+/* 登録（クエスト受注）：完了の金に対して青緑の縁で区別する */
+.quest.accept .quest-band{border-color:#3FC1A5;box-shadow:0 0 0 4px #121110,0 0 0 5px #1E5E52}
+.quest.accept .quest-kicker{color:#3FC1A5}
+.quest.accept .quest-title{color:#E6FFF7;text-shadow:0 2px 0 #1E5E52,0 0 18px rgba(63,193,165,.45)}
+.quest.accept .quest-exp{color:#FFE9A3;font-size:17px}
+.card.fresh{animation:card-in .5s cubic-bezier(.2,.9,.2,1) both,card-glow 1.6s .5s ease-out both}
+@keyframes card-in{from{opacity:0;transform:translateY(-10px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes card-glow{0%{outline:2px solid var(--routine);outline-offset:2px}100%{outline:2px solid transparent;outline-offset:6px}}
+@media (prefers-reduced-motion:reduce){.quest,.quest *{animation:none!important}.card.folding{transition:none}.card.fresh{animation:none}}
 </style>
 </head>
 <body>
@@ -1020,7 +1028,7 @@ function cardOf(it){
   // 状態は色だけに頼らず、記号と文字の判子でも示す（色覚の違いや印刷でも区別できるように）
   var badge=cs.badge;
   var isWord=(typeof r.n!=="number");
-  var el=h('<article class="card '+st+(isRepeating(it)&&!it.done?" routine":"")+(isStale(it)&&!it.done?" stale":"")+'">'+
+  var el=h('<article class="card '+st+(isRepeating(it)&&!it.done?" routine":"")+(isStale(it)&&!it.done?" stale":"")+'" data-id="'+escHtml(it.id)+'">'+
     '<div class="left"><b class="n num'+(isWord?" word":"")+'">'+escHtml(r.n)+'</b><span class="u">'+escHtml(r.u)+'</span></div>'+
     '<div class="body">'+
       '<h3 class="title">'+escHtml(it.title)+'</h3>'+
@@ -2151,7 +2159,7 @@ function renderSettings(){
   main.appendChild(s3);
 
   // 完了の演出
-  var s3b=h('<div class="sec"><h3>完了の演出</h3><p>完了にしたとき、RPGのミッション達成のような帯を出します（タップですぐ閉じます）。端末で「視差効果を減らす」をオンにしている場合は出しません。<br>いまの記録：Lv.'+levelOf(totalExp())+'（累計 '+totalExp()+' EXP・完了 '+db.completions.length+' 件の記録）。記録は GitHub 同期で端末間に共有され、週次レビューにも載ります。</p><div class="row"></div></div>');
+  var s3b=h('<div class="sec"><h3>登録・完了の演出</h3><p>登録したときは「クエスト受注」、完了にしたときは「ミッション達成」の帯を出します（タップですぐ閉じます）。端末で「視差効果を減らす」をオンにしている場合は出しません。<br>いまの記録：Lv.'+levelOf(totalExp())+'（累計 '+totalExp()+' EXP・完了 '+db.completions.length+' 件の記録）。記録は GitHub 同期で端末間に共有され、週次レビューにも載ります。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (db.settings.motion||"on")===p[0]?"true":"false");
@@ -2994,7 +3002,9 @@ dlgForm.addEventListener("submit",function(e){
     if(autoComplete) it.autoComplete=true;
     if(calHide) it.calHide=true;
     db.items.push(it);
-    toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
+    justAddedId=it.id;
+    if(motionOn()) playQuestAccept(it);
+    else toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
     // 隔離項目の修復中だった場合は、保存できたので隔離から取り除く
     if(fixingQuarantineId!==null){
       var fq=fixingQuarantineId;
@@ -3005,6 +3015,7 @@ dlgForm.addEventListener("submit",function(e){
   }
   if(fromQuick){ quickText=""; fromQuick=false; }
   save(); render();
+  highlightJustAdded();
   autoSyncIfConfigured();
   autoNotifyIfConfigured();
 });
@@ -3117,6 +3128,38 @@ function rewardOf(log, before){
 
 /* ミッション達成の演出：画面中央に帯を出し、タイトル・獲得EXP・レベルを見せて自動で消える。
    タップでもすぐ閉じる。画面の操作は止めない（帯の外はそのまま触れる） */
+/* 登録の演出：「クエスト受注！」の帯を出し、今クリアした場合の報酬を見せる。
+   完了の演出より短く、タップでもすぐ閉じる */
+var justAddedId=null;
+function playQuestAccept(it){
+  var old=document.querySelector(".quest"); if(old) old.remove();
+  var due=parseItemDate(it), hours=(due-new Date())/3600000;
+  var exp=hours<0?5:hours<24?10:10+Math.min(40, 5*Math.floor(hours/24)); // logCompletion と同じ計算
+  var left=hours<0?"期限を過ぎています":hours<24?"今日が締切":"あと"+Math.floor(hours/24)+"日";
+  var el=h('<div class="quest accept" role="status" aria-live="polite">'+
+    '<div class="quest-band">'+
+      '<div class="quest-kicker">NEW QUEST</div>'+
+      '<div class="quest-title">クエスト受注！</div>'+
+      '<div class="quest-name">「'+escHtml(it.title)+'」</div>'+
+      '<div class="quest-sub">期限 '+fmtDue(due,it.allDay)+'　'+left+(isRepeating(it)?'　🔁 定期クエスト':'')+'</div>'+
+      '<div class="quest-reward"><span class="quest-exp">報酬 EXP +'+exp+'</span><span class="quest-bonus">'+(hours>=24?"早く片付けるほど増える":"今クリアした場合")+'</span></div>'+
+    '</div></div>');
+  var gone=false;
+  function close(){ if(gone) return; gone=true; el.classList.add("out"); setTimeout(function(){ el.remove(); }, 260); }
+  el.onclick=close;
+  document.body.appendChild(el);
+  setTimeout(close, 1600);
+}
+/* 登録したばかりのカードを一度だけ光らせ、見える位置まで寄せる */
+function highlightJustAdded(){
+  if(!justAddedId) return;
+  var id=justAddedId; justAddedId=null;
+  var card=document.querySelector('.card[data-id="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]');
+  if(!card) return;
+  if(motionOn()) card.classList.add("fresh");
+  try{ card.scrollIntoView({block:"nearest", behavior:motionOn()?"smooth":"auto"}); }catch(e){}
+}
+
 function playQuestClear(title, rw, sub){
   var old=document.querySelector(".quest"); if(old) old.remove();
   var fromPct=rw.levelUp?0:rw.fromInto/EXP_PER_LEVEL*100, toPct=rw.into/EXP_PER_LEVEL*100;
