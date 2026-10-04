@@ -314,10 +314,12 @@ send_weekly_review(){
     if (.completions | type) != "array" then empty else
       ([ .completions[] | select(type == "object" and (.doneAt | type) == "string")
          | . + {t: (.doneAt | try ep catch 0), lead: ((.lead // 0) | tonumber? // 0), kind: (.kind // "ontime"), exp: ((.exp // 0) | tonumber? // 0)} ]) as $all
-      | ([ $all[] | select(.t > ($now - 7*86400) and .t <= $now) ] | sort_by(.t)) as $w
+      | ([ $all[] | select(.t > ($now - 7*86400) and .t <= $now) ] | sort_by(.t)) as $wall
+      | ([ $wall[] | select(.kind != "bonus") ]) as $w
+      | ([ $wall[] | select(.kind == "bonus") ] | length) as $clears
       | ([ $w[] | select(.kind != "auto") ]) as $man
       | (((.expCarry // 0) | tonumber? // 0) + ([ $all[] | select(.t <= $now) | .exp ] | add // 0)) as $total
-      | ([ $w[] | .exp ] | add // 0) as $gain
+      | ([ $wall[] | .exp ] | add // 0) as $gain
       | (($total / 100 | floor) + 1) as $lv
       | (($total - $gain) / 100 | floor + 1) as $lv0
       | [ "- 完了：\($w | length)件（前倒し \([$w[] | select(.kind == "early")] | length)・期限内 \([$w[] | select(.kind == "ontime")] | length)・遅れ \([$w[] | select(.kind == "late")] | length)・自動 \([$w[] | select(.kind == "auto")] | length)）",
@@ -334,6 +336,7 @@ send_weekly_review(){
           (if ([ $w[] | select(.kind == "late") ] | length) > 0 then
              "- 遅れたもの：" + ([ $w[] | select(.kind == "late") | "「\(.title // "" | clean)」" ] | .[0:3] | join("・"))
            else empty end),
+          (if $clears > 0 then "- 🌟 本日のクエスト全クリア：\($clears)日" else empty end),
           "- 獲得EXP：+\($gain)（Lv.\($lv)・累計 \($total) EXP）" + (if $lv > $lv0 then "　🎉 Lv.\($lv0) → Lv.\($lv) にレベルアップ！" else "" end),
           (if ($w | length) > 0 then
              "\n### ✅ 完了したもの",
