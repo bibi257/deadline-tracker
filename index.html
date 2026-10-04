@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-03 15:00 JST">
+<meta name="build-stamp" content="2026-10-04 12:00 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -90,7 +90,7 @@ header{
 .head-in{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;padding:16px 0 10px}
 .brand{font-family:var(--sans);font-weight:700;font-size:21px;font-weight:700;letter-spacing:.08em;margin:0;line-height:1.2}
 .today{font-family:var(--num);font-size:13px;color:var(--ink-2);letter-spacing:.06em;margin-top:4px}
-.count{text-align:right;line-height:1;border-left:1px solid var(--rule);padding-left:14px}
+.count{text-align:right;line-height:1;border-left:1px solid var(--rule);padding-left:14px;flex-shrink:0;white-space:nowrap}
 .count b{font-family:var(--num);font-size:34px;font-weight:600;display:block;letter-spacing:-.01em}
 .count span{font-size:11px;color:var(--ink-2);letter-spacing:.12em}
 
@@ -415,6 +415,45 @@ dialog::backdrop{background:rgba(20,19,17,.45)}
 @keyframes card-in{from{opacity:0;transform:translateY(-10px) scale(.98)}to{opacity:1;transform:none}}
 @keyframes card-glow{0%{outline:2px solid var(--routine);outline-offset:2px}100%{outline:2px solid transparent;outline-offset:6px}}
 @media (prefers-reduced-motion:reduce){.quest,.quest *{animation:none!important}.card.folding{transition:none}.card.fresh{animation:none}}
+
+/* ---- ヘッダーのレベル・連続日数・同期済み ---- */
+.lvl{display:flex;align-items:center;gap:7px;margin-top:5px;font-size:11.5px;color:var(--ink-2);flex-wrap:wrap;min-height:18px;font-variant-numeric:tabular-nums}
+.lv-num{font-weight:700;color:var(--ink);letter-spacing:.04em}
+.lv-num.up{animation:lv-up .9s cubic-bezier(.2,1.6,.4,1) both;color:var(--amber)}
+.lv-gauge{width:84px;height:7px;border:1px solid var(--ink-3);position:relative;background:var(--card)}
+.lv-gauge b{position:absolute;left:0;top:0;bottom:0;background:var(--amber);width:0}
+.lv-gauge b.grow{transition:width .9s .2s ease-out}
+.lv-streak{border:1px solid var(--rule);padding:0 5px;border-radius:var(--radius);color:var(--ink)}
+.lv-streak.warn{border-color:var(--red);color:var(--red);animation:pulse-soft 1.8s ease-in-out infinite}
+.sync-flash{color:var(--routine);font-weight:700;animation:q-up .25s both;transition:opacity .4s}
+.sync-flash.out{opacity:0}
+@keyframes lv-up{0%{transform:scale(1)}40%{transform:scale(1.35)}100%{transform:scale(1)}}
+@keyframes pulse-soft{0%,100%{opacity:1}50%{opacity:.55}}
+
+/* ---- 期限切れカードの脈動と、超過タブの ENEMY 印 ---- */
+.card.over:not(.done){animation:over-pulse 2.4s ease-in-out infinite}
+@keyframes over-pulse{0%,100%{border-left-color:var(--red)}50%{border-left-color:color-mix(in srgb,var(--red) 35%,var(--card))}}
+body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";display:block;white-space:nowrap;font-size:9px;font-weight:700;letter-spacing:.12em;color:var(--red);margin-bottom:4px}
+
+/* ---- カードを消す前の演出（延期・休み・削除） ---- */
+.card.leaving{position:relative;overflow:hidden;pointer-events:none}
+.card.ghost.postponing{animation:card-postpone .55s .15s ease-in both}
+.card.skipping .title{text-decoration:line-through;text-decoration-thickness:2px;text-decoration-color:var(--ink-3)}
+.card.ghost.skipping{animation:card-fade .5s .15s ease-in both}
+.card.ghost.deleting{animation:card-shrink .3s ease-in both}
+.out-stamp{position:absolute;right:18px;top:50%;margin-top:-22px;border:2px solid var(--ink-2);color:var(--ink-2);font-weight:700;font-size:16px;padding:6px 10px;transform:rotate(-8deg);background:var(--card);animation:q-pop .3s cubic-bezier(.2,1.6,.4,1) both}
+@keyframes card-postpone{to{transform:translateX(60%);opacity:0}}
+@keyframes card-fade{to{opacity:0;transform:scale(.98)}}
+@keyframes card-shrink{to{opacity:0;transform:scale(.9)}}
+
+/* ---- 本日のクエスト全クリア（虹色寄りの金） ---- */
+.quest.allclear .quest-band{border-color:#FFD34D;box-shadow:0 0 0 4px #121110,0 0 0 5px #B98A16,0 0 40px rgba(255,211,77,.35)}
+.quest.allclear .quest-title{font-size:clamp(19px,6.2vw,27px);letter-spacing:.06em;white-space:nowrap;color:#FFF3C4}
+.quest.allclear .quest-exp{color:#FFD34D}
+
+/* 演出「なし」・視差効果を減らす設定では、常時動くものも止める */
+.no-motion .card.over:not(.done),.no-motion .lv-streak.warn,.no-motion .lv-num.up{animation:none}
+@media (prefers-reduced-motion:reduce){.card.over:not(.done),.lv-streak.warn,.lv-num.up,.card.leaving{animation:none!important}.lv-gauge b.grow{transition:none}}
 </style>
 </head>
 <body>
@@ -425,6 +464,7 @@ dialog::backdrop{background:rgba(20,19,17,.45)}
       <div>
         <h1 class="brand">締切トラッカー</h1>
         <div class="today" id="todayLabel"></div>
+        <div class="lvl" id="lvlBar" aria-live="polite"></div>
       </div>
       <div class="count"><b class="num" id="cntNum">0</b><span id="cntLabel">7日以内</span></div>
     </div>
@@ -957,6 +997,10 @@ function render(){
   }
   else if(over.length){ document.getElementById("cntNum").textContent=over.length; document.getElementById("cntLabel").textContent="期限切れ"; }
   else { document.getElementById("cntNum").textContent=soon.length; document.getElementById("cntLabel").textContent="7日以内"; }
+  document.body.setAttribute("data-view", view);
+  renderLevelBar();
+  document.documentElement.classList.toggle("no-motion", !motionOn());
+  setTimeout(countUpSummary, 0);
 
   var tabView=(view==="day")?"week":view; // 日表示は今週タブの一部として扱う
   var tabsChanged=(tabView!==_lastTabView);
@@ -1053,7 +1097,7 @@ function cardOf(it){
       // 2回目以降の表示専用コピー：この回の取りやめと、.ics書き出しのみ許可
       var key=toLocalISO(parseItemDate(it));
       add("この回は休み","",function(){
-        if(confirm(key+" の回だけ取りやめます。よろしいですか？")) skipOccurrence(it.id, key);
+        if(confirm(key+" の回だけ取りやめます。よろしいですか？")) animateCardOut(el, "skipping", "休み", function(){ skipOccurrence(it.id, key); });
       });
       add("カレンダーへ","primary",function(){ downloadICS([it], it.title); });
       var note=h('<div style="font-size:11.5px;color:var(--ink-3);margin-top:6px">完了・編集は「定期予定」タブから行ってください</div>');
@@ -1061,12 +1105,12 @@ function cardOf(it){
     } else {
       add("完了にする","main",function(){ complete(it, el); });
       if(st==="over" && !isRepeating(it)){
-        add("明日に延期","",function(){ postpone(it); });
+        add("明日に延期","",function(){ animateCardOut(el, "postponing", "延期", function(){ postpone(it); }); });
       }
       if(isRepeating(it)){
         var key0=toLocalISO(parseItemDate(it));
         add("この回は休み","",function(){
-          if(confirm(key0+" の回だけ取りやめます。よろしいですか？")) skipOccurrence(it.id, key0);
+          if(confirm(key0+" の回だけ取りやめます。よろしいですか？")) animateCardOut(el, "skipping", "休み", function(){ skipOccurrence(it.id, key0); });
         });
       }
       add("カレンダーへ","primary",function(){ downloadICS([it], it.title); });
@@ -1080,7 +1124,7 @@ function cardOf(it){
       it.done=false; delete it.doneAt; delete it.doneLog; save(); render(); scheduleAutoSync();
     });
   }
-  add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ deleteItem(it); } });
+  add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ animateCardOut(el, "deleting", "", function(){ deleteItem(it); }); } });
   return el;
 }
 
@@ -1190,6 +1234,15 @@ function isStale(it){ return overdueDays(it)>=7; }
    同期し忘れに気づけるようにするため） */
 function markSynced(kind){
   store.set("gh-last-sync", JSON.stringify({at:new Date().toISOString(), kind:kind}));
+  flashSynced();
+}
+/* 同期が終わったことを、ヘッダーに一瞬だけ「✓ 同期済み」と出して知らせる */
+function flashSynced(){
+  var bar=document.getElementById("lvlBar"); if(!bar) return;
+  var old=document.querySelector(".sync-flash"); if(old) old.remove();
+  var f=h('<span class="sync-flash" role="status">✓ 同期済み</span>');
+  bar.appendChild(f);
+  setTimeout(function(){ f.classList.add("out"); setTimeout(function(){ f.remove(); }, 400); }, 1600);
 }
 /* この端末がGitHub上のデータを最後に取得した時刻。
    「同期する」の前にこれが古いままだと、古い内容で上書きしてしまう危険がある */
@@ -1565,7 +1618,7 @@ function todaySummary(){
   if(collapsed) return el;
   var body=h('<div class="sum-body"></div>');
   function cell(n,label,cls,fn){
-    var c=h('<button class="sum-cell '+(n&&cls?cls:"")+'"><span class="num">'+n+'</span><small>'+label+'</small></button>');
+    var c=h('<button class="sum-cell '+(n&&cls?cls:"")+'"><span class="num" data-to="'+n+'">'+n+'</span><small>'+label+'</small></button>');
     c.onclick=fn; body.appendChild(c);
   }
   var goWeek=function(){ view="week"; window.scrollTo(0,0); render(); };
@@ -2159,7 +2212,7 @@ function renderSettings(){
   main.appendChild(s3);
 
   // 完了の演出
-  var s3b=h('<div class="sec"><h3>登録・完了の演出</h3><p>登録したときは「クエスト受注」、完了にしたときは「ミッション達成」の帯を出します（タップですぐ閉じます）。端末で「視差効果を減らす」をオンにしている場合は出しません。<br>いまの記録：Lv.'+levelOf(totalExp())+'（累計 '+totalExp()+' EXP・完了 '+db.completions.length+' 件の記録）。記録は GitHub 同期で端末間に共有され、週次レビューにも載ります。</p><div class="row"></div></div>');
+  var s3b=h('<div class="sec"><h3>演出</h3><p>登録したときは「クエスト受注」、完了にしたときは「ミッション達成」、今日の締切を全部片付けたら「全クリア」（ボーナス +'+ALL_CLEAR_BONUS+' EXP）の帯を出します（タップですぐ閉じます）。延期・休み・削除のカードの動き、期限切れの点滅、数字の数え上げも、ここで止められます。端末で「視差効果を減らす」をオンにしている場合は出しません。<br>いまの記録：Lv.'+levelOf(totalExp())+'（累計 '+totalExp()+' EXP・完了 '+db.completions.length+' 件の記録）。記録は GitHub 同期で端末間に共有され、週次レビューにも載ります。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (db.settings.motion||"on")===p[0]?"true":"false");
@@ -3094,18 +3147,22 @@ function upcomingDue(it){
 
 function complete(it, cardEl){
   var before=totalExp();
+  var wasToday=toLocalISO(parseItemDate(it))===toLocalISO(new Date());
   var r=applyCompletion(it, "manual");
+  var bonus=wasToday?grantAllClearBonus():null; // 今日の締切を全部片付けたらボーナス
   var reward=rewardOf(r.log, before);
+  if(bonus){ reward=rewardOf({exp:r.log.exp+bonus.exp, kind:r.log.kind}, before); reward.allClear=bonus.exp; }
   var sub;
   if(r.repeating) sub=r.final?"繰り返しの最終回をクリア":"次回は "+fmtDue(r.next,it.allDay);
   // データは先に保存する（演出中に閉じても完了は残る）。描き直しだけ演出のあとに回す
   save();
   scheduleAutoSync();
   if(cardEl && motionOn()){
-    playQuestClear(it.title, reward, sub);
+    // 今日の全クリアは、達成の帯が閉じたあと（自動でもタップでも）続けて出す
+    playQuestClear(it.title, reward, sub, reward.allClear?function(){ playAllClear(reward.allClear); }:null);
     foldCard(cardEl, render);
   } else {
-    toast((sub?"完了。"+sub:"完了にしました")+"（EXP +"+reward.gain+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）");
+    toast((sub?"完了。"+sub:"完了にしました")+"（EXP +"+reward.gain+(reward.allClear?"・本日のクエスト全クリア":"")+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）");
     render();
   }
 }
@@ -3128,6 +3185,106 @@ function rewardOf(log, before){
 
 /* ミッション達成の演出：画面中央に帯を出し、タイトル・獲得EXP・レベルを見せて自動で消える。
    タップでもすぐ閉じる。画面の操作は止めない（帯の外はそのまま触れる） */
+/* ---- 今日の全クリア・レベル表示・連続日数・小さな演出 ---- */
+var ALL_CLEAR_BONUS=20;
+/* 今日が締切のもの（定期予定の今日の回を含む）がすべて片付いたら、1日1回だけボーナスを記録する */
+function grantAllClearBonus(){
+  var t=todayItems();
+  if(t.due.length || t.routines.length) return null;
+  var today=toLocalISO(new Date());
+  if(db.completions.some(function(c){ return c.kind==="bonus" && toLocalISO(new Date(c.doneAt))===today; })) return null;
+  var now=new Date();
+  var c={id:"c"+now.getTime().toString(36)+Math.random().toString(36).slice(2,6), title:"本日のクエスト全クリア",
+         cat:"ボーナス", due:now.toISOString(), doneAt:now.toISOString(), lead:0, kind:"bonus", exp:ALL_CLEAR_BONUS, src:"bonus"};
+  db.completions.push(c); trimCompletions(); save();
+  return c;
+}
+function playAllClear(exp){
+  var old=document.querySelector(".quest"); if(old) old.remove();
+  var sparks="";
+  for(var k=0;k<20;k++){ var a=k/20*Math.PI*2, d=110+(k%4)*34;
+    sparks+='<i style="--x:'+Math.round(Math.cos(a)*d*1.9)+'px;--y:'+Math.round(Math.sin(a)*d*.6)+'px;--d:'+(k%5)*50+'ms"></i>'; }
+  var el=h('<div class="quest allclear" role="status" aria-live="polite"><div class="quest-band">'+
+    '<div class="quest-sparks" aria-hidden="true">'+sparks+'</div>'+
+    '<div class="quest-kicker">ALL CLEAR</div>'+
+    '<div class="quest-title">本日のクエスト全クリア！</div>'+
+    '<div class="quest-sub">今日が締切のものは、すべて片付きました</div>'+
+    '<div class="quest-reward"><span class="quest-exp">BONUS EXP +'+exp+'</span></div>'+
+    '</div></div>');
+  var gone=false;
+  function close(){ if(gone) return; gone=true; el.classList.add("out"); setTimeout(function(){ el.remove(); }, 260); }
+  el.onclick=close; document.body.appendChild(el); setTimeout(close, 2400);
+}
+
+/* 連続日数：自分で完了にした日（自動完了・ボーナスは除く）が、今日または昨日から何日続いているか */
+function streakInfo(){
+  var days={};
+  db.completions.forEach(function(c){ if(c.kind!=="auto" && c.kind!=="bonus") days[toLocalISO(new Date(c.doneAt))]=1; });
+  var d=new Date(), todayKey=toLocalISO(d), doneToday=!!days[todayKey], n=0;
+  if(!doneToday) d.setDate(d.getDate()-1);
+  while(days[toLocalISO(d)]){ n++; d.setDate(d.getDate()-1); }
+  return {n:n, doneToday:doneToday};
+}
+
+/* ヘッダーのレベル・EXPゲージ・連続日数。ゲージは前回表示した値から伸ばす */
+var _lvShownExp=null;
+function renderLevelBar(){
+  var bar=document.getElementById("lvlBar"); if(!bar) return;
+  var exp=totalExp(), lv=levelOf(exp), into=exp%EXP_PER_LEVEL, st=streakInfo();
+  var flash=bar.querySelector(".sync-flash");
+  var warn=st.n>0 && !st.doneToday && new Date().getHours()>=18; // 今日まだ完了が無く、途切れそう
+  bar.innerHTML='<span class="lv-num">Lv.'+lv+'</span>'+
+    '<span class="lv-gauge" title="次のレベルまで '+(EXP_PER_LEVEL-into)+' EXP"><b></b></span>'+
+    '<span class="lv-exp">'+into+'/'+EXP_PER_LEVEL+'</span>'+
+    (st.n?'<span class="lv-streak'+(warn?' warn':'')+'" title="'+(warn?"今日1件完了すると連続が続きます":"毎日1件以上完了した日数")+'">🔥'+st.n+'日連続'+(warn?'・今日まだ':'')+'</span>':'');
+  if(flash) bar.appendChild(flash);
+  var g=bar.querySelector(".lv-gauge b");
+  var toPct=into/EXP_PER_LEVEL*100;
+  if(_lvShownExp!==null && _lvShownExp!==exp && motionOn()){
+    var fromPct=(levelOf(_lvShownExp)<lv)?0:(_lvShownExp%EXP_PER_LEVEL)/EXP_PER_LEVEL*100;
+    g.style.width=fromPct+"%";
+    g.offsetWidth; // 開始位置を確定させてから伸ばす
+    g.classList.add("grow");
+    if(levelOf(_lvShownExp)<lv) bar.querySelector(".lv-num").classList.add("up");
+  }
+  g.style.width=toPct+"%";
+  _lvShownExp=exp;
+}
+
+/* カードを消すときの短い演出（延期は右へ流す・休みは打ち消し線・削除はしぼませる）。
+   データの更新 fn() はすぐに行い（演出中に閉じても操作は残る）、
+   画面に残した「写し」だけを同じ位置で動かしてから消す */
+function animateCardOut(card, cls, stamp, fn){
+  if(!card || !motionOn() || !card.isConnected){ fn(); return; }
+  var r=card.getBoundingClientRect();
+  var ghost=card.cloneNode(true);
+  ghost.classList.add("ghost","leaving",cls);
+  ghost.style.cssText+=";position:fixed;left:"+r.left+"px;top:"+r.top+"px;width:"+r.width+"px;height:"+r.height+"px;margin:0;z-index:40";
+  ghost.querySelectorAll("button").forEach(function(b){ b.disabled=true; });
+  if(stamp) ghost.appendChild(h('<span class="out-stamp" aria-hidden="true">'+stamp+'</span>'));
+  fn();
+  document.body.appendChild(ghost);
+  setTimeout(function(){ ghost.remove(); }, cls==="deleting"?340:760);
+}
+
+/* 開いて最初の表示だけ、サマリーの数字を 0 から数え上げる */
+var _countedUp=false;
+function countUpSummary(){
+  if(_countedUp) return;
+  var nums=document.querySelectorAll(".sum-cell .num[data-to]");
+  if(!nums.length) return;
+  _countedUp=true;
+  if(!motionOn()) return;
+  nums.forEach(function(n){
+    var to=parseInt(n.getAttribute("data-to"),10)||0; if(!to) return;
+    var t0=null, dur=Math.min(700, 200+to*90);
+    n.textContent="0";
+    function step(ts){ if(t0===null) t0=ts; var k=Math.min(1,(ts-t0)/dur);
+      n.textContent=Math.round(to*(1-Math.pow(1-k,3))); if(k<1) requestAnimationFrame(step); }
+    requestAnimationFrame(step);
+  });
+}
+
 /* 登録の演出：「クエスト受注！」の帯を出し、今クリアした場合の報酬を見せる。
    完了の演出より短く、タップでもすぐ閉じる */
 var justAddedId=null;
@@ -3160,7 +3317,7 @@ function highlightJustAdded(){
   try{ card.scrollIntoView({block:"nearest", behavior:motionOn()?"smooth":"auto"}); }catch(e){}
 }
 
-function playQuestClear(title, rw, sub){
+function playQuestClear(title, rw, sub, onClose){
   var old=document.querySelector(".quest"); if(old) old.remove();
   var fromPct=rw.levelUp?0:rw.fromInto/EXP_PER_LEVEL*100, toPct=rw.into/EXP_PER_LEVEL*100;
   var sparks="";
@@ -3179,7 +3336,7 @@ function playQuestClear(title, rw, sub){
       (rw.levelUp?'<div class="quest-up">LEVEL UP!　Lv.'+(rw.level-1)+' → Lv.'+rw.level+'</div>':'')+
     '</div></div>');
   var gone=false;
-  function close(){ if(gone) return; gone=true; el.classList.add("out"); setTimeout(function(){ el.remove(); }, 260); }
+  function close(){ if(gone) return; gone=true; el.classList.add("out"); setTimeout(function(){ el.remove(); if(onClose) onClose(); }, 260); }
   el.onclick=close;
   document.body.appendChild(el);
   setTimeout(close, rw.levelUp?2600:2000);
