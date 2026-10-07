@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-07 12:00 JST">
+<meta name="build-stamp" content="2026-10-07 15:00 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -477,6 +477,18 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
 .cat-color{margin-right:8px}
 .cat-row .cpick{flex-basis:auto}
 @media (max-width:420px){.cp-grid{grid-template-columns:repeat(12,19px);gap:3px}.cp-sw{width:19px;height:19px}}
+
+/* ---- 横に動かせる列（カテゴリ・タブ） ---- */
+.hscroll{position:relative}
+.hs-btn{position:absolute;top:0;bottom:0;z-index:2;width:40px;border:0;padding:0;font-size:22px;line-height:1;color:var(--ink);cursor:pointer;display:none;align-items:center}
+.hs-prev{left:-16px;justify-content:flex-start;padding-left:6px;background:linear-gradient(to right,var(--paper) 55%,transparent)}
+.hs-next{right:-16px;justify-content:flex-end;padding-right:6px;background:linear-gradient(to left,var(--paper) 55%,transparent)}
+.hscroll.can-l .hs-prev,.hscroll.can-r .hs-next{display:flex}
+.hs-btn:hover{color:var(--red)}
+.hscroll .filters{cursor:grab}
+.hscroll.dragging .filters,.hscroll.dragging .tabs{cursor:grabbing;user-select:none}
+.hscroll .filters .hs-btn{display:none}
+.filters .chip{flex-shrink:0;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -1038,6 +1050,7 @@ function render(){
     }
   });
   if(tabsChanged) _lastTabView=tabView;
+  if(_tabsScroller) requestAnimationFrame(_tabsScroller.update);
   // 超過タブには件数を出し、開かなくても気づけるようにする
   var overTab=document.querySelector('.tab[data-view="over"]');
   if(overTab){
@@ -1058,6 +1071,9 @@ function render(){
   else renderSettings();
 }
 
+/* カテゴリの絞り込み。数が多くて画面に収まらないときは横に動かせる（スワイプ・ホイール・ドラッグ・‹ ›）。
+   描き直しても前の位置を保ち、選んでいるカテゴリが見える位置に寄せる */
+var _filterScrollLeft=0;
 function filterBar(){
   var bar=h('<div class="filters"></div>');
   var cats=["ALL"].concat(db.categories);
@@ -1067,7 +1083,69 @@ function filterBar(){
     b.onclick=function(){ filter=c; render(); };
     bar.appendChild(b);
   });
-  return bar;
+  bar.addEventListener("scroll",function(){ _filterScrollLeft=bar.scrollLeft; },{passive:true});
+  var wrap=makeHScroll(bar);
+  requestAnimationFrame(function(){
+    bar.scrollLeft=_filterScrollLeft;
+    var sel=bar.querySelector('[aria-pressed="true"]');
+    if(sel){
+      var l=sel.offsetLeft-bar.offsetLeft, r=l+sel.offsetWidth;
+      if(l<bar.scrollLeft+16) bar.scrollLeft=Math.max(0,l-40);
+      else if(r>bar.scrollLeft+bar.clientWidth-16) bar.scrollLeft=r-bar.clientWidth+40;
+    }
+    wrap.update();
+  });
+  return wrap;
+}
+
+/* 横に並ぶ列（カテゴリ・タブ）を、パソコンでも動かせるようにする。
+   ・マウスホイール（縦回し）で横に動く
+   ・マウスでつかんで左右にドラッグできる（ドラッグした直後のクリックは押さないことにする）
+   ・端に ‹ › ボタンを出す（その向きにまだ続きがあるときだけ） */
+/* ドラッグ中の列と、画面幅の変化への対応は1か所でまとめて扱う（列を作り直すたびに増やさない） */
+var _hsDrag=null;
+window.addEventListener("pointermove", function(e){
+  var d=_hsDrag; if(!d) return;
+  var dx=e.clientX-d.x;
+  if(!d.moved && Math.abs(dx)>5){ d.moved=true; d.wrap.classList.add("dragging"); }
+  if(d.moved) d.inner.scrollLeft=d.left-dx;
+});
+window.addEventListener("pointerup", function(){
+  var d=_hsDrag; if(!d) return; _hsDrag=null;
+  if(d.moved){ d.wrap._justDragged=true; setTimeout(function(){ d.wrap.classList.remove("dragging"); d.wrap._justDragged=false; },0); }
+});
+window.addEventListener("resize", function(){ document.querySelectorAll(".hscroll").forEach(function(w){ if(w.update) w.update(); }); });
+function makeHScroll(inner){
+  var wrap=document.createElement("div");
+  wrap.className="hscroll";
+  if(inner.parentNode) inner.parentNode.replaceChild(wrap, inner);
+  var prev=h('<button type="button" class="hs-btn hs-prev" aria-label="左へ" tabindex="-1">‹</button>');
+  var next=h('<button type="button" class="hs-btn hs-next" aria-label="右へ" tabindex="-1">›</button>');
+  wrap.append(prev, inner, next);
+  function max(){ return inner.scrollWidth-inner.clientWidth; }
+  function update(){
+    var m=max();
+    wrap.classList.toggle("can-l", m>1 && inner.scrollLeft>2);
+    wrap.classList.toggle("can-r", m>1 && inner.scrollLeft<m-2);
+  }
+  function step(dir){ inner.scrollBy({left:dir*Math.max(120,inner.clientWidth*0.7), behavior:motionOn()?"smooth":"auto"}); }
+  prev.onclick=function(){ step(-1); };
+  next.onclick=function(){ step(1); };
+  inner.addEventListener("scroll", update, {passive:true});
+  inner.addEventListener("wheel", function(e){
+    if(max()<=1 || Math.abs(e.deltaX)>Math.abs(e.deltaY)) return; // 横スクロールはそのまま任せる
+    var before=inner.scrollLeft;
+    inner.scrollLeft+=e.deltaY;
+    if(inner.scrollLeft!==before) e.preventDefault(); // 端まで来たらページの縦スクロールに戻す
+  }, {passive:false});
+  inner.addEventListener("pointerdown", function(e){
+    if(e.pointerType!=="mouse" || e.button!==0 || max()<=1) return;
+    _hsDrag={wrap:wrap, inner:inner, x:e.clientX, left:inner.scrollLeft, moved:false};
+  });
+  inner.addEventListener("click", function(e){ if(wrap._justDragged){ e.stopPropagation(); e.preventDefault(); wrap._justDragged=false; } }, true);
+  wrap.update=update;
+  requestAnimationFrame(update);
+  return wrap;
 }
 
 /* ========== カテゴリの色 ==========
@@ -3731,7 +3809,9 @@ document.querySelectorAll(".tab").forEach(function(t){
   t.onclick=function(){ view=t.dataset.view; window.scrollTo(0,0); render(); };
 });
 document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
-load(); autoCompleteOverdueItems(); applyTheme(); render();
+load(); autoCompleteOverdueItems(); applyTheme();
+var _tabsScroller=makeHScroll(document.querySelector("nav.tabs")); // タブ列もパソコンで動かせるように
+render();
 handleExportParam();
 handleActionParam();
 setInterval(function(){ autoCompleteOverdueItems(); softRender(); }, 60000); // 残り時間の更新とあわせて自動完了も確認
