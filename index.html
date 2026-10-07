@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-07 18:00 JST">
+<meta name="build-stamp" content="2026-10-07 20:00 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -243,6 +243,7 @@ header{
 .dot.routine{background:var(--routine)}
 .cal-opt{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);margin:-4px 0 10px;cursor:pointer}
 .cal-opt input{width:auto;margin:0;accent-color:var(--ink)}
+.list-opt{margin:12px 0 0;width:max-content}
 .sel-title{margin:16px 0 6px;font-size:12px;letter-spacing:.08em;color:var(--ink-2)}
 
 /* ---- 今週 ---- */
@@ -1868,8 +1869,12 @@ function renderListBody(){
   var body=document.getElementById("listBody");
   if(!body) return;
   body.innerHTML="";
-  // 繰り返しは「定期予定」タブに分けているため、ここでは除く
-  var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&!isRepeating(i)&&matchesSearch(i); }).sort(sortByDue);
+  // 定期予定は次の回だけを並べる（この端末だけの設定で隠せる）
+  var showRoutine=store.get("list-show-routine")!=="0";
+  var rtToggle=h('<label class="cal-opt list-opt"><input type="checkbox"'+(showRoutine?" checked":"")+'>定期予定も表示</label>');
+  rtToggle.querySelector("input").onchange=function(){ store.set("list-show-routine", this.checked?"1":"0"); renderListBody(); };
+  body.appendChild(rtToggle);
+  var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&(showRoutine||!isRepeating(i))&&matchesSearch(i); }).sort(sortByDue);
   if(!list.length){
     var msg=searchKw.trim()
       ? '<div class="empty" style="margin-top:18px"><b>見つかりませんでした</b>「'+escHtml(searchKw)+'」に一致する締切はありません。</div>'
