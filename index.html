@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-07 15:00 JST">
+<meta name="build-stamp" content="2026-10-07 20:00 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -243,6 +243,7 @@ header{
 .dot.routine{background:var(--routine)}
 .cal-opt{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);margin:-4px 0 10px;cursor:pointer}
 .cal-opt input{width:auto;margin:0;accent-color:var(--ink)}
+.list-opt{margin:12px 0 0;width:max-content}
 .sel-title{margin:16px 0 6px;font-size:12px;letter-spacing:.08em;color:var(--ink-2)}
 
 /* ---- 今週 ---- */
@@ -487,7 +488,6 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
 .hs-btn:hover{color:var(--red)}
 .hscroll .filters{cursor:grab}
 .hscroll.dragging .filters,.hscroll.dragging .tabs{cursor:grabbing;user-select:none}
-.hscroll .filters .hs-btn{display:none}
 .filters .chip{flex-shrink:0;white-space:nowrap}
 </style>
 </head>
@@ -585,7 +585,7 @@ var store={
   set:function(k,v){ if(hasLS){try{localStorage.setItem(k,v);}catch(e){toast("保存できませんでした（空き容量を確認してください）");}} else {mem[k]=v;} }
 };
 
-var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},catColors:{},settings:{dayHour:9,theme:"auto"},updatedAt:null};
+var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},catColors:Object.create(null),settings:{dayHour:9,theme:"auto"},updatedAt:null};
 function load(){
   var raw=store.get(KEY); if(!raw) return;
   try{
@@ -910,7 +910,7 @@ function veventOf(it){
   var repeating=!!(it.rep&&it.rep!=="none");
   if(repeating){
     var freq={weekly:"FREQ=WEEKLY",biweekly:"FREQ=WEEKLY;INTERVAL=2",monthly:"FREQ=MONTHLY",yearly:"FREQ=YEARLY"}[it.rep];
-    if(freq) L.push("RRULE:"+freq+(it.repCount>0?";COUNT="+it.repCount:""));
+    if(freq) L.push("RRULE:"+freq+monthEndRule(it, due, begin)+(it.repCount>0?";COUNT="+it.repCount:""));
     // 取りやめた回はEXDATEで除外する。skipのキーは各回の「締切日」だが、
     // EXDATEは各回のDTSTARTと一致させる必要があるため、開始までの差だけずらす
     if(it.skip&&it.skip.length){
@@ -1015,6 +1015,7 @@ function escHtml(s){ return String(s).replace(/[&<>"]/g,function(c){ return {"&"
 /* ========== 描画 ========== */
 var _lastTabView=null;
 function render(){
+  resetColorCache();
   var now=new Date();
   document.getElementById("todayLabel").textContent =
     now.getFullYear()+"年"+(now.getMonth()+1)+"月"+now.getDate()+"日（"+DOW[now.getDay()]+"）";
@@ -1106,14 +1107,19 @@ function filterBar(){
 var _hsDrag=null;
 window.addEventListener("pointermove", function(e){
   var d=_hsDrag; if(!d) return;
+  if(e.buttons===0){ endHsDrag(); return; } // ウィンドウの外でボタンを離した場合
+
   var dx=e.clientX-d.x;
   if(!d.moved && Math.abs(dx)>5){ d.moved=true; d.wrap.classList.add("dragging"); }
   if(d.moved) d.inner.scrollLeft=d.left-dx;
 });
-window.addEventListener("pointerup", function(){
+function endHsDrag(){
   var d=_hsDrag; if(!d) return; _hsDrag=null;
   if(d.moved){ d.wrap._justDragged=true; setTimeout(function(){ d.wrap.classList.remove("dragging"); d.wrap._justDragged=false; },0); }
-});
+}
+window.addEventListener("pointerup", endHsDrag);
+window.addEventListener("pointercancel", endHsDrag);
+window.addEventListener("blur", endHsDrag);
 window.addEventListener("resize", function(){ document.querySelectorAll(".hscroll").forEach(function(w){ if(w.update) w.update(); }); });
 function makeHScroll(inner){
   var wrap=document.createElement("div");
@@ -1162,24 +1168,26 @@ function normHex(v){
   return /^#[0-9a-fA-F]{6}$/.test(v)?v.toUpperCase():null;
 }
 function cleanCatColors(o){
-  var out={}; if(!o||typeof o!=="object") return out;
+  // 名前が "toString" などでも Object の既定の関数を拾わないよう、プロトタイプの無い入れ物にする
+  var out=Object.create(null); if(!o||typeof o!=="object") return out;
   Object.keys(o).forEach(function(k){ var h=normHex(o[k]); if(h) out[k]=h; });
   return out;
 }
 /* 自動の割り振り。手動で使われている色は飛ばして、カテゴリの並び順に配る */
-var _autoCache={key:null,map:{}};
+/* 10: 毎回の色の問い合わせで作り直さないよう、描き直し（render）ごとに1回だけ計算する */
+var _autoCache={map:null};
+function resetColorCache(){ _autoCache.map=null; }
 function autoColorMap(){
-  var key=JSON.stringify([db.categories,db.catColors]);
-  if(_autoCache.key===key) return _autoCache.map;
-  var used={}; Object.keys(db.catColors).forEach(function(k){ used[db.catColors[k]]=1; });
-  var map={}, i=0;
+  if(_autoCache.map) return _autoCache.map;
+  var used=Object.create(null); Object.keys(db.catColors).forEach(function(k){ used[db.catColors[k]]=1; });
+  var map=Object.create(null), i=0;
   db.categories.forEach(function(c){
     if(db.catColors[c]) return;
     var guard=0;
     while(used[CAT_PALETTE[AUTO_SEQ[i%36]]] && guard++<36) i++;
     map[c]=CAT_PALETTE[AUTO_SEQ[i%36]]; used[map[c]]=1; i++;
   });
-  _autoCache={key:key,map:map};
+  _autoCache.map=map;
   return map;
 }
 function catColorRaw(cat){
@@ -1253,6 +1261,7 @@ function colorPicker(opts){
   hexIn.onkeydown=function(e){ if(e.key==="Enter"){ e.preventDefault(); el.querySelector(".cp-apply").click(); } };
   el.querySelector(".cp-auto").onclick=function(){ set(null); };
   el.refresh=paint;
+  el.setValue=function(v){ value=normHex(v)||null; paint(); };
   paint();
   return el;
 }
@@ -1495,6 +1504,7 @@ function applyTemplate(id){
   document.getElementById("fTitle").value=t.title||"";
   document.getElementById("fMemo").value=t.memo||"";
   document.getElementById("fCat").value=(db.categories.indexOf(t.cat)>=0)?t.cat:db.categories[0];
+  refreshDlgColor(t.color||null);
   document.getElementById("fRep").value=t.rep||"none";
   setRepCountValue(t.repCount==null?15:t.repCount);
   document.getElementById("fAllDay").checked=!!t.allDay;
@@ -1525,7 +1535,7 @@ function saveAsTemplate(it){
     id:"t"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
     name:name, title:it.title, cat:it.cat, memo:it.memo||"",
     allDay:!!it.allDay, rep:it.rep||"none", repCount:it.repCount||0,
-    autoComplete:!!it.autoComplete, calHide:!!it.calHide,
+    autoComplete:!!it.autoComplete, calHide:!!it.calHide, color:normHex(it.color)||undefined,
     timeOfDay:it.allDay?"09:00":(pad(d.getHours())+":"+pad(d.getMinutes()))
   });
   save(); render();
@@ -1620,6 +1630,7 @@ function openQuarantineFixDialog(qid){
   document.getElementById("fTitle").value=seed.title;
   document.getElementById("fMemo").value=seed.memo;
   document.getElementById("fCat").value=seed.cat;
+  refreshDlgColor();
   var d=new Date(seed.due);
   document.getElementById("fDate").value=toLocalISO(d);
   syncDialogRows();
@@ -1801,7 +1812,7 @@ function openQuickDialog(r){
   if(r.time) document.getElementById("fTime").value=r.time;
   if(r.time || r.allDay || !r.tpl) document.getElementById("fAllDay").checked=r.allDay;
   if(r.rep!=="none") document.getElementById("fRep").value=r.rep;
-  if(r.cat) document.getElementById("fCat").value=r.cat;
+  if(r.cat){ document.getElementById("fCat").value=r.cat; refreshDlgColor(); }
   syncDialogRows();
   if(!document.getElementById("fTitle").value) document.getElementById("fTitle").focus();
 }
@@ -1858,8 +1869,12 @@ function renderListBody(){
   var body=document.getElementById("listBody");
   if(!body) return;
   body.innerHTML="";
-  // 繰り返しは「定期予定」タブに分けているため、ここでは除く
-  var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&!isRepeating(i)&&matchesSearch(i); }).sort(sortByDue);
+  // 定期予定は次の回だけを並べる（この端末だけの設定で隠せる）
+  var showRoutine=store.get("list-show-routine")!=="0";
+  var rtToggle=h('<label class="cal-opt list-opt"><input type="checkbox"'+(showRoutine?" checked":"")+'>定期予定も表示</label>');
+  rtToggle.querySelector("input").onchange=function(){ store.set("list-show-routine", this.checked?"1":"0"); renderListBody(); };
+  body.appendChild(rtToggle);
+  var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&(showRoutine||!isRepeating(i))&&matchesSearch(i); }).sort(sortByDue);
   if(!list.length){
     var msg=searchKw.trim()
       ? '<div class="empty" style="margin-top:18px"><b>見つかりませんでした</b>「'+escHtml(searchKw)+'」に一致する締切はありません。</div>'
@@ -2422,7 +2437,7 @@ function renderSettings(){
       delete db.catReminders[c];
       delete db.catColors[c];
       if(filter===c) filter="ALL";
-      save(); render();
+      save(); render(); scheduleAutoSync();
     });
     line.appendChild(row);
   });
@@ -2431,7 +2446,7 @@ function renderSettings(){
     var v=addRow.querySelector("input").value.trim();
     if(!v) return;
     if(db.categories.indexOf(v)>=0){ toast("同じ名前があります"); return; }
-    db.categories.push(v); save(); render();
+    db.categories.push(v); save(); render(); scheduleAutoSync();
   };
   s2.appendChild(addRow); main.appendChild(s2);
 
@@ -2881,7 +2896,7 @@ function moveCategory(idx, dir){
   if(to<0||to>=db.categories.length) return;
   var arr=db.categories;
   var tmp=arr[idx]; arr[idx]=arr[to]; arr[to]=tmp;
-  save(); render();
+  save(); render(); scheduleAutoSync(); // 並び順で自動の色が決まるので、他の端末にも送る
 }
 
 /* GitHubのdata.jsonを読み込んで、この端末のデータを置き換える */
@@ -3157,11 +3172,17 @@ function openDialog(item){
   var cp=colorPicker({value:dlgColor, autoColor:function(){ return catColorRaw(catSel.value); }, autoText:"カテゴリの色", autoLabel:"カテゴリの色に戻す",
     onChange:function(v){ dlgColor=v; }});
   host.appendChild(cp);
+  dlgColorPicker=cp;
   catSel.onchange=function(){ cp.refresh(); };
   syncDialogRows();
   dlg.showModal();
 }
-var dlgColor=null;
+var dlgColor=null, dlgColorPicker=null;
+/* テンプレート・自然文入力・修復などでカテゴリ欄を書き換えたあと、色の表示を合わせる */
+function refreshDlgColor(v){
+  if(v!==undefined){ dlgColor=normHex(v)||null; if(dlgColorPicker) dlgColorPicker.setValue(dlgColor); }
+  else if(dlgColorPicker) dlgColorPicker.refresh();
+}
 
 /* 繰り返し回数の選択肢に値を入れる。完了で残り回数が減ると選択肢に無い数(14回など)になり、
    そのまま保存すると回数が壊れる(NaN)ため、無い数は「残りN回」として一時的に選択肢へ足す */
@@ -3383,6 +3404,21 @@ function advanceRepeating(it){
 }
 /* 月・年単位の繰り返しの基準日（何日の予定か） */
 function anchorDayOf(it){ return it.repDay || parseItemDate(it).getDate(); }
+/* 毎月・毎年で基準日が29〜31日のとき、無い月は月末に丸める（アプリの nextOccurrence と同じ）ための RRULE の追加分。
+   素の FREQ=MONTHLY は31日が無い月を飛ばすので、「基準日」と「月末」の早い方（BYSETPOS=1）を指定する。
+   DTSTART は時刻つきなら UTC、終日なら日付で書くため、締切日との日数差 diff を引いて合わせる（build_ics.py と同じ計算） */
+function monthEndRule(it, due, begin){
+  if(it.rep!=="monthly" && it.rep!=="yearly") return "";
+  var a=anchorDayOf(it);
+  if(a<29) return "";
+  var first;
+  if(it.allDay){ var s0=it.start?new Date(it.start):due; first={y:s0.getFullYear(), m:s0.getMonth(), d:s0.getDate()}; }
+  else first={y:begin.getUTCFullYear(), m:begin.getUTCMonth(), d:begin.getUTCDate()};
+  var diff=Math.round((Date.UTC(due.getFullYear(),due.getMonth(),due.getDate())-Date.UTC(first.y,first.m,first.d))/86400000);
+  if(diff<0 || a-diff<1 || first.m!==due.getMonth()) return ""; // 月をまたぐ期間つきなどは従来どおり
+  var rule=";BYMONTHDAY="+(a-diff)+","+(-(1+diff))+";BYSETPOS=1";
+  return it.rep==="yearly" ? ";BYMONTH="+(first.m+1)+rule : rule;
+}
 
 /* 次に来る回の締切。完了にし忘れて締切が過ぎている定期予定でも「今より先の回」を返す（表示用・元データは変えない）。
    回数指定を使い切っていれば null */

@@ -84,6 +84,27 @@ def reminder_label(n):
     return "あと%d日" % n
 
 
+def month_end_rule(it, rep, due, start, begin, all_day):
+    """毎月・毎年で基準日が29〜31日のとき、無い月は月末に丸める（アプリと同じ）ための RRULE の追加分。
+    RFC 5545 の素の FREQ=MONTHLY は31日が無い月を飛ばしてしまうため、
+    「基準日」と「月末」のうち早い方（BYSETPOS=1）を指定する。
+    DTSTART は時刻つきなら UTC、終日なら日付で書くので、締切日(JST)との日数差 diff を引いて合わせる。"""
+    if rep not in ("monthly", "yearly"):
+        return ""
+    due_jst = due.astimezone(JST)
+    anchor = it.get("repDay") if isinstance(it.get("repDay"), int) else due_jst.day
+    if anchor < 29:
+        return ""
+    first = (start or due).astimezone(JST).date() if all_day else begin.astimezone(timezone.utc).date()
+    diff = (due_jst.date() - first).days
+    if diff < 0 or anchor - diff < 1 or first.month != due_jst.month:
+        return ""  # 月をまたぐ期間つきなどは表せないので、従来どおりにする
+    rule = ";BYMONTHDAY=%d,%d;BYSETPOS=1" % (anchor - diff, -(1 + diff))
+    if rep == "yearly":
+        rule = ";BYMONTH=%d" % first.month + rule
+    return rule
+
+
 def vevent(it, day_hour, reminders=None):
     due = parse_dt(it["due"])
     start = parse_dt(it["start"]) if it.get("start") else None
@@ -120,16 +141,18 @@ def vevent(it, day_hour, reminders=None):
                 "yearly": "FREQ=YEARLY"}.get(rep)
         if freq:
             count = it.get("repCount") or 0
-            lines.append("RRULE:" + freq + (";COUNT=%d" % count if count > 0 else ""))
+            freq += month_end_rule(it, rep, due, start, begin, all_day)
+            lines.append("RRULE:" + freq + (";COUNT=%d" % count if isinstance(count, int) and count > 0 else ""))
         # 取りやめた回は EXDATE で除外する。skip のキーは各回の「締切日(JST)」だが、
         # EXDATE は各回の DTSTART と一致させる必要があるため、開始までの差だけずらす
         due_jst = due.astimezone(JST)
-        for k in it.get("skip", []):
+        skip = it.get("skip")
+        for k in (skip if isinstance(skip, list) else []):
             try:
                 y, m, d = (int(x) for x in k.split("-"))
                 ex_due = due_jst.replace(year=y, month=m, day=d)
-            except ValueError:
-                continue  # 壊れたキーは無視する
+            except (ValueError, AttributeError):
+                continue  # 壊れたキー（文字列でない・日付でない）は無視する
             if all_day:
                 s_day = (start or due).astimezone(JST).date()
                 ex = ex_due.date() - (due_jst.date() - s_day)
@@ -187,6 +210,14 @@ def main():
         except (KeyError, TypeError, ValueError, AttributeError):
             print("締切日時が読めないため除外: %s" % i.get("title", i.get("id")), file=sys.stderr)
             continue
+        if i.get("start"):
+            try:
+                parse_dt(i["start"])
+            except (TypeError, ValueError, AttributeError):
+                # 開始だけが壊れているときは、開始なし（締切だけの予定）として書き出す
+                print("開始日時が読めないため締切のみで出力: %s" % i.get("title", i.get("id")), file=sys.stderr)
+                i = dict(i)
+                del i["start"]
         items.append(i)
     if not items:
         return 2  # 書き出すものが無い（エラー時の1と区別する）
