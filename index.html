@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-04 12:00 JST">
+<meta name="build-stamp" content="2026-10-07 12:00 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -454,6 +454,29 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
 /* 演出「なし」・視差効果を減らす設定では、常時動くものも止める */
 .no-motion .card.over:not(.done),.no-motion .lv-streak.warn,.no-motion .lv-num.up{animation:none}
 @media (prefers-reduced-motion:reduce){.card.over:not(.done),.lv-streak.warn,.lv-num.up,.card.leaving{animation:none!important}.lv-gauge b.grow{transition:none}}
+
+/* ---- カテゴリの色 ---- */
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:0;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.chip .sw{margin-right:6px}
+.catg .sw{margin-right:4px}
+.catg::before{display:none}
+.witem .sw{align-self:center;margin-right:0}
+.dv-ev.bycat{border-left-color:var(--cc);background:color-mix(in srgb,var(--cc) 14%,var(--card))}
+.cal-mode{gap:6px;cursor:default}
+.cal-mode .chip{padding:1px 9px;font-size:11.5px}
+.cpick{position:relative;display:inline-block}
+.cp-cur{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--rule);background:var(--card);border-radius:var(--radius);padding:3px 8px;font-size:12px;color:var(--ink-2);font-family:var(--sans);cursor:pointer}
+.cp-cur .sw{width:12px;height:12px}
+.cp-panel{margin-top:6px;padding:8px;border:1px solid var(--rule);background:var(--card);border-radius:var(--radius);width:max-content;max-width:100%;box-sizing:border-box}
+.cp-grid{display:grid;grid-template-columns:repeat(12,22px);gap:4px}
+.cp-sw{width:22px;height:22px;border:0;border-radius:3px;padding:0;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
+.cp-sw[aria-pressed="true"]{outline:2px solid var(--ink);outline-offset:2px}
+.cp-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.cpick .cp-native{width:34px;height:30px;padding:0;border:1px solid var(--rule);background:none;flex:0 0 auto}
+.cpick .cp-hex{width:104px;flex:0 0 auto;padding:5px 8px;font-family:var(--num);font-size:13px}
+.cat-color{margin-right:8px}
+.cat-row .cpick{flex-basis:auto}
+@media (max-width:420px){.cp-grid{grid-template-columns:repeat(12,19px);gap:3px}.cp-sw{width:19px;height:19px}}
 </style>
 </head>
 <body>
@@ -518,6 +541,7 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
         <option value="biweekly">隔週</option><option value="monthly">毎月</option><option value="yearly">毎年</option>
       </select></label>
     </div>
+    <div class="field" id="fColorField"><span>色（この締切だけ変える場合）</span><div id="fColorHost"></div></div>
     <label class="field" id="repCountRow" style="display:none"><span>繰り返す回数（初回を含む）</span>
       <select id="fRepCount">
         <option value="4">4回</option><option value="8">8回</option>
@@ -549,7 +573,7 @@ var store={
   set:function(k,v){ if(hasLS){try{localStorage.setItem(k,v);}catch(e){toast("保存できませんでした（空き容量を確認してください）");}} else {mem[k]=v;} }
 };
 
-var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},settings:{dayHour:9,theme:"auto"},updatedAt:null};
+var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},catColors:{},settings:{dayHour:9,theme:"auto"},updatedAt:null};
 function load(){
   var raw=store.get(KEY); if(!raw) return;
   try{
@@ -564,6 +588,7 @@ function load(){
     if(d&&Array.isArray(d.quarantine)) db.quarantine=d.quarantine;
     if(d&&Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
     if(d) db.catReminders=cleanCatReminders(d.catReminders);
+    if(d) db.catColors=cleanCatColors(d.catColors);
     if(d&&d.settings) db.settings=Object.assign(db.settings,d.settings);
     if(d&&d.updatedAt) db.updatedAt=d.updatedAt;
     if(d) adoptCompletions(d);
@@ -1037,12 +1062,121 @@ function filterBar(){
   var bar=h('<div class="filters"></div>');
   var cats=["ALL"].concat(db.categories);
   cats.forEach(function(c){
-    var b=h('<button class="chip">'+escHtml(c==="ALL"?"すべて":c)+'</button>');
+    var b=h('<button class="chip">'+(c==="ALL"?"":swatch(catColor(c)))+escHtml(c==="ALL"?"すべて":c)+'</button>');
     b.setAttribute("aria-pressed", filter===c?"true":"false");
     b.onclick=function(){ filter=c; render(); };
     bar.appendChild(b);
   });
   return bar;
+}
+
+/* ========== カテゴリの色 ==========
+   36色（12色相 × 濃・中・淡）のテンプレート。指定が無いカテゴリには、並び順に「中」の色を
+   見分けやすい順番で自動で割り振る（色覚の違いでも隣同士が区別しやすいよう検証済みの順）。
+   手動で選んだ色は catColors に保存して同期する。締切ごとに個別の色（it.color）も持てる */
+var CAT_PALETTE=["#7E2A31","#7E492A","#7E622A","#7E772A","#5B7E2A","#2A7E3F","#1D8B6F","#1D798B","#2A547E","#2A357E","#492A7E","#7E2A7E","#B2343E","#B26234","#B28834","#B2A734","#7DB234","#34B253","#22C39B","#22A8C3","#3473B2","#3444B2","#6234B2","#B234B2","#CD7A81","#CD987A","#CDB17A","#CDC67A","#AACD7A","#7ACD8F","#6CDABF","#6CC8DA","#7AA3CD","#7A85CD","#987ACD","#CD7ACD"];
+var CAT_HUES=["赤","朱","橙","黄土","若草","緑","青緑","水","青","藍","紫","桃"];
+var AUTO_ORDER=[0,6,10,3,8,1,9,5,11,2,7,4];
+var AUTO_SEQ=[1,0,2].reduce(function(a,tone){ return a.concat(AUTO_ORDER.map(function(h){ return tone*12+h; })); },[]);
+function normHex(v){
+  v=String(v||"").trim(); if(v.charAt(0)!=="#") v="#"+v;
+  if(/^#[0-9a-fA-F]{3}$/.test(v)) v="#"+v.charAt(1)+v.charAt(1)+v.charAt(2)+v.charAt(2)+v.charAt(3)+v.charAt(3);
+  return /^#[0-9a-fA-F]{6}$/.test(v)?v.toUpperCase():null;
+}
+function cleanCatColors(o){
+  var out={}; if(!o||typeof o!=="object") return out;
+  Object.keys(o).forEach(function(k){ var h=normHex(o[k]); if(h) out[k]=h; });
+  return out;
+}
+/* 自動の割り振り。手動で使われている色は飛ばして、カテゴリの並び順に配る */
+var _autoCache={key:null,map:{}};
+function autoColorMap(){
+  var key=JSON.stringify([db.categories,db.catColors]);
+  if(_autoCache.key===key) return _autoCache.map;
+  var used={}; Object.keys(db.catColors).forEach(function(k){ used[db.catColors[k]]=1; });
+  var map={}, i=0;
+  db.categories.forEach(function(c){
+    if(db.catColors[c]) return;
+    var guard=0;
+    while(used[CAT_PALETTE[AUTO_SEQ[i%36]]] && guard++<36) i++;
+    map[c]=CAT_PALETTE[AUTO_SEQ[i%36]]; used[map[c]]=1; i++;
+  });
+  _autoCache={key:key,map:map};
+  return map;
+}
+function catColorRaw(cat){
+  cat=cat||"その他";
+  return db.catColors[cat] || autoColorMap()[cat] || "#8E8B80"; // 一覧に無いカテゴリは灰
+}
+function itemColorRaw(it){ return normHex(it.color) || catColorRaw(it.cat); }
+
+/* ダークモードでは、色相は保ったまま暗い背景で読める明るさ・鮮やかさに直して表示する
+   （OKLCHで明るさを 0.50〜0.665 に写す。相対的な明暗差は残すので色同士の見分けも保つ） */
+function isDarkTheme(){ return document.documentElement.getAttribute("data-theme")==="dark"; }
+var _darkCache={};
+function displayColor(hex){
+  if(!isDarkTheme()) return hex;
+  if(_darkCache[hex]) return _darkCache[hex];
+  function s2l(c){ return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4); }
+  function l2s(c){ c=Math.max(0,Math.min(1,c)); return c<=0.0031308?12.92*c:1.055*Math.pow(c,1/2.4)-0.055; }
+  function toLab(h){
+    var r=s2l(parseInt(h.substr(1,2),16)/255), g=s2l(parseInt(h.substr(3,2),16)/255), b=s2l(parseInt(h.substr(5,2),16)/255);
+    var l=Math.cbrt(0.4122214708*r+0.5363325363*g+0.0514459929*b), m=Math.cbrt(0.2119034982*r+0.6806995451*g+0.1073969566*b), q=Math.cbrt(0.0883024619*r+0.2817188376*g+0.6299787005*b);
+    return [0.2104542553*l+0.7936177850*m-0.0040720468*q, 1.9779984951*l-2.4285922050*m+0.4505937099*q, 0.0259040371*l+0.7827717662*m-0.8086757660*q];
+  }
+  function fromLab(L,a,b){
+    var l=Math.pow(L+0.3963377774*a+0.2158037573*b,3), m=Math.pow(L-0.1055613458*a-0.0638541728*b,3), q=Math.pow(L-0.0894841775*a-1.2914855480*b,3);
+    var rgb=[4.0767416621*l-3.3077115913*m+0.2309699292*q, -1.2684380046*l+2.6097574011*m-0.3413193965*q, -0.0041960863*l-0.7034186147*m+1.7076147010*q];
+    return "#"+rgb.map(function(x){ var v=Math.round(l2s(x)*255).toString(16).toUpperCase(); return v.length<2?"0"+v:v; }).join("");
+  }
+  var lab=toLab(hex), C=Math.hypot(lab[1],lab[2]), H=Math.atan2(lab[2],lab[1]);
+  var L=0.5+(Math.min(0.85,Math.max(0.3,lab[0]))-0.3)/0.55*0.165;
+  C=Math.max(C,0.11);
+  var out=hex;
+  for(var k=0;k<20;k++){ // 色域外なら彩度を下げて戻す
+    out=fromLab(L,C*Math.cos(H),C*Math.sin(H));
+    var back=toLab(out); if(Math.abs(Math.hypot(back[1],back[2])-C)<0.01) break; C*=0.95;
+  }
+  return (_darkCache[hex]=out);
+}
+function catColor(cat){ return displayColor(catColorRaw(cat)); }
+function itemColor(it){ return displayColor(itemColorRaw(it)); }
+function swatch(color, title){ return '<i class="sw" style="background:'+color+'"'+(title?' title="'+escHtml(title)+'"':'')+' aria-hidden="true"></i>'; }
+
+/* 色の選択部品（36色・カラーコード・自動に戻す）。value は保存値（null＝自動） */
+function colorPicker(opts){
+  var el=h('<div class="cpick"><button type="button" class="cp-cur"></button><div class="cp-panel" hidden>'+
+    '<div class="cp-grid"></div>'+
+    '<div class="cp-row"><input type="color" class="cp-native" aria-label="色を選ぶ"><input type="text" class="cp-hex" maxlength="7" placeholder="#RRGGBB" aria-label="カラーコード" autocomplete="off" spellcheck="false">'+
+    '<button type="button" class="act cp-apply">決定</button><button type="button" class="act cp-auto">'+escHtml(opts.autoLabel||"自動に戻す")+'</button></div></div></div>');
+  var cur=el.querySelector(".cp-cur"), panel=el.querySelector(".cp-panel"), grid=el.querySelector(".cp-grid");
+  var hexIn=el.querySelector(".cp-hex"), nat=el.querySelector(".cp-native");
+  var value=normHex(opts.value);
+  function paint(){
+    var raw=value||opts.autoColor();
+    cur.innerHTML=swatch(displayColor(raw))+'<span>'+(value?escHtml(value):escHtml(opts.autoText||"自動"))+'</span>';
+    hexIn.value=value||""; nat.value=(value||raw).toLowerCase();
+    grid.querySelectorAll("button").forEach(function(b){ b.setAttribute("aria-pressed", b.getAttribute("data-c")===value?"true":"false"); });
+  }
+  CAT_PALETTE.forEach(function(c,i){
+    var b=h('<button type="button" class="cp-sw" data-c="'+c+'" title="'+CAT_HUES[i%12]+"（"+["濃","中","淡"][Math.floor(i/12)]+"） "+c+'" style="background:'+displayColor(c)+'"></button>');
+    b.onclick=function(){ set(c); };
+    grid.appendChild(b);
+  });
+  function set(v){ value=v; paint(); opts.onChange(v); }
+  cur.onclick=function(){ panel.hidden=!panel.hidden; };
+  nat.oninput=function(){ hexIn.value=nat.value.toUpperCase(); };
+  nat.onchange=function(){ set(normHex(nat.value)); };
+  el.querySelector(".cp-apply").onclick=function(){
+    var v=normHex(hexIn.value);
+    if(!v){ toast("カラーコードは #RRGGBB の形で入力してください（例：#2A7E69）"); hexIn.focus(); return; }
+    set(v);
+  };
+  hexIn.onkeydown=function(e){ if(e.key==="Enter"){ e.preventDefault(); el.querySelector(".cp-apply").click(); } };
+  el.querySelector(".cp-auto").onclick=function(){ set(null); };
+  el.refresh=paint;
+  paint();
+  return el;
 }
 
 /* カードの見た目に使う状態。完了したものは状態色を付けず、
@@ -1078,7 +1212,7 @@ function cardOf(it){
       '<h3 class="title">'+escHtml(it.title)+'</h3>'+
       '<div class="meta">'+(badge?'<span class="badge '+badge[2]+'"><i aria-hidden="true">'+badge[0]+'</i>'+badge[1]+'</span>':'')+
       (isRepeating(it)&&!it.done?'<span class="badge rt"><i aria-hidden="true">↻</i>定期</span>':'')+
-      '<span class="cat catg">'+escHtml(it.cat||"その他")+'</span><span class="num">'+
+      '<span class="cat catg">'+swatch(itemColor(it))+escHtml(it.cat||"その他")+'</span><span class="num">'+
       escHtml(it.start?(fmtDue(new Date(it.start),it.allDay)+" 〜 "+fmtDue(d,it.allDay)):fmtDue(d,it.allDay))+'</span>'+
       (it.allDay?'<span class="cat">終日</span>':"")+
       (it.autoComplete?'<span class="cat">自動完了</span>':"")+
@@ -1184,7 +1318,7 @@ function flushAutoSync(){ if(_autoSyncTimer) autoSyncIfConfigured(); }
 
 /* GitHubへ送る内容。設定(テーマ等)とこの端末専用の隔離データは含めない */
 function syncPayload(){
-  return {items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, catReminders:db.catReminders,
+  return {items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, catReminders:db.catReminders, catColors:db.catColors,
           completions:db.completions, expCarry:db.expCarry||0, updatedAt:db.updatedAt};
 }
 /* GitHub上のdata.jsonの版(sha)と更新時刻を取得する。まだ無ければ sha:null */
@@ -1774,7 +1908,7 @@ function renderWeek(){
         var when=i.allDay?"終日":(isDue?fmtTime(parseItemDate(i)):"期間中");
         var item=h('<div class="witem'+(isRepeating(i)?" routine":"")+'">'+
           '<span class="wmark">'+mark+'</span>'+
-          '<span class="wtitle">'+escHtml(i.title)+'</span>'+
+          swatch(itemColor(i))+'<span class="wtitle">'+escHtml(i.title)+'</span>'+
           '<span class="wcat">'+escHtml(i.cat||"")+'</span>'+
           '<span class="wtime num">'+escHtml(when)+'</span></div>');
         item.onclick=(function(key){ return function(){ view="cal"; selDay=key; calRef=new Date(key+"T00:00:00"); render(); }; })(key);
@@ -1893,7 +2027,8 @@ function renderDay(){
     var top=(ev.s.getHours()*60+ev.s.getMinutes())/60*hh;
     var mins=Math.max(20,(ev.e-ev.s)/60000);
     var i=ev.it, cls=isRepeating(i)?"routine":statusOf(i);
-    var el=h('<div class="dv-ev '+cls+'" style="top:'+top+'px;height:'+(mins/60*hh-2)+'px;'+
+    var byCat=calColorMode()==="cat";
+    var el=h('<div class="dv-ev '+cls+(byCat?" bycat":"")+'" style="top:'+top+'px;height:'+(mins/60*hh-2)+'px;'+(byCat?'--cc:'+itemColor(i)+';':'')+
       'left:calc('+(ev.col*100/ev.ncol)+'% + 2px);width:calc('+(100/ev.ncol)+'% - 4px)">'+
       '<b>'+(isRepeating(i)?"🔁 ":"")+escHtml(i.title)+'</b><span class="num">'+
       (i.start?fmtTime(ev.s)+"–":"")+fmtTime(ev.e)+(i.start?"":" 締切")+'</span></div>');
@@ -1975,6 +2110,16 @@ function renderCal(){
   var rtToggle=h('<label class="cal-opt"><input type="checkbox"'+(showRoutine?" checked":"")+'>定期予定の帯を表示</label>');
   rtToggle.querySelector("input").onchange=function(){ store.set("cal-show-routine", this.checked?"1":"0"); render(); };
   main.appendChild(rtToggle);
+  // 帯の色分け：カテゴリの色 / 締切の近さ（状態）の色（この端末だけの表示設定）
+  var mode=calColorMode();
+  var modeRow=h('<div class="cal-opt cal-mode">帯の色：</div>');
+  [["cat","カテゴリ"],["status","締切の近さ"]].forEach(function(p){
+    var b=h('<button type="button" class="chip">'+p[1]+'</button>');
+    b.setAttribute("aria-pressed", mode===p[0]?"true":"false");
+    b.onclick=function(){ store.set("cal-color-mode", p[0]); render(); };
+    modeRow.appendChild(b);
+  });
+  main.appendChild(modeRow);
 
   var grid=h('<div class="grid"></div>');
   DOW.forEach(function(d,i){ grid.appendChild(h('<div class="dow'+(i===0?" sun":i===6?" sat":"")+'">'+d+'</div>')); });
@@ -2009,7 +2154,8 @@ function renderCal(){
       var isDue=(toLocalISO(new Date(i.due))===key);
       // 定期予定は緑、それ以外は緊急度の色。期間の途中は薄い帯にする
       var cls=i.done?"done":(isRepeating(i)?"routine":statusOf(i));
-      day.appendChild(h('<span class="dot '+cls+(isDue?"":" span")+'"></span>'));
+      var style=(mode==="cat"&&!i.done)?' style="background:'+itemColor(i)+'"':'';
+      day.appendChild(h('<span class="dot '+cls+(isDue?"":" span")+'"'+style+' title="'+escHtml(i.title+"（"+(i.cat||"その他")+"）")+'"></span>'));
     });
     (function(key){ day.onclick=function(){ selDay=(selDay===key?null:key); render(); }; })(key);
     grid.appendChild(day);
@@ -2152,7 +2298,7 @@ function renderSettings(){
   }
 
   // カテゴリ
-  var s2=h('<div class="sec"><h3>カテゴリ</h3><p>登録画面の選択肢と、フィルタの並び順になります。各カテゴリの「通知」で、カレンダー（.ics）の通知を何日前に鳴らすかを選べます（N日前は締切と同じ時刻、当日は「当日リマインドの時刻」）。</p><div class="cat-list"></div></div>');
+  var s2=h('<div class="sec"><h3>カテゴリ</h3><p>登録画面の選択肢と、フィルタの並び順になります。左の色を押すと、36色のテンプレートかカラーコードで色を選べます（指定しなければ自動で割り振ります）。各カテゴリの「通知」で、カレンダー（.ics）の通知を何日前に鳴らすかを選べます（N日前は締切と同じ時刻、当日は「当日リマインドの時刻」）。</p><div class="cat-list"></div></div>');
   var line=s2.querySelector(".cat-list");
   db.categories.forEach(function(c,idx){
     var row=h('<div class="cat-row" style="flex-wrap:wrap"><span class="cat-name">'+escHtml(c)+'</span><div class="cat-btns"></div>'+
@@ -2171,6 +2317,15 @@ function renderSettings(){
       };
       row.querySelector(".rem-row").appendChild(b);
     });
+    // 色：自動か、36色・カラーコードから選ぶ
+    var cp=colorPicker({value:db.catColors[c]||null, autoColor:function(){ return autoColorMap()[c]||catColorRaw(c); }, autoText:"自動",
+      onChange:function(v){
+        if(v) db.catColors[c]=v; else delete db.catColors[c];
+        save(); scheduleAutoSync(); render();
+        toast(v?"「"+c+"」の色を "+v+" にしました":"「"+c+"」の色を自動に戻しました");
+      }});
+    cp.classList.add("cat-color");
+    row.querySelector(".cat-name").before(cp);
     var btns=row.querySelector(".cat-btns");
     function mkBtn(label,title,disabled,fn){
       var b=h('<button class="act" title="'+title+'"'+(disabled?' disabled style="opacity:.3"':'')+'>'+label+'</button>');
@@ -2187,6 +2342,7 @@ function renderSettings(){
       if(total && !confirm("「"+c+"」を使っている予定・テンプレートが"+total+"件あります。削除すると表示は残りますが、選択肢からは消えます。よろしいですか？")) return;
       db.categories=db.categories.filter(function(x){return x!==c;});
       delete db.catReminders[c];
+      delete db.catColors[c];
       if(filter===c) filter="ALL";
       save(); render();
     });
@@ -2250,6 +2406,7 @@ function renderSettings(){
         if(Array.isArray(d.trash)) db.trash=d.trash;
         if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
+        if(d.catColors) db.catColors=cleanCatColors(d.catColors);
         adoptCompletions(d);
         if(d.settings) db.settings=Object.assign(db.settings,d.settings);
         save(); applyTheme(); render();
@@ -2405,6 +2562,7 @@ function autoPullIfStale(){
         if(Array.isArray(d.trash)) db.trash=d.trash;
         if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
+        if(d.catColors) db.catColors=cleanCatColors(d.catColors);
         adoptCompletions(d);
         db.updatedAt=d.updatedAt;
         saveRaw(); softRender();
@@ -2698,6 +2856,7 @@ function proceedPull(cfg,statusEl){
       if(Array.isArray(d.trash)) db.trash=d.trash;
       if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
       if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
+        if(d.catColors) db.catColors=cleanCatColors(d.catColors);
       adoptCompletions(d);
       // 取り込んだ内容の時刻をそのまま引き継ぐ（今の時刻で上書きすると比較の基準が壊れるため）
       db.updatedAt=d.updatedAt||new Date().toISOString();
@@ -2914,9 +3073,17 @@ function openDialog(item){
     setRepCountValue(15);
     catSel.value=(filter!=="ALL"&&db.categories.indexOf(filter)>=0)?filter:db.categories[0];
   }
+  // 色：既定はカテゴリの色。この締切だけ別の色にもできる
+  dlgColor=item?(normHex(item.color)||null):null;
+  var host=document.getElementById("fColorHost"); host.innerHTML="";
+  var cp=colorPicker({value:dlgColor, autoColor:function(){ return catColorRaw(catSel.value); }, autoText:"カテゴリの色", autoLabel:"カテゴリの色に戻す",
+    onChange:function(v){ dlgColor=v; }});
+  host.appendChild(cp);
+  catSel.onchange=function(){ cp.refresh(); };
   syncDialogRows();
   dlg.showModal();
 }
+var dlgColor=null;
 
 /* 繰り返し回数の選択肢に値を入れる。完了で残り回数が減ると選択肢に無い数(14回など)になり、
    そのまま保存すると回数が壊れる(NaN)ため、無い数は「残りN回」として一時的に選択肢へ足す */
@@ -3033,6 +3200,7 @@ dlgForm.addEventListener("submit",function(e){
       if(allDay) i.allDay=true; else delete i.allDay;
       if(autoComplete) i.autoComplete=true; else delete i.autoComplete;
       if(calHide) i.calHide=true; else delete i.calHide;
+      if(dlgColor) i.color=dlgColor; else delete i.color;
       if(start) i.start=start.toISOString(); else delete i.start;
       delete i.repDay; // 締切日を選び直したので、月末丸めの基準日も新しい日付から取り直す
       i.seq=(i.seq||0)+1;
@@ -3054,6 +3222,7 @@ dlgForm.addEventListener("submit",function(e){
     if(allDay) it.allDay=true;
     if(autoComplete) it.autoComplete=true;
     if(calHide) it.calHide=true;
+    if(dlgColor) it.color=dlgColor;
     db.items.push(it);
     justAddedId=it.id;
     if(motionOn()) playQuestAccept(it);
@@ -3267,6 +3436,8 @@ function animateCardOut(card, cls, stamp, fn){
   setTimeout(function(){ ghost.remove(); }, cls==="deleting"?340:760);
 }
 
+function calColorMode(){ return store.get("cal-color-mode")==="status"?"status":"cat"; }
+
 /* 開いて最初の表示だけ、サマリーの数字を 0 から数え上げる */
 var _countedUp=false;
 function countUpSummary(){
@@ -3452,7 +3623,7 @@ function applyTheme(){
   document.documentElement.setAttribute("data-theme",t);
   document.querySelector('meta[name="theme-color"]').setAttribute("content", t==="dark"?"#141311":"#F3F0E8");
 }
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){ if(db.settings.theme==="auto") applyTheme(); });
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){ if(db.settings.theme==="auto"){ applyTheme(); render(); } }); // 色の表示（ダーク用の補正）を描き直す
 
 var toastEl=document.getElementById("toast"), toastTimer=null;
 var toastMsgEl=document.getElementById("toastMsg"), toastActionEl=document.getElementById("toastAction");
