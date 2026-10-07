@@ -4,7 +4,7 @@
 //
 // キャッシュ名を変えると古いキャッシュは自動で破棄される。
 // 中身（index.html等）を大きく更新したときは、この名前も変えると確実に切り替わる。
-const CACHE_NAME = "deadline-tracker-v3";
+const CACHE_NAME = "deadline-tracker-v4";
 const CORE_FILES = [
   "./",
   "./index.html",
@@ -47,11 +47,15 @@ self.addEventListener("fetch", (event) => {
         if (res.ok) {
           const copy = res.clone();
           const key = url.origin + url.pathname;
-          caches.open(CACHE_NAME).then((cache) => cache.put(key, copy));
+          // 保存が終わる前に Service Worker が止められないよう、待ってもらう
+          event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(key, copy)));
         }
         return res;
       })
-      // オフライン時は、?export=all などクエリ付きで開かれても同じページを返す
-      .catch(() => caches.match(event.request, { ignoreSearch: true }))
+      // オフライン時は、?export=all などクエリ付きで開かれても同じページを返す。
+      // 一度も開いていないページなどキャッシュにも無いときは、真っ白にせず理由を出す
+      .catch(() => caches.match(event.request, { ignoreSearch: true }).then((hit) => hit || new Response(
+        "オフラインのため開けません。電波のある場所で一度開くと、次からはオフラインでも使えます。",
+        { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } })))
   );
 });

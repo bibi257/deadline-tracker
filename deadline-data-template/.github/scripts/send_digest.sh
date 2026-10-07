@@ -161,12 +161,16 @@ def add_rep($rep; $n; $anchor):
     | ([$y, $m, ([($anchor // $t[2]), $last] | min), $t[3], $t[4], ($t[5] | floor), 0, 0] | mktime) - 32400
   else . end;
 def next_occ($t):
-  (.due | ep) as $b | (.rep // "none") as $r | (.skip // []) as $sk | (.repDay // null) as $a
-  | (first(range(0; 1100) as $n
+  (.due | ep) as $b | (.rep // "none") as $r | (.skip // [] | if type == "array" then . else [] end) as $sk
+  | (.repDay // null) as $a | ((.repCount // 0) | tonumber? // 0) as $lim
+  # repCount は「今の回を含めた残り回数」（アプリが回を進めるたびに減らす）。0 は無期限
+  | (first(range(0; (if $lim > 0 then $lim else 1100 end)) as $n
       | ($b | add_rep($r; $n; $a))
       | select(. >= $t)
-      | select(jstkey as $k | $sk | any(.[]; . == $k) | not)) // $b);
+      | select(jstkey as $k | $sk | any(.[]; . == $k) | not)) // null);
 def clean: tostring | gsub("[\n\r\u001f]"; " ");
+# 開始日時が壊れている項目は、開始なし（締切だけ）として扱う（手で書き換えた data.json でも止まらないように）
+def fixstart: if (.start | type) == "string" and ((.start | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) == null) then del(.start) else . end;
 '
 
 # 未完了かつ「期限切れ」または「WINDOW_DAYS以内」の項目を、締切が近い順に抽出
@@ -174,7 +178,7 @@ def clean: tostring | gsub("[\n\r\u001f]"; " ");
 # 繰り返し(rep)のあるものは下の「定期予定」で扱うが、
 # 自動完了(autoComplete)でないものの締切が過ぎていれば「期限切れ」にも入れる
 ROWS=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" --argjson win "$WINDOW_EPOCH" "$JQ_LIB"'
-  [ .items[]? | select(.done|not) | select(ok)
+  [ .items[]? | select(.done|not) | select(ok) | fixstart
     | (.rep // "none") as $rep
     | . + {epoch: (.due | ep)}
     | select($rep == "none" or ((.autoComplete|not) and .epoch < $now))
@@ -192,6 +196,7 @@ REP_ROWS=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" "$JQ_LIB"'
   [ .items[]? | select(.done|not) | select(ok)
     | select((.rep // "none") != "none")
     | . + {epoch: next_occ($now)}
+    | select(.epoch != null)  # 回数を使い切った繰り返しは出さない
   ] | sort_by(.epoch) | .[]
   | [ (.epoch|tostring), (.title // "" | clean), (.cat // "その他" | clean), .due, .rep, ((.allDay // false)|tostring) ]
   | join("\u001f")
@@ -226,7 +231,7 @@ fmt_remain(){  # $1=基準epoch $2=締切epoch $3=開始があるか
   elif [ "$diff" -lt 0 ]; then
     echo "進行中"
   elif [ "$diff" -eq 0 ]; then
-    echo "今日"
+    if [ -n "$has_start" ] && [ "$(days_from_today "$due")" -ne 0 ]; then echo "今日から開始"; else echo "今日"; fi
   elif [ -n "$has_start" ]; then
     echo "${diff} 日後に開始"
   else
@@ -438,7 +443,8 @@ while IFS=$'\x1f' read -r epoch title cat due start allday refep rep; do
         STALE_LINES="${STALE_LINES}- ${MARK}**${title}**　\`${cat}\`"$'\n'"  $(fmt_when "$due" "$allday") 締切 ── ${ELAPSED}日経過"$'\n'
       fi
     fi
-  elif [ "$(days_from_today "$refep")" -eq 0 ]; then
+  elif [ "$(days_from_today "$epoch")" -eq 0 ]; then
+    # 「今日が締切」は締切日で判断する（期間つきで今日始まり・後日締切のものは入れない）
     TODAY_LINES="${TODAY_LINES}${ENTRY}"
     TODAY_COUNT=$((TODAY_COUNT+1))
   else

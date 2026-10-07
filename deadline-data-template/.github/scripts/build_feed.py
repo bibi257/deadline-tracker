@@ -60,7 +60,7 @@ def expand(it, frm, to, now):
     rep = it.get("rep") or "none"
     base = parse_dt(it["due"])
     span = base - parse_dt(it["start"]) if it.get("start") else None
-    skip = set(it.get("skip") or [])
+    skip = set(k for k in (it.get("skip") or []) if isinstance(k, str))
     anchor = it.get("repDay")
     limit = it.get("repCount") or 0
     out = []
@@ -75,6 +75,8 @@ def expand(it, frm, to, now):
             break
         if d.date() < frm or d.strftime("%Y-%m-%d") in skip:
             continue
+        if it.get("autoComplete") and d < now:
+            continue  # 自動完了の回は締切を過ぎるとアプリが完了にする（期限切れとして出さない）
         out.append(entry(it, d, d - span if span else None))
     return out
 
@@ -94,10 +96,17 @@ def main():
             continue
         try:
             due = parse_dt(it["due"])
-            start = parse_dt(it["start"]) if it.get("start") else None
         except (KeyError, TypeError, ValueError, AttributeError):
             print("締切日時が読めないため除外: %s" % it.get("title"), file=sys.stderr)
             continue
+        try:
+            start = parse_dt(it["start"]) if it.get("start") else None
+        except (TypeError, ValueError, AttributeError):
+            # 開始だけが壊れているときは、開始なし（締切だけの予定）として扱う
+            print("開始日時が読めないため締切のみで出力: %s" % it.get("title"), file=sys.stderr)
+            it = dict(it)
+            del it["start"]
+            start = None
         if (it.get("rep") or "none") != "none":
             items += expand(it, frm, to, now)
         elif due.date() <= to or (start and start.date() <= to):
