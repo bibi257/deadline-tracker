@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# 同期が続けて届いたときは、最新のコミットの結果だけを見る
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -20,13 +25,13 @@ jobs:
       - name: リポジトリを取得
         uses: actions/checkout@v7
 
-      - name: data.json がJSONとして正しいか
-        run: jq -e '.items | type == "array"' data.json
+      - name: data.json の中身を確かめる
+        run: python3 .github/scripts/validate_data.py data.json
 
       - name: スクリプトの構文チェック
         run: |
           bash -n .github/scripts/send_digest.sh
-          python3 -m py_compile .github/scripts/build_ics.py
+          python3 -m py_compile .github/scripts/*.py
 
       - name: 毎朝の通知を試しに作る（送信しない）
         run: DRY_RUN=1 bash .github/scripts/send_digest.sh
@@ -43,3 +48,21 @@ jobs:
 
       - name: モーニングブリーフ用メールの本文を試しに作る（送信しない）
         run: DRY_RUN=1 python3 .github/scripts/send_feed_mail.py "$RUNNER_TEMP/feed.json"
+
+      - name: バックアップの間引きを試す（消さない）
+        run: python3 .github/scripts/prune_backups.py backups --dry-run
+
+      - name: 購読用の .ics（メモなし）を試しに作る
+        run: ICS_NO_MEMO=1 python3 .github/scripts/build_ics.py data.json "$RUNNER_TEMP/sub.ics" || [ $? -eq 2 ]
+
+      - name: 夜の再通知を試しに作る（送信しない）
+        run: DRY_RUN=1 DIGEST_MODE=evening NOW="$(TZ=Asia/Tokyo date +'%Y-%m-%d') 20:47" bash .github/scripts/send_digest.sh
+
+      - name: 失敗を Discord に知らせる
+        if: failure() && github.event_name == 'push'
+        env:
+          URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          [ -n "$URL" ] || exit 0
+          jq -n --arg c "⚠️ 締切データの検証に失敗しました: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" '{content: $c}' \
+            | curl -sf -H "Content-Type: application/json" -d @- "$URL" || true

@@ -8,12 +8,14 @@ on:
     - cron: "47 21 * * *"
     # UTC 12:45 日曜 = JST 21:45 日曜（週次レビュー）
     - cron: "45 12 * * 0"
+    # UTC 11:47 月〜土 = JST 20:47 月〜土（夜の再通知。期限切れ・今日が締切が無ければ送らない）
+    - cron: "47 11 * * 1-6"
   workflow_dispatch:
     inputs:
       mode:
         description: "送信モード"
         type: choice
-        options: [daily, weekly]
+        options: [daily, weekly, evening]
         default: daily
       dry_run:
         description: "送信せずにログへ表示だけする（動作確認用）"
@@ -37,6 +39,7 @@ jobs:
         # Secret「DISCORD_WEBHOOK_URL」を登録すると、スクリプト内のURLより優先される。
         # .icsの生成には同じフォルダの build_ics.py を使う（python3はrunnerに標準搭載）
         # 日曜夜のcron、または手動実行でweeklyを選んだ場合は週次レビューを送る
+        # 月〜土の夜のcron、または手動実行でeveningを選んだ場合は夜の再通知を送る
         env:
           DIGEST_MODE: ${{ github.event.inputs.mode }}
           DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
@@ -45,6 +48,8 @@ jobs:
         run: |
           if [ "$SCHEDULE" = "45 12 * * 0" ] || [ "$DIGEST_MODE" = "weekly" ]; then
             DIGEST_MODE=weekly bash .github/scripts/send_digest.sh
+          elif [ "$SCHEDULE" = "47 11 * * 1-6" ] || [ "$DIGEST_MODE" = "evening" ]; then
+            DIGEST_MODE=evening bash .github/scripts/send_digest.sh
           else
             DIGEST_MODE=daily bash .github/scripts/send_digest.sh
           fi

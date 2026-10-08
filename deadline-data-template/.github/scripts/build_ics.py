@@ -10,6 +10,7 @@
 使い方: python3 build_ics.py <data.json> <出力先.ics> [当日リマインドの時]
 """
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -129,7 +130,8 @@ def vevent(it, day_hour, reminders=None):
         lines.append("DTEND:" + utc(end))
     lines.append("SUMMARY:" + esc(it.get("title", "")))
     lines.append("CATEGORIES:" + esc(it.get("cat") or "その他"))
-    if it.get("memo"):
+    # ICS_NO_MEMO=1 のときはメモを書き出さない（購読URLなど、外に置く用途向け）
+    if it.get("memo") and os.environ.get("ICS_NO_MEMO") != "1":
         lines.append("DESCRIPTION:" + esc(it["memo"]))
 
     rep = it.get("rep") or "none"

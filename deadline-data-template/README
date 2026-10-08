@@ -21,12 +21,23 @@ deadline-data（Private）
 ├── data.json          ← アプリが自動で作る。手動で置く必要はない
 └── .github/
     ├── workflows/
-    │   ├── daily-digest.yml   毎朝の連絡と日曜夜の週次レビュー
-    │   └── check.yml          data.json やスクリプトの更新時に、送信せず動作確認（任意）
+    │   ├── daily-digest.yml   朝の連絡・夜の再通知・日曜夜の週次レビュー
+    │   ├── check.yml          data.json やスクリプトの更新時に、中身の検証と送信なしの動作確認（任意）
+    │   ├── build-feed.yml     feed.json を作る（任意。「モーニングブリーフとの連携」）
+    │   ├── send-feed-mail.yml 締切一覧を自分宛ての Gmail で送る（任意）
+    │   ├── publish-ics.yml    購読用 .ics を秘密 Gist へ書き出す（任意）
+    │   └── prune-backups.yml  backups/ を毎月間引く（任意）
     └── scripts/
         ├── send_digest.sh
-        └── build_ics.py
+        ├── build_ics.py
+        ├── validate_data.py   data.json の中身チェック
+        ├── build_feed.py
+        ├── send_feed_mail.py
+        └── prune_backups.py
 ```
+
+必須なのは `daily-digest.yml`・`send_digest.sh`・`build_ics.py` の3つ。それ以外は、使う機能の分だけ置けばよい。
+ただし `check.yml` は全スクリプトを試しに動かすので、置くなら `scripts/` の6つをすべて置くこと（使わない機能の分は `check.yml` からその手順を消してもよい）。
 
 GitHub の Web 画面から作る場合は、**Add file → Create new file** でファイル名にスラッシュを含めて入力すると、フォルダごと作られる。
 
@@ -35,6 +46,8 @@ GitHub の Web 画面から作る場合は、**Add file → Create new file** �
 .github/workflows/check.yml
 .github/scripts/send_digest.sh
 .github/scripts/build_ics.py
+.github/scripts/validate_data.py
+.github/scripts/prune_backups.py
 ```
 
 > ⚠️ ドラッグ＆ドロップでアップロードすると、フォルダ構造が崩れてルート直下に置かれることがある。その場合 Actions がスクリプトを見つけられず `No such file or directory` で失敗する。アップロード後に階層を確認すること。
@@ -60,7 +73,13 @@ BACKUP_DOW="1"              # data.json を添付する曜日（1=月 … 7=日�
 APP_URL=""                  # 任意。通知に載せるアプリのURL（https://<ユーザー名>.github.io/<リポジトリ名>/）
 ATTACH_ICS="0"              # .ics を添付するか（iOSでは照会カレンダーになるため既定は0）。通知はアプリで設定したカテゴリごとの日数に従う
 ICS_DAY_HOUR="9"            # .ics 内の当日リマインド時刻
+LOAD_WARN="6"               # 週次レビューの負荷予報で ⚠️ を付ける、1週間の合計件数
+CAT_WARN="3"                # 同、1カテゴリの件数
+SUBSC_CAT="サブスクなど"     # 月初めの週次レビューで支出をまとめるカテゴリ（空にすると出さない）。メモの「¥1,980」「1980円」を集計
+DONE_LINKS="1"              # 期限切れ・今日が締切の行に「✅完了」リンクを付ける（0で無し）。APP_URL が空なら付かない
 ```
+
+> 「✅完了」リンクは `アプリURL?done=ID` の形。アプリがまだ `?done=` を処理しないため、今は押してもアプリが開くだけ。
 
 ### Discord ユーザーIDの調べ方
 
@@ -73,9 +92,14 @@ Discord の設定 → 詳細設定 → 開発者モードをオンにすると�
 ```yaml
 - cron: "47 21 * * *"   # UTC 21:47 = JST 6:47（毎朝）
 - cron: "45 12 * * 0"   # UTC 12:45 日曜 = JST 21:45 日曜（週次レビュー）
+- cron: "47 11 * * 1-6" # UTC 11:47 月〜土 = JST 20:47 月〜土（夜の再通知）
 ```
 
-UTC 基準（`UTC = JST − 9時間`）。GitHub の cron は混雑時に遅れるため、「0分ちょうど」は避けた方が安定する。数十分〜数時間の遅延は仕様上ありうる。週次レビューの cron を変えるときは、同じファイルの `run:` にある `"45 12 * * 0"` も同じ値に揃えること。
+UTC 基準（`UTC = JST − 9時間`）。GitHub の cron は混雑時に遅れるため、「0分ちょうど」は避けた方が安定する。数十分〜数時間の遅延は仕様上ありうる。週次レビューと夜の再通知の cron を変えるときは、同じファイルの `run:` にある `"45 12 * * 0"`・`"47 11 * * 1-6"` も同じ値に揃えること。
+
+夜の再通知は、期限切れと今日が締切のものだけを送り、無ければ何も送らない。
+
+週次レビューは文字数の上限のため2通に分けて届く（1通目は来週の見通しと1週間の達成、2通目は繰り返しの調子・負荷予報・月初めの支出）。
 
 ---
 
@@ -83,7 +107,7 @@ UTC 基準（`UTC = JST − 9時間`）。GitHub の cron は混雑時に遅れ�
 
 1. Private リポジトリの **Actions** タブを開く
 2. 左の「締切ダイジェストをDiscordへ送る」を選ぶ
-3. **Run workflow** を押す（送信モードで `weekly` を選ぶと週次レビュー）
+3. **Run workflow** を押す（送信モードで `weekly` を選ぶと週次レビュー、`evening` を選ぶと夜の再通知）
 
 数十秒で Discord にメッセージが届けば成功。**dry_run** にチェックして実行すると、Discord には送らずログに本文だけを表示する。
 
@@ -92,6 +116,8 @@ UTC 基準（`UTC = JST − 9時間`）。GitHub の cron は混雑時に遅れ�
 ```sh
 DRY_RUN=1 bash .github/scripts/send_digest.sh                         # 毎朝の連絡
 DRY_RUN=1 DIGEST_MODE=weekly bash .github/scripts/send_digest.sh      # 週次レビュー
+DRY_RUN=1 DIGEST_MODE=evening bash .github/scripts/send_digest.sh     # 夜の再通知（対象が無ければ何も出ない）
+python3 .github/scripts/validate_data.py data.json                    # data.json の中身チェック
 DRY_RUN=1 NOW="2026-10-05 06:47" bash .github/scripts/send_digest.sh  # 日時を指定(JST)
 ````data.json` がまだ無い場合は、その旨の警告が届く（アプリの設定タブから「GitHubに同期する」を実行すると作られる）。
 
@@ -133,3 +159,39 @@ Claude のモーニングブリーフなど、このリポジトリを読める�
 - Claude のモーニングブリーフなどが GitHub を直接読めない場合は、`.github/workflows/send-feed-mail.yml` と
   `.github/scripts/send_feed_mail.py` も置くと、前日の夜と当日の早朝に締切一覧を**自分宛てのメール**（件名「【締切トラッカー】M/D（曜）の締切」）で送れる。
   使うには Gmail のアプリパスワードを作り、Secret に `GMAIL_ADDRESS` と `GMAIL_APP_PASSWORD` を登録する（未登録なら送信を飛ばすだけ）
+
+メール本文の先頭には、期限切れ・今日が締切・残り日数から決めた「おすすめの順番」（上位5件）が付く。
+カテゴリごとの重みは `send_feed_mail.py` の `CAT_WEIGHT` で変える。
+
+---
+
+## 購読用 .ics（任意）
+
+`.github/workflows/publish-ics.yml` を置くと、`data.json` の更新時と毎朝、未完了の締切の `.ics` を秘密 Gist に書き出す。
+Google カレンダーや iPhone のカレンダーで URL を購読すると、締切が自動で反映される。
+
+1. 空の秘密 Gist を作り、`deadlines.ics` というファイルを1つ置く（中身は仮でよい）。URL の末尾が Gist の ID
+2. Personal Access Token を作る（fine-grained なら **Gists: Read and write** だけ）
+3. このリポジトリの Secrets に `GIST_ID` と `GIST_TOKEN` を登録する（未登録なら何もしない）
+4. Actions →「購読用の .ics を更新」→ Run workflow
+5. 購読 URL：`https://gist.githubusercontent.com/<ユーザー名>/<GIST_ID>/raw/deadlines.ics`
+
+> ⚠️ 秘密 Gist は **URL を知っていれば誰でも読める**。メモは書き出さないが、タイトル・日時・カテゴリは外に出る。
+> 外に出したくなければ、このファイルを置かない（または Secret を登録しない）。
+> 購読カレンダーの更新は数時間〜1日おき。通知（アラーム）は無視されることが多いので、通知は Discord に任せる。
+
+---
+
+## バックアップの間引き（任意）
+
+`.github/workflows/prune-backups.yml` と `.github/scripts/prune_backups.py` を置くと、毎月28日に `backups/` の古いファイルを間引く
+（直近14日は全部、〜90日は週に1つ、それ以前は月に1つ残す。最新のものは必ず残る）。
+手動実行（Run workflow）は既定で `dry_run` がオンで、消さずに一覧だけ出す。最初はそれで確かめるとよい。
+
+---
+
+## data.json の中身チェック（任意）
+
+`validate_data.py` は、id の重複・日時として読めない `due`・不明な繰り返しの値・完了済みなのに `doneAt` が無い項目などを見つけて、
+エラーなら失敗する（カテゴリ未登録や `skip` の形式などは警告）。`check.yml` が `data.json` の更新のたびに実行し、
+失敗すると `DISCORD_WEBHOOK_URL` の Secret があれば Discord にも知らせる。

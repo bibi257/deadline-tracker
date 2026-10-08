@@ -1,0 +1,40 @@
+name: 購読用の .ics を更新
+on:
+  push:
+    branches: [main]
+    paths: ["data.json", ".github/scripts/build_ics.py"]
+  schedule:
+    - cron: "21 21 * * *"   # JST 6:21。期限切れの扱いなどを日付に合わせて作り直す
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publish-ics
+  cancel-in-progress: true
+jobs:
+  ics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 同期が落ち着くまで待つ
+        if: github.event_name == 'push'
+        run: sleep 45
+      - uses: actions/checkout@v7
+      - name: .ics を作る
+        # 購読URLは知っていれば誰でも読めるので、メモは書き出さない（タイトル・日時・カテゴリのみ）
+        env:
+          ICS_NO_MEMO: "1"
+        run: python3 .github/scripts/build_ics.py data.json "$RUNNER_TEMP/deadlines.ics" 9 || [ $? -eq 2 ]
+      - name: Gist を更新
+        # Secret の GIST_ID / GIST_TOKEN が無い間は何もしない（設定方法は README）
+        env:
+          GIST_ID: ${{ secrets.GIST_ID }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: |
+          if [ -z "$GIST_ID" ] || [ -z "$GIST_TOKEN" ]; then echo "Secret 未設定のため飛ばします"; exit 0; fi
+          f="$RUNNER_TEMP/deadlines.ics"
+          [ -f "$f" ] || printf 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//deadline-tracker//JP\r\nEND:VCALENDAR\r\n' > "$f"
+          jq -n --rawfile c "$f" '{files: {"deadlines.ics": {content: $c}}}' \
+            | curl -sf -X PATCH -H "Authorization: Bearer $GIST_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -d @- "https://api.github.com/gists/$GIST_ID" >/dev/null

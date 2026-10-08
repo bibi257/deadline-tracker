@@ -50,6 +50,53 @@ def line(e, today=None):
     return s
 
 
+# おすすめの順番で使うカテゴリの重み（無いカテゴリは0）
+CAT_WEIGHT = {"考査": 15, "課題": 10, "サブスクなど": -20}
+TOP_N = 5
+
+
+def score(e, target):
+    due = date.fromisoformat(e["due_date"])
+    d = (due - target).days
+    if d < 0:
+        s, why = 100 + min(-d * 5, 50), "%d日超過" % -d
+    elif d == 0:
+        s, why = 80, "今日が締切"
+        if e.get("due_time"):
+            h = int(e["due_time"][:2])
+            s += max(0, 10 - max(0, h - 8))   # 午前の締切ほど先に
+            why += "（%s）" % e["due_time"]
+    elif d <= 3:
+        s, why = 60 - d * 10, "あと%d日" % d
+    elif d <= 7:
+        s, why = 20 - d, "あと%d日" % d
+    else:
+        return None
+    if e.get("recurring"):
+        s -= 10
+    w = CAT_WEIGHT.get(e.get("category", ""), 0)
+    if w:
+        s += w
+        why += "・%sを優先" % e["category"] if w > 0 else ""
+    return s, why
+
+
+def priority_section(items, target):
+    rows = []
+    for e in items:
+        r = score(e, target)
+        if r:
+            rows.append((r[0], r[1], e))
+    rows.sort(key=lambda x: (-x[0], x[2]["due_date"], x[2]["title"]))
+    out = ["■ おすすめの順番（上位%d件）" % TOP_N]
+    if not rows:
+        out.append("- 急ぎのものはありません")
+    for i, (_, why, e) in enumerate(rows[:TOP_N], 1):
+        out.append("%d. %s ［%s］ … %s" % (i, e["title"], e.get("category", ""), why))
+    out.append("")
+    return out
+
+
 def build_body(feed, target):
     items = feed.get("items", [])
     over = [e for e in items if date.fromisoformat(e["due_date"]) < target]
@@ -60,6 +107,7 @@ def build_body(feed, target):
             and e not in during]
 
     out = ["%sの締切（締切トラッカーより自動送信）" % jp(target), ""]
+    out.extend(priority_section(items, target))
 
     def section(title, rows, empty):
         out.append("■ %s（%d件）" % (title, len(rows)))
