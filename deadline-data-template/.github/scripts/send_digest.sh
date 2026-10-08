@@ -6,6 +6,7 @@
 #   DRY_RUN=1          Discordへ送らず、送る内容を標準出力に表示する
 #   NOW="2026-10-01 07:00"  「現在時刻」を差し替える(JSTとして解釈)。日付をまたぐ挙動の確認用
 #   DIGEST_MODE=weekly 週次レビューを送る
+#   DIGEST_MODE=evening 夜の再通知（期限切れ・今日が締切だけ。0件なら送らない）
 set -euo pipefail
 
 # このスクリプトが置かれているディレクトリ（build_ics.py の場所）
@@ -34,6 +35,13 @@ APP_URL=""
 ATTACH_ICS="0"
 # .ics内の「当日リマインド」の時刻(24時間表記の時)
 ICS_DAY_HOUR="9"
+# 週次レビューの負荷予報で ⚠️ を付ける件数（1週間の合計 / 1カテゴリ）
+LOAD_WARN="6"
+CAT_WARN="3"
+# 週次レビューの月初めに支出をまとめるカテゴリ。メモの「¥1,980」「1980円」を集計する。空にすると出さない
+SUBSC_CAT="サブスクなど"
+# 通知の期限切れ・今日が締切の行に「✅完了」リンク(APP_URL?done=ID)を付けるか。1=付ける
+DONE_LINKS="1"
 # ---------------------------------------------------------------------------
 
 # 環境変数が指定されていればそちらを優先する（Secretsを使いたくなった場合用）
@@ -186,7 +194,7 @@ ROWS=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" --argjson win "$WINDOW_EP
     | select(.refep <= $win)
   ] | sort_by(.refep) | .[]
   | [ (.epoch|tostring), (.title // "" | clean), (.cat // "その他" | clean), .due, (.start // ""),
-      ((.allDay // false)|tostring), (.refep|tostring), (.rep // "none") ]
+      ((.allDay // false)|tostring), (.refep|tostring), (.rep // "none"), (.id // "" | clean) ]
   | join("\u001f")
 ')
 
@@ -220,6 +228,11 @@ fmt_when(){  # $1=ISO日時 または @epoch  $2=allDay
 days_from_today(){  # $1=epoch
   local key; key=$(TZ=Asia/Tokyo date -d "@$1" +%Y-%m-%d)
   echo $(( ( $(TZ=Asia/Tokyo date -d "$key" +%s) - TODAY_START ) / 86400 ))
+}
+# 「✅完了」リンク（アプリが ?done=ID を受け取れる場合に、そのまま完了確認を開く）。IDの無い項目・設定オフでは空
+done_link(){  # $1=ID
+  [ "$DONE_LINKS" = "1" ] && [ -n "$APP_URL" ] && [ -n "$1" ] || return 0
+  printf '　[✅完了](%s?done=%s)' "$APP_URL" "$(printf '%s' "$1" | jq -sRr @uri)"
 }
 # 残り日数の文言を作る
 fmt_remain(){  # $1=基準epoch $2=締切epoch $3=開始があるか
@@ -362,16 +375,129 @@ send_weekly_review(){
   if [ "$STALE_COUNT" -gt 0 ]; then
     CONTENT="${CONTENT}"$'\n'"- ⚠️ 7日以上の滞留：${STALE_COUNT}件"
   fi
-  if [ -n "$APP_URL" ]; then
-    CONTENT="${CONTENT}"$'\n\n'"## 🔗 リンク"$'\n'"- [アプリを開く](${APP_URL})"
+  local EXTRA=""
+  local REP_STATS
+  REP_STATS=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" "$JQ_LIB"'
+    def r1: . * 10 | round / 10;
+    ([ .items[]? | select((.rep // "none") != "none") | {key: .id, value: .title} ] | from_entries) as $titles
+    | if (.completions | type) != "array" then empty else
+      [ .completions[] | select(type == "object" and .rep == true and (.doneAt | type) == "string")
+        | select((.doneAt | try ep catch 0) > ($now - 28*86400))
+        | select(.kind != "bonus") ]
+      | group_by(.itemId)[]
+      | (length) as $n
+      | ([ .[] | select(.kind == "early" or .kind == "ontime") ] | length) as $ok
+      | ([ .[] | select(.kind == "late") ] | length) as $late
+      | ([ .[] | select(.kind == "auto") ] | length) as $auto
+      | ([ .[] | select(.kind != "auto") | (.lead // 0) ]) as $leads
+      | "- \(($titles[.[0].itemId] // .[0].title // "?") | clean)　"
+        + (if $auto == $n then "自動 \($auto)"
+           else "期限内 \($ok)/\($n - $auto)"
+             + (if ($leads | length) > 0 then
+                  ($leads | add / length) as $a
+                  | "　平均 " + (if $a >= 0 then "締切の\($a/24 | r1)日前" else "締切を\(-$a/24 | r1)日過ぎて" end)
+                else "" end)
+             + (if $late > 0 then "　⚠️ 遅れ\($late)" else "" end)
+           end)
+    end' 2>/dev/null || true)
+  if [ -n "$REP_STATS" ]; then
+    EXTRA="${EXTRA}"$'\n'"## 🔁 繰り返しの調子（直近4週）"$'\n'"${REP_STATS}"
   fi
 
+  local LOAD
+  LOAD=$(echo "$JSON" | jq -r --argjson s "$(( TODAY_START + 86400 ))" \
+      --argjson lw "$LOAD_WARN" --argjson cw "$CAT_WARN" "$JQ_LIB"'
+    def md: (. + 32400 | strftime("%m/%d") | sub("^0"; "") | sub("/0"; "/"));
+    # 毎週・隔週は14日に2回入ることがあるので、次回から周期ずつ足して展開する
+    def occs($from; $to):
+      if (.rep // "none") == "none" then (.due | ep) | select(. >= $from and . < $to)
+      else next_occ($from) as $f
+        | ({"weekly": 7, "biweekly": 14}[.rep] // null) as $p
+        | if $f == null then empty
+          elif $p == null then $f
+          else range(0; 3) as $k | $f + $k * $p * 86400
+          end
+        | select(. < $to)
+      end;
+    [ .items[]? | select(.done|not) | select(ok) | (.cat // "その他") as $c
+      | occs($s; $s + 14*86400) | {c: $c, w: (((. - $s) / (7*86400)) | floor)} ] as $all
+    | range(0; 2) as $w
+    | [ $all[] | select(.w == $w) ] as $x
+    | ($s + $w*7*86400) as $ws
+    | ([ $x | group_by(.c)[] | {c: .[0].c, n: length} ] | sort_by(-.n)) as $cats
+    | "- " + (if $w == 0 then "来週" else "再来週" end)
+      + " \($ws | md)〜\(($ws + 6*86400) | md)：\($x | length)件"
+      + (if ($x | length) >= $lw then " ⚠️" else "" end)
+      + (if ($cats | length) > 0 then "　" + ([ $cats[] | "\(.c | clean) \(.n)" + (if .n >= $cw then " ⚠️" else "" end) ] | join("・")) else "" end)
+  ')
+  EXTRA="${EXTRA}"$'\n'"## 📈 負荷予報"$'\n'"${LOAD}"
+
+  # 月の最初の日曜（1〜7日）だけ支出まとめを出す
+  if [ -n "$SUBSC_CAT" ] && [ "$(TZ=Asia/Tokyo date -d "@$NOW_EPOCH" +%-d)" -le 7 ]; then
+    local SUBSC
+    SUBSC=$(echo "$JSON" | jq -r --arg cat "$SUBSC_CAT" "$JQ_LIB"'
+      def yen: (.memo // "") | [ scan("(?:¥|￥)\\s*([0-9][0-9,]*)|([0-9][0-9,]*)\\s*円") | map(select(. != null))[0] ]
+               | first // null | if . == null then null else gsub(","; "") | tonumber end;
+      def permonth: {"monthly": 1, "yearly": (1/12), "weekly": (52/12), "biweekly": (26/12)}[.rep] as $f
+               | if $f == null then null else (.v * $f | round) end;
+      [ .items[]? | select(.done|not) | select((.cat // "") == $cat)
+        | {t: (.title // "" | clean), v: yen, rep: (.rep // "none")} ] as $xs
+      | [ $xs[] | select(.v != null) | . + {m: permonth} | select(.m != null) ] as $ok
+      | [ $xs[] | select(.v == null) | .t ] as $no
+      | ([ $ok[] | .m ] | add // 0) as $sum
+      | "- 月あたり 約\($sum)円（年 約\($sum * 12)円）",
+        ($ok | sort_by(-.m)[] | "  - \(.t)：\(.m)円/月"),
+        (if ($no | length) > 0 then "-# 金額が未記入：" + ($no | join("・")) + "（メモに ¥1,980 のように書くと集計されます）" else empty end)
+    ')
+    EXTRA="${EXTRA}"$'\n'"## 💳 ${SUBSC_CAT}"$'\n'"${SUBSC}"
+  fi
+
+  if [ -n "$APP_URL" ]; then
+    EXTRA="${EXTRA}"$'\n'"## 🔗 リンク"$'\n'"- [アプリを開く](${APP_URL})"
+  fi
+
+  # 節が増えて2000文字を超えやすいので、見通しと達成／繰り返し・負荷・支出に分けて送る
   send_content "$CONTENT"
+  send_content "# 📈 先々の見通し"$'\n'"${EXTRA}"
 }
 
 # 週次レビュー（日曜夜のcron、または手動実行で DIGEST_MODE=weekly のとき）
 if [ "${DIGEST_MODE:-}" = "weekly" ]; then
   send_weekly_review
+  exit 0
+fi
+
+# 夜の再通知（DIGEST_MODE=evening）。朝の通知を見逃した人向けに、
+# 「期限切れ」と「今日が締切」のものだけを送る。対象が0件なら何も送らない
+if [ "${DIGEST_MODE:-}" = "evening" ]; then
+  EVE_LINES=""
+  EVE_COUNT=0
+  if [ -n "$ROWS" ]; then
+    while IFS=$'\x1f' read -r epoch title cat due start allday refep rep id; do
+      d=$(days_from_today "$epoch")
+      [ "$d" -le 0 ] || continue
+      MARK=""
+      [ "$rep" != "none" ] && MARK="🔁 "
+      if [ "$epoch" -lt "$NOW_EPOCH" ]; then
+        if [ "$d" -eq 0 ]; then STATE="🔴 締切を過ぎました"; else STATE="🔴 $(( -d )) 日超過"; fi
+      elif [ "$allday" = "true" ]; then
+        STATE="⚡ 今日中"
+      else
+        STATE="⚡ 今日 $(TZ=Asia/Tokyo date -d "@$epoch" +%H:%M) まで"
+      fi
+      EVE_LINES="${EVE_LINES}- ${MARK}**${title}**　\`${cat}\`　${STATE}$(done_link "$id")"$'\n'
+      EVE_COUNT=$((EVE_COUNT+1))
+    done <<< "$ROWS"
+  fi
+  if [ "$EVE_COUNT" -eq 0 ]; then
+    echo "夜の再通知：対象なし（送信しません）"
+    exit 0
+  fi
+  CONTENT="${MENTION}# 🌙 まだ終わっていません（${EVE_COUNT}件）"$'\n'"${EVE_LINES}"
+  if [ -n "$APP_URL" ]; then
+    CONTENT="${CONTENT}"$'\n'"[アプリで完了にする](${APP_URL})"
+  fi
+  send_content "$CONTENT"
   exit 0
 fi
 
@@ -421,7 +547,7 @@ OVERDUE_COUNT=0
 STALE_COUNT=0
 TODAY_COUNT=0
 SOON_COUNT=0
-while IFS=$'\x1f' read -r epoch title cat due start allday refep rep; do
+while IFS=$'\x1f' read -r epoch title cat due start allday refep rep id; do
   JDATE=$(fmt_when "$due" "$allday")
   if [ -n "$start" ]; then
     SDATE=$(fmt_when "$start" "$allday")
@@ -432,6 +558,10 @@ while IFS=$'\x1f' read -r epoch title cat due start allday refep rep; do
   MARK=""
   [ "$rep" != "none" ] && MARK="🔁 "
   ENTRY="- ${MARK}**${title}**　\`${cat}\`"$'\n'"  ${JDATE}　── ${REMAIN}"$'\n'
+  # 期限切れ・今日が締切の行だけ、完了リンクを付ける（文字数の上限があるため）
+  if [ "$(days_from_today "$epoch")" -le 0 ]; then
+    ENTRY="- ${MARK}**${title}**　\`${cat}\`$(done_link "$id")"$'\n'"  ${JDATE}　── ${REMAIN}"$'\n'
+  fi
   if [ "$epoch" -lt "$NOW_EPOCH" ]; then
     OVER_LINES="${OVER_LINES}${ENTRY}"
     OVERDUE_COUNT=$((OVERDUE_COUNT+1))

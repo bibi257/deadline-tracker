@@ -1,0 +1,27 @@
+name: バックアップを間引く
+on:
+  schedule:
+    - cron: "13 19 27 * *"   # UTC 27日 19:13 = JST 28日 4:13
+  workflow_dispatch:
+    inputs:
+      dry_run: { type: boolean, default: true, description: "消さずに一覧だけ出す" }
+permissions:
+  contents: write
+concurrency:
+  group: prune-backups
+  cancel-in-progress: false
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 .github/scripts/prune_backups.py backups ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
+      - name: 変わっていればコミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A backups
+          git diff --cached --quiet && exit 0
+          git commit -q -m "古いバックアップを間引く"
+          git pull -q --rebase origin main && git push -q origin HEAD:main
