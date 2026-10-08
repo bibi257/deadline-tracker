@@ -206,7 +206,7 @@ REP_ROWS=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" "$JQ_LIB"'
     | . + {epoch: next_occ($now)}
     | select(.epoch != null)  # 回数を使い切った繰り返しは出さない
   ] | sort_by(.epoch) | .[]
-  | [ (.epoch|tostring), (.title // "" | clean), (.cat // "その他" | clean), .due, .rep, ((.allDay // false)|tostring) ]
+  | [ (.epoch|tostring), (.title // "" | clean), (.cat // "その他" | clean), .due, .rep, ((.allDay // false)|tostring), (.id // "" | clean) ]
   | join("\u001f")
 ')
 
@@ -229,10 +229,11 @@ days_from_today(){  # $1=epoch
   local key; key=$(TZ=Asia/Tokyo date -d "@$1" +%Y-%m-%d)
   echo $(( ( $(TZ=Asia/Tokyo date -d "$key" +%s) - TODAY_START ) / 86400 ))
 }
-# 「✅完了」リンク（アプリが ?done=ID を受け取れる場合に、そのまま完了確認を開く）。IDの無い項目・設定オフでは空
+# 「✅完了」リンク（アプリが ?done=ID を受け取って完了確認を開く）。IDの無い項目・設定オフでは空。
+# <> で囲むのは、行ごとに別URLのリンクプレビューが何枚も出るのを防ぐため(Discordの記法)
 done_link(){  # $1=ID
   [ "$DONE_LINKS" = "1" ] && [ -n "$APP_URL" ] && [ -n "$1" ] || return 0
-  printf '　[✅完了](%s?done=%s)' "$APP_URL" "$(printf '%s' "$1" | jq -sRr @uri)"
+  printf '　[✅完了](<%s?done=%s>)' "$APP_URL" "$(printf '%s' "$1" | jq -sRr @uri)"
 }
 # 残り日数の文言を作る
 fmt_remain(){  # $1=基準epoch $2=締切epoch $3=開始があるか
@@ -408,6 +409,7 @@ send_weekly_review(){
   LOAD=$(echo "$JSON" | jq -r --argjson s "$(( TODAY_START + 86400 ))" \
       --argjson lw "$LOAD_WARN" --argjson cw "$CAT_WARN" "$JQ_LIB"'
     def md: (. + 32400 | strftime("%m/%d") | sub("^0"; "") | sub("/0"; "/"));
+    # 繰り返しは14日の範囲に入る回をすべて展開する（隔週・毎週は2回入ることがある）
     # 毎週・隔週は14日に2回入ることがあるので、次回から周期ずつ足して展開する
     def occs($from; $to):
       if (.rep // "none") == "none" then (.due | ep) | select(. >= $from and . < $to)
@@ -430,7 +432,7 @@ send_weekly_review(){
       + (if ($x | length) >= $lw then " ⚠️" else "" end)
       + (if ($cats | length) > 0 then "　" + ([ $cats[] | "\(.c | clean) \(.n)" + (if .n >= $cw then " ⚠️" else "" end) ] | join("・")) else "" end)
   ')
-  EXTRA="${EXTRA}"$'\n'"## 📈 負荷予報"$'\n'"${LOAD}"
+  EXTRA="${EXTRA}"$'\n\n'"## 📈 負荷予報"$'\n'"${LOAD}"
 
   # 月の最初の日曜（1〜7日）だけ支出まとめを出す
   if [ -n "$SUBSC_CAT" ] && [ "$(TZ=Asia/Tokyo date -d "@$NOW_EPOCH" +%-d)" -le 7 ]; then
@@ -445,20 +447,25 @@ send_weekly_review(){
       | [ $xs[] | select(.v != null) | . + {m: permonth} | select(.m != null) ] as $ok
       | [ $xs[] | select(.v == null) | .t ] as $no
       | ([ $ok[] | .m ] | add // 0) as $sum
-      | "- 月あたり 約\($sum)円（年 約\($sum * 12)円）",
-        ($ok | sort_by(-.m)[] | "  - \(.t)：\(.m)円/月"),
+      | (if ($ok | length) > 0 then
+           "- 月あたり 約\($sum)円（年 約\($sum * 12)円）",
+           ($ok | sort_by(-.m)[] | "  - \(.t)：\(.m)円/月")
+         else empty end),
         (if ($no | length) > 0 then "-# 金額が未記入：" + ($no | join("・")) + "（メモに ¥1,980 のように書くと集計されます）" else empty end)
     ')
-    EXTRA="${EXTRA}"$'\n'"## 💳 ${SUBSC_CAT}"$'\n'"${SUBSC}"
+    if [ -n "$SUBSC" ]; then
+      EXTRA="${EXTRA}"$'\n\n'"## 💳 ${SUBSC_CAT}"$'\n'"${SUBSC}"
+    fi
   fi
 
   if [ -n "$APP_URL" ]; then
-    EXTRA="${EXTRA}"$'\n'"## 🔗 リンク"$'\n'"- [アプリを開く](${APP_URL})"
+    EXTRA="${EXTRA}"$'\n\n'"## 🔗 リンク"$'\n'"- [アプリを開く](${APP_URL})"
   fi
 
   # 節が増えて2000文字を超えやすいので、見通しと達成／繰り返し・負荷・支出に分けて送る
   send_content "$CONTENT"
-  send_content "# 📈 先々の見通し"$'\n'"${EXTRA}"
+  EXTRA=$(printf '%s' "$EXTRA" | sed '/./,$!d')   # 先頭の空行を除く
+  send_content "# 📈 先々の見通し"$'\n\n'"${EXTRA}"
 }
 
 # 週次レビュー（日曜夜のcron、または手動実行で DIGEST_MODE=weekly のとき）
@@ -468,14 +475,16 @@ if [ "${DIGEST_MODE:-}" = "weekly" ]; then
 fi
 
 # 夜の再通知（DIGEST_MODE=evening）。朝の通知を見逃した人向けに、
-# 「期限切れ」と「今日が締切」のものだけを送る。対象が0件なら何も送らない
+# 「期限切れ」と「今日が締切」（繰り返しの今日の回を含む）だけを送る。対象が0件なら何も送らない
 if [ "${DIGEST_MODE:-}" = "evening" ]; then
   EVE_LINES=""
   EVE_COUNT=0
+  EVE_SEEN=" "   # 上で拾った項目のID（繰り返しの分と二重に出さないため）
   if [ -n "$ROWS" ]; then
     while IFS=$'\x1f' read -r epoch title cat due start allday refep rep id; do
       d=$(days_from_today "$epoch")
       [ "$d" -le 0 ] || continue
+      EVE_SEEN="${EVE_SEEN}${id} "
       MARK=""
       [ "$rep" != "none" ] && MARK="🔁 "
       if [ "$epoch" -lt "$NOW_EPOCH" ]; then
@@ -488,6 +497,21 @@ if [ "${DIGEST_MODE:-}" = "evening" ]; then
       EVE_LINES="${EVE_LINES}- ${MARK}**${title}**　\`${cat}\`　${STATE}$(done_link "$id")"$'\n'
       EVE_COUNT=$((EVE_COUNT+1))
     done <<< "$ROWS"
+  fi
+  # 繰り返しの予定は、次の回（今から先で最初の回）が今日のものを加える。
+  # 回を終えていれば次回は来週以降になるので、まだ終わっていないものだけが残る
+  if [ -n "$REP_ROWS" ]; then
+    while IFS=$'\x1f' read -r epoch title cat due rep allday id; do
+      [ "$(days_from_today "$epoch")" -eq 0 ] || continue
+      case "$EVE_SEEN" in *" ${id} "*) [ -n "$id" ] && continue ;; esac
+      if [ "$allday" = "true" ]; then
+        STATE="⚡ 今日中"
+      else
+        STATE="⚡ 今日 $(TZ=Asia/Tokyo date -d "@$epoch" +%H:%M) まで"
+      fi
+      EVE_LINES="${EVE_LINES}- 🔁 **${title}**　\`${cat}\`　${STATE}$(done_link "$id")"$'\n'
+      EVE_COUNT=$((EVE_COUNT+1))
+    done <<< "$REP_ROWS"
   fi
   if [ "$EVE_COUNT" -eq 0 ]; then
     echo "夜の再通知：対象なし（送信しません）"
@@ -504,7 +528,7 @@ fi
 # 定期予定のセクションを組み立てる（次回の締切日と残り日数を表示）
 REP_LINES=""
 if [ -n "$REP_ROWS" ]; then
-  while IFS=$'\x1f' read -r epoch title cat due rep allday; do
+  while IFS=$'\x1f' read -r epoch title cat due rep allday id; do
     RDATE=$(fmt_when "@$epoch" "$allday")
     case "$rep" in
       weekly)   RLABEL="毎週" ;;

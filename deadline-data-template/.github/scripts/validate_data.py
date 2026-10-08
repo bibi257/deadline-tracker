@@ -31,11 +31,14 @@ def main():
         errors.append("読み込めません: %s" % e)
         data = {}
 
-    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        errors.append("最上位がオブジェクトではありません")
+        data = {}
+    items = data.get("items")
     if not isinstance(items, list):
         errors.append("items が配列ではありません")
         items = []
-    cats = set(data.get("categories") or []) if isinstance(data.get("categories"), list) else None
+    cats = {x for x in data["categories"] if isinstance(x, str)} if isinstance(data.get("categories"), list) else None
 
     seen = {}
     for n, it in enumerate(items):
@@ -65,7 +68,7 @@ def main():
             errors.append(name + " start が due より後です")
 
         rep = it.get("rep", "none")
-        if rep not in REPS:
+        if not isinstance(rep, str) or rep not in REPS:
             errors.append(name + " rep が不明な値です: %r" % rep)
         if it.get("done"):
             try:
@@ -75,7 +78,7 @@ def main():
 
         if not str(it.get("title") or "").strip():
             warns.append(name + " タイトルが空です")
-        if cats is not None and it.get("cat") and it["cat"] not in cats:
+        if cats is not None and isinstance(it.get("cat"), str) and it["cat"] and it["cat"] not in cats:
             warns.append(name + " カテゴリ「%s」が categories にありません" % it["cat"])
         for k in ("repCount", "seq"):
             if k in it and not is_int(it[k]):

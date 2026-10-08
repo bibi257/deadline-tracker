@@ -205,7 +205,7 @@ def main():
 
     items = []
     for i in data.get("items", []):
-        if i.get("done"):
+        if not isinstance(i, dict) or i.get("done"):
             continue
         try:
             parse_dt(i["due"])
