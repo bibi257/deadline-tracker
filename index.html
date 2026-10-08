@@ -8,7 +8,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-07 20:00 JST">
+<meta name="build-stamp" content="2026-10-08 15:30 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -2623,7 +2623,7 @@ function autoPullIfStale(){
   if(!cfg) return; // 同期の設定自体が無ければ何もしない
 
   var rawHeaders=Object.assign({}, cfg.headers, {"Accept":"application/vnd.github.raw"});
-  fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(), {headers:rawHeaders, cache:"no-store"})
+  return fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(), {headers:rawHeaders, cache:"no-store"})
     .then(function(res){
       if(!res.ok) return null; // 404やネットワーク不調などは静かに諦める(自動処理のため)
       return res.text();
@@ -3782,6 +3782,37 @@ function handleExportParam(){
   if(history.replaceState) history.replaceState(null,"",location.pathname);
 }
 
+/* ========== リンクから直接完了にする ==========
+   例: .../?done=<締切のID> で開くと、その締切の完了確認を出す。
+   Discordの通知にある「✅完了」リンクの行き先。確認なしでは完了にしない。
+   他の端末で更新されていないか確かめるため、GitHubの自動取り込み(pullDone)が終わるのを
+   最大4秒待ってから探す（待っても終わらなければ、この端末の内容で探す） */
+function handleDoneParam(pullDone){
+  var q=new URLSearchParams(location.search);
+  var id=q.get("done");
+  if(!id) return;
+  // 履歴からパラメータを消し、再読み込みで二重に完了にしないようにする
+  if(history.replaceState) history.replaceState(null,"",location.pathname);
+  if(id.length>80) return; // IDはもっと短い。異常な値は無視する
+  var waited=Promise.race([
+    Promise.resolve(pullDone).catch(function(){}),
+    new Promise(function(res){ setTimeout(res, 4000); })
+  ]);
+  waited.then(function(){
+    var it=db.items.filter(function(i){ return i.id===id; })[0];
+    if(!it){ toast("その締切が見つかりません。完了済みか、まだこの端末に同期されていない可能性があります"); return; }
+    if(it.done){ toast("「"+it.title+"」はすでに完了しています"); return; }
+    view="list"; render(); window.scrollTo(0,0);
+    // 画面を描き終えてから確認を出す（confirm中に画面が空にならないように）
+    setTimeout(function(){
+      var rep=isRepeating(it);
+      var msg="「"+it.title+"」を完了にしますか？\n締切："+fmtDue(parseItemDate(it), it.allDay)+
+              (rep?"\n（繰り返しの今回の分を完了にして、次回へ進みます）":"");
+      if(confirm(msg)) complete(it, null);
+    }, 150);
+  });
+}
+
 /* ホーム画面ショートカットからの起動(?action=add / ?action=week)を処理する */
 function handleActionParam(){
   var q=new URLSearchParams(location.search);
@@ -3852,7 +3883,8 @@ handleExportParam();
 handleActionParam();
 setInterval(function(){ autoCompleteOverdueItems(); softRender(); }, 60000); // 残り時間の更新とあわせて自動完了も確認
 checkForUpdate();
-autoPullIfStale();
+var _pullDone=autoPullIfStale();
+handleDoneParam(_pullDone);
 setInterval(checkForUpdate, 10*60000); // 10分ごとに更新を確認
 setInterval(autoPullIfStale, 10*60000); // 10分ごとにGitHub側の新しい内容を確認
 })();
