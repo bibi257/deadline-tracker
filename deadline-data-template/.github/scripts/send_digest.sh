@@ -206,7 +206,7 @@ REP_ROWS=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" "$JQ_LIB"'
     | . + {epoch: next_occ($now)}
     | select(.epoch != null)  # 回数を使い切った繰り返しは出さない
   ] | sort_by(.epoch) | .[]
-  | [ (.epoch|tostring), (.title // "" | clean), (.cat // "その他" | clean), .due, .rep, ((.allDay // false)|tostring) ]
+  | [ (.epoch|tostring), (.title // "" | clean), (.cat // "その他" | clean), .due, .rep, ((.allDay // false)|tostring), (.id // "" | clean) ]
   | join("\u001f")
 ')
 
@@ -475,14 +475,16 @@ if [ "${DIGEST_MODE:-}" = "weekly" ]; then
 fi
 
 # 夜の再通知（DIGEST_MODE=evening）。朝の通知を見逃した人向けに、
-# 「期限切れ」と「今日が締切」のものだけを送る。対象が0件なら何も送らない
+# 「期限切れ」と「今日が締切」（繰り返しの今日の回を含む）だけを送る。対象が0件なら何も送らない
 if [ "${DIGEST_MODE:-}" = "evening" ]; then
   EVE_LINES=""
   EVE_COUNT=0
+  EVE_SEEN=" "   # 上で拾った項目のID（繰り返しの分と二重に出さないため）
   if [ -n "$ROWS" ]; then
     while IFS=$'\x1f' read -r epoch title cat due start allday refep rep id; do
       d=$(days_from_today "$epoch")
       [ "$d" -le 0 ] || continue
+      EVE_SEEN="${EVE_SEEN}${id} "
       MARK=""
       [ "$rep" != "none" ] && MARK="🔁 "
       if [ "$epoch" -lt "$NOW_EPOCH" ]; then
@@ -495,6 +497,21 @@ if [ "${DIGEST_MODE:-}" = "evening" ]; then
       EVE_LINES="${EVE_LINES}- ${MARK}**${title}**　\`${cat}\`　${STATE}$(done_link "$id")"$'\n'
       EVE_COUNT=$((EVE_COUNT+1))
     done <<< "$ROWS"
+  fi
+  # 繰り返しの予定は、次の回（今から先で最初の回）が今日のものを加える。
+  # 回を終えていれば次回は来週以降になるので、まだ終わっていないものだけが残る
+  if [ -n "$REP_ROWS" ]; then
+    while IFS=$'\x1f' read -r epoch title cat due rep allday id; do
+      [ "$(days_from_today "$epoch")" -eq 0 ] || continue
+      case "$EVE_SEEN" in *" ${id} "*) [ -n "$id" ] && continue ;; esac
+      if [ "$allday" = "true" ]; then
+        STATE="⚡ 今日中"
+      else
+        STATE="⚡ 今日 $(TZ=Asia/Tokyo date -d "@$epoch" +%H:%M) まで"
+      fi
+      EVE_LINES="${EVE_LINES}- 🔁 **${title}**　\`${cat}\`　${STATE}$(done_link "$id")"$'\n'
+      EVE_COUNT=$((EVE_COUNT+1))
+    done <<< "$REP_ROWS"
   fi
   if [ "$EVE_COUNT" -eq 0 ]; then
     echo "夜の再通知：対象なし（送信しません）"
@@ -511,7 +528,7 @@ fi
 # 定期予定のセクションを組み立てる（次回の締切日と残り日数を表示）
 REP_LINES=""
 if [ -n "$REP_ROWS" ]; then
-  while IFS=$'\x1f' read -r epoch title cat due rep allday; do
+  while IFS=$'\x1f' read -r epoch title cat due rep allday id; do
     RDATE=$(fmt_when "@$epoch" "$allday")
     case "$rep" in
       weekly)   RLABEL="毎週" ;;
