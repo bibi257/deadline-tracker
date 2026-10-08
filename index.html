@@ -95,7 +95,7 @@ header{
 .count span{font-size:11px;color:var(--ink-2);letter-spacing:.12em}
 
 /* 見出しタブ：1行で横に流す。選択中は下線 */
-.tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;margin:0 -16px;padding:0 16px}
+.tabs{display:flex;gap:2px;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;overscroll-behavior-x:contain;scrollbar-width:none;margin:0 -16px;padding:0 16px}
 .tabs::-webkit-scrollbar{display:none}
 .tab{
   flex:0 0 auto;border:0;background:none;padding:8px 10px 9px;font-size:13.5px;font-weight:500;color:var(--ink-3);
