@@ -92,7 +92,7 @@ def main():
     to = frm + timedelta(days=days)
     items = []
     for it in data.get("items", []):
-        if it.get("done") or not it.get("title"):
+        if not isinstance(it, dict) or it.get("done") or not it.get("title"):
             continue
         try:
             due = parse_dt(it["due"])

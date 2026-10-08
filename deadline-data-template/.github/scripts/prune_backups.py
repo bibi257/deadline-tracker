@@ -10,6 +10,9 @@ PAT = re.compile(r"^data-(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})\.json$")
 def main():
     d = sys.argv[1]
     dry = "--dry-run" in sys.argv
+    if not os.path.isdir(d):
+        print("%s がありません。間引くものはありません" % d)
+        return
     now = datetime.now(JST)
     files = []
     for name in os.listdir(d):
