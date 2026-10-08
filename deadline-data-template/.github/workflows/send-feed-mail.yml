@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: リポジトリを取得
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: 最新の data.json から feed を作る
         run: python3 .github/scripts/build_feed.py data.json "$RUNNER_TEMP/feed.json"
