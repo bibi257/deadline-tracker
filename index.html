@@ -3746,7 +3746,11 @@ function expandOccurrences(it, fromDate, toDate){
   var d=parseItemDate(it), anchor=anchorDayOf(it);
   var span=it.start?(d-new Date(it.start)):0;
   var limit=(it.repCount&&it.repCount>0)?it.repCount:60; // 無期限でも60回で打ち切る
-  for(var k=0;k<limit;k++){
+  // 無期限の繰り返しは、締切が古くても表示範囲の手前まで先に送ってから数える。
+  // 数え始めを保存された締切にすると、放置された予定は60回分が過去で尽きて将来の回が出ない
+  var k0=0;
+  if(!(it.repCount>0)){ for(;d<fromDate && k0<5000;k0++) d=nextOccurrence(d,it.rep,anchor); }
+  for(var k=k0;k<k0+limit;k++){
     if(d>toDate) break;
     if(d>=fromDate && skip.indexOf(toLocalISO(d))<0){
       var copy=Object.assign({},it);
