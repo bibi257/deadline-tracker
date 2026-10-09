@@ -2,7 +2,7 @@
 
 仕事や生活の締切を登録して、**iPhoneのカレンダー通知**と**Discordへの毎朝の連絡**に流すための、サーバー不要な個人用Webアプリ。
 
-GitHub Pages で動く単一のHTMLファイルで、ランニングコストは0円。
+GitHub Pages で動く静的なWebアプリ（HTML 1枚＋JavaScript 1本）で、ランニングコストは0円。
 
 ```
 締切を登録
@@ -129,7 +129,8 @@ GitHub Pages で動く単一のHTMLファイルで、ランニングコストは
 
 ```
 deadline-tracker（Public / GitHub Pages で公開）
-├── index.html              アプリ本体（HTML/CSS/JS をすべて内包）
+├── index.html              画面の骨組みとCSS
+├── app.js                  アプリ本体のJavaScript（CSPで inline script を許さないため分けている）
 ├── manifest.webmanifest    ホーム画面追加用の設定
 ├── service-worker.js       オフライン起動用
 ├── assets/
@@ -167,7 +168,7 @@ Public リポジトリはファイル一覧もコミット履歴も公開され�
 | 要素 | 内容 |
 |---|---|
 | ホスティング | GitHub Pages |
-| フロントエンド | HTML / CSS / JavaScript（フレームワークなし・単一ファイル） |
+| フロントエンド | HTML / CSS / JavaScript（フレームワークなし・ビルド不要） |
 | データ保存 | localStorage ＋ GitHub Contents API による同期 |
 | 定期実行 | GitHub Actions（cron） |
 | 費用 | 0円 |
@@ -178,7 +179,7 @@ Public リポジトリはファイル一覧もコミット履歴も公開され�
 
 ### 1. アプリを公開する
 
-1. `index.html`・`manifest.webmanifest`・`service-worker.js`・`assets/` フォルダを、自分の Public リポジトリにアップロードする
+1. `index.html`・`app.js`・`manifest.webmanifest`・`service-worker.js`・`assets/` フォルダを、自分の Public リポジトリにアップロードする
 2. **Settings → Pages** を開き、Source を `Deploy from a branch`、Branch を `main / (root)` にして Save
 3. 1〜2分待つと `https://<ユーザー名>.github.io/<リポジトリ名>/` で開く
 
@@ -296,7 +297,7 @@ Discord の毎朝の通知には `?export=all` のリンクが載る。
 
 ## 祝日データの更新
 
-`index.html` 内の `HOLIDAYS` に 2026〜2032年分を直書きしている。通信不要でオフラインでも動く代わりに、**収録範囲を過ぎたら手動で更新が必要**。
+`app.js` 内の `HOLIDAYS` に 2026〜2032年分を直書きしている。通信不要でオフラインでも動く代わりに、**収録範囲を過ぎたら手動で更新が必要**。
 
 出典は [holiday_jp](https://github.com/holiday-jp/holiday_jp)（内閣府「国民の祝日について」を元にしたデータ）。同リポジトリの `holidays.yml` から必要な年を抜き出して置き換える。法改正や振替で変わることがあるため、年に一度は確認するとよい。
 
@@ -315,6 +316,16 @@ Discord などの添付ファイルを直接タップすると、iOS は「照�
 **同期は上書き**
 
 差分のマージは行わない。詳細は「2. 端末間で同期する」の注記を参照。
+
+**GitHub トークンの保存と CSP**
+
+設定タブで「この端末にトークンを保存」を選ぶと、トークンは**暗号化して**保存する。ブラウザが端末ごとに作る「取り出せない鍵」（WebCrypto）で AES-GCM 暗号化し、鍵は IndexedDB、暗号文（`enc1:...`）は localStorage に置く。以前の版が平文で保存していた値は、開いたときに自動で暗号化し直す。
+
+- 守れるのは、localStorage の中身だけが漏れた場合（バックアップの流出・保存領域の抜き出し・画面の写り込みなど）。同じページで動くスクリプトが乗っ取られた場合は、鍵を使って復号されてしまう。そちらは CSP（`script-src 'self'`：`app.js` 以外のスクリプトを実行しない、通信先は GitHub・Discord だけ）で防ぐ
+- ブラウザのサイトデータを消すなどで鍵が失われると、保存済みのトークンは読めなくなる。そのときは自動で消えるので、入力し直す
+- 暗号化できない環境（IndexedDB / WebCrypto が使えない）では、平文で残さず保存しない。設定タブにその旨が出て、今回の操作にだけトークンを使う
+- Discord の Webhook URL（「この端末に保存」）は、まだ平文で localStorage に置いている
+- CSP のため、HTML にインライン `<script>` や `onclick="..."` を書かない（イベントは `app.js` で付ける）。`style-src` の `'unsafe-inline'` は、画面を組み立てる `style="..."` のために残している
 
 ---
 
