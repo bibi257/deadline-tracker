@@ -364,7 +364,7 @@ send_weekly_review(){
            else empty end)
         ] | .[]
     end
-  ' 2>/dev/null || true)
+  ' || echo "注意: 「この1週間の達成」の集計に失敗したため、件数のみ表示します" >&2)
 
   local CONTENT="# 📅 来週の見通し"$'\n'"### $(TZ=Asia/Tokyo date -d "@${NOW_EPOCH}" "+%-m月%-d日（$(jp_dow "@$NOW_EPOCH")）")の週次レビュー"$'\n\n'
   CONTENT="${CONTENT}## 🗓️ 来週7日間"$'\n'"${BY_DAY}"
@@ -400,7 +400,7 @@ send_weekly_review(){
                 else "" end)
              + (if $late > 0 then "　⚠️ 遅れ\($late)" else "" end)
            end)
-    end' 2>/dev/null || true)
+    end' || echo "注意: 「繰り返しの調子」の集計に失敗したため、この節を省きます" >&2)
   if [ -n "$REP_STATS" ]; then
     EXTRA="${EXTRA}"$'\n'"## 🔁 繰り返しの調子（直近4週）"$'\n'"${REP_STATS}"
   fi
