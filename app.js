@@ -72,18 +72,19 @@ function secretGet(name){
   if(raw.indexOf("enc1:")!==0){
     _secretCache[name]=raw;
     if(hasLS) secretSet(name, raw).then(function(ok){ // 暗号化できればその場で置き換える。できなければ平文は残さず消す（今回の起動中は使える）
-      if(!ok) toast("この端末では暗号化して保存できないため、保存してあったトークンを消しました。次回は入力し直してください");
+      if(!ok) toast("この端末では暗号化して保存できないため、保存してあったトークン・Webhook URLを消しました。次回は入力し直してください");
     });
     return Promise.resolve(raw);
   }
   var parts=raw.split(":");
   return _secretKey().then(function(key){
-    if(!key||parts.length!==3) throw 0;
-    return crypto.subtle.decrypt({name:"AES-GCM",iv:_unb64(parts[1])}, key, _unb64(parts[2]));
-  }).then(function(buf){
-    var v=new TextDecoder().decode(buf);
-    _secretCache[name]=v;
-    return v;
+    if(!key) return ""; // 鍵を取れなかった（一時的なエラーかもしれない）。保存してある値は消さずに、今回だけ空として扱う
+    if(parts.length!==3) throw 0;
+    return crypto.subtle.decrypt({name:"AES-GCM",iv:_unb64(parts[1])}, key, _unb64(parts[2])).then(function(buf){
+      var v=new TextDecoder().decode(buf);
+      _secretCache[name]=v;
+      return v;
+    });
   }).catch(function(){
     // 鍵が消えている（サイトデータの削除など）と復号できない。読めない値は残さず、入力し直してもらう
     secretDel(name);
