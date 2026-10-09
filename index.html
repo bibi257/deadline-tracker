@@ -3069,16 +3069,6 @@ function doSync(cfg,statusEl,backedUp){
   var payload=syncPayload(); // 自動同期と同じ内容を送る（以前は catReminders が抜けていた）
   var content=utf8ToBase64(JSON.stringify(payload,null,2));
 
-  // 現在のsha(ファイルの版番号)を取得する。キャッシュされた古いshaを送ると409になるため無効化する
-  function fetchSha(){
-    return fetch(api+"?ref="+encodeURIComponent(branch)+"&_="+Date.now(),
-                 {headers:headers, cache:"no-store"})
-      .then(function(res){
-        if(res.status===404) return null; // まだ無い＝新規作成
-        if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
-        return res.json().then(function(j){ return j.sha; });
-      });
-  }
   function put(sha){
     var body={ message:"締切データを同期（"+new Date().toLocaleString("ja-JP")+"）",
                content:content, branch:branch };
@@ -3104,8 +3094,11 @@ function doSync(cfg,statusEl,backedUp){
     })
     .then(put)
     .then(function(res){
-      if(res.status===409){ // 版が競合したら最新shaを取り直して1度だけやり直す
-        return fetchSha().then(put);
+      if(res.status===409){ // 版が競合したら、他端末の更新を確認し直してから1度だけやり直す（自動同期と同じ）
+        return fetchRemoteState(cfg).then(function(r){
+          if(remoteHasUnknownChanges(r)) throw new Error("__sync_cancelled__");
+          return put(r.sha);
+        });
       }
       return res;
     })
