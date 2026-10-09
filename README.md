@@ -129,7 +129,9 @@ GitHub Pages で動く単一のHTMLファイルで、ランニングコストは
 
 ```
 deadline-tracker（Public / GitHub Pages で公開）
-├── index.html              アプリ本体（HTML/CSS/JS をすべて内包）
+├── index.html              アプリ本体（HTML）
+├── app.js                  アプリの動作（JavaScript）
+├── styles.css              見た目（CSS）
 ├── manifest.webmanifest    ホーム画面追加用の設定
 ├── service-worker.js       オフライン起動用
 ├── assets/
@@ -178,7 +180,7 @@ Public リポジトリはファイル一覧もコミット履歴も公開され�
 
 ### 1. アプリを公開する
 
-1. `index.html`・`manifest.webmanifest`・`service-worker.js`・`assets/` フォルダを、自分の Public リポジトリにアップロードする
+1. `index.html`・`app.js`・`styles.css`・`manifest.webmanifest`・`service-worker.js`・`assets/` フォルダを、自分の Public リポジトリにアップロードする（更新するときも、変えたファイルすべてを上書きし、`index.html` の build-stamp を更新する）
 2. **Settings → Pages** を開き、Source を `Deploy from a branch`、Branch を `main / (root)` にして Save
 3. 1〜2分待つと `https://<ユーザー名>.github.io/<リポジトリ名>/` で開く
 
@@ -296,7 +298,7 @@ Discord の毎朝の通知には `?export=all` のリンクが載る。
 
 ## 祝日データの更新
 
-`index.html` 内の `HOLIDAYS` に 2026〜2032年分を直書きしている。通信不要でオフラインでも動く代わりに、**収録範囲を過ぎたら手動で更新が必要**。
+`app.js` 内の `HOLIDAYS` に 2026〜2032年分を直書きしている。通信不要でオフラインでも動く代わりに、**収録範囲を過ぎたら手動で更新が必要**。
 
 出典は [holiday_jp](https://github.com/holiday-jp/holiday_jp)（内閣府「国民の祝日について」を元にしたデータ）。同リポジトリの `holidays.yml` から必要な年を抜き出して置き換える。法改正や振替で変わることがあるため、年に一度は確認するとよい。
 
