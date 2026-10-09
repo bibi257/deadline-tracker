@@ -1557,6 +1557,7 @@ function deleteItem(it){
   db.trash.push({trashId:trashId, item:lastDeleted.item, deletedAt:new Date().toISOString()});
   if(db.trash.length>30) db.trash.shift(); // 上限を超えたら最も古いものから消える
   save(); render();
+  playSfx("remove");
   toast("「"+it.title+"」を削除しました", "元に戻す", undoDelete);
   scheduleAutoSync();
 }
@@ -2473,6 +2474,19 @@ function renderSettings(){
   });
   main.appendChild(s3b);
 
+  // 効果音
+  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときに短い音を鳴らします。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
+  [["on","あり"],["off","なし"]].forEach(function(p){
+    var b=h('<button class="chip">'+p[1]+'</button>');
+    b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
+    b.onclick=function(){
+      db.settings.sound=p[0]; saveRaw(); render(); // 設定は同期対象外なのでupdatedAtは進めない
+      if(p[0]==="on"){ unlockAudio(); playSfx("done"); } // 押した操作の中で鳴らして、音が出ることを確かめられるようにする
+    };
+    s3c.querySelector(".row").appendChild(b);
+  });
+  main.appendChild(s3c);
+
   // バックアップ
   var s4=h('<div class="sec"><h3>バックアップと復元</h3><p>データは端末ごとに保存されます。PCとiPhoneで同じ内容にしたいときは、書き出したファイルを読み込んでください。</p><div class="row"></div></div>');
   var bOut=h('<button class="btn">JSONで書き出す</button>');
@@ -3327,6 +3341,7 @@ dlgForm.addEventListener("submit",function(e){
     if(dlgColor) it.color=dlgColor;
     db.items.push(it);
     justAddedId=it.id;
+    playSfx("add");
     if(motionOn()) playQuestAccept(it);
     else toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
     // 隔離項目の修復中だった場合は、保存できたので隔離から取り除く
@@ -3443,6 +3458,7 @@ function complete(it, cardEl){
   // データは先に保存する（演出中に閉じても完了は残る）。描き直しだけ演出のあとに回す
   save();
   scheduleAutoSync();
+  playSfx("done");
   if(cardEl && motionOn()){
     // 今日の全クリアは、達成の帯が閉じたあと（自動でもタップでも）続けて出す
     playQuestClear(it.title, reward, sub, reward.allClear?function(){ playAllClear(reward.allClear); }:null);
@@ -3457,6 +3473,48 @@ function complete(it, cardEl){
 function motionOn(){
   if(db.settings.motion==="off") return false;
   return !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
+/* 効果音：Web Audio API でその場で作る（音声ファイルは使わない）。設定でオン/オフ、初期値はオフ。
+   音を出す操作は、登録・完了・削除の3つ。端末の設定（演出とは別）なので同期の対象外 */
+var _audioCtx=null;
+function soundOn(){ return db.settings.sound==="on"; }
+function audioCtx(){
+  if(_audioCtx) return _audioCtx;
+  var AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC) return null;
+  try{ _audioCtx=new AC(); }catch(e){ _audioCtx=null; }
+  return _audioCtx;
+}
+/* ブラウザは画面の操作がないと音を出せない（特にiPhone）。最初のタップ/キー入力で用意しておく */
+function unlockAudio(){
+  if(!soundOn()) return;
+  var ctx=audioCtx();
+  if(ctx && ctx.state==="suspended") ctx.resume().catch(function(){});
+}
+["pointerdown","keydown","touchend"].forEach(function(ev){ document.addEventListener(ev, unlockAudio, {passive:true}); });
+/* 音の並び [周波数Hz, 開始秒, 長さ秒]。やわらかい正弦波＋短いアタックと減衰で、クリック音を避ける */
+var SFX={
+  add:    [[660,0,.11],[880,.09,.16]],                       // 登録：軽い2音（上がる）
+  done:   [[523.25,0,.12],[659.25,.09,.12],[783.99,.18,.26]], // 完了：ド・ミ・ソ（明るい）
+  remove: [[440,0,.11],[329.63,.09,.2]]                       // 削除：2音（下がる）
+};
+function playSfx(kind){
+  if(!soundOn() || !SFX[kind]) return;
+  try{
+    var ctx=audioCtx(); if(!ctx) return;
+    if(ctx.state==="suspended") ctx.resume().catch(function(){});
+    var t0=ctx.currentTime+.02;
+    SFX[kind].forEach(function(n){
+      var osc=ctx.createOscillator(), g=ctx.createGain(), s=t0+n[1], e=s+n[2];
+      osc.type="sine"; osc.frequency.setValueAtTime(n[0], s);
+      g.gain.setValueAtTime(.0001, s);
+      g.gain.exponentialRampToValueAtTime(.18, s+.015);
+      g.gain.exponentialRampToValueAtTime(.0001, e);
+      osc.connect(g); g.connect(ctx.destination);
+      osc.start(s); osc.stop(e+.02);
+    });
+  }catch(e){ /* 音が出せなくても操作は止めない */ }
 }
 
 /* 経験値：期限内に早く終えるほど多い。100 EXP ごとにレベルが1上がる（この端末だけの記録） */
