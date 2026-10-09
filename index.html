@@ -3,12 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- 通信先と読み込み元を必要なものだけに絞る（トークン流出・外部スクリプト混入の対策）。
+     外部へ通信する機能（GitHub同期・Discord送信・フォント）を足すときは、ここにも追加すること -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://api.github.com https://discord.com https://discordapp.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'">
 <!-- ブラウザがHTMLを保持し続けないようにする（更新をすぐ反映させるため） -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-08 15:30 JST">
+<meta name="build-stamp" content="2026-10-08 18:00 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
