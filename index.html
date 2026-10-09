@@ -11,7 +11,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う） -->
-<meta name="build-stamp" content="2026-10-08 18:00 JST">
+<meta name="build-stamp" content="2026-10-09 10:19 JST">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -671,6 +671,17 @@ function sanitizeIncomingItems(rawItems){
     kept.push(fixed);
   });
   return {kept:kept, quarantined:quarantined};
+}
+/* 取り込んだテンプレート・カテゴリの形を整える。名前が文字列でないものは捨てる
+   （項目と同じく、壊れた値で候補や表示を崩さないため）。無ければ null を返す */
+function sanitizeIncomingMeta(d){
+  var out={templates:null, categories:null};
+  if(Array.isArray(d.templates)) out.templates=d.templates.filter(function(t){ return t&&typeof t==="object"&&typeof t.name==="string"&&t.name; });
+  if(Array.isArray(d.categories)){
+    var cats=d.categories.filter(function(c){ return typeof c==="string"&&c.trim(); });
+    if(cats.length) out.categories=cats;
+  }
+  return out;
 }
 
 /* ========== 日付ユーティリティ ========== */
@@ -2512,9 +2523,10 @@ function renderSettings(){
         var check=sanitizeIncomingItems(d.items);
         db.items=check.kept;
         if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
-        if(Array.isArray(d.templates)) db.templates=d.templates;
+        var meta=sanitizeIncomingMeta(d);
+        if(meta.templates) db.templates=meta.templates;
         if(Array.isArray(d.trash)) db.trash=d.trash;
-        if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
+        if(meta.categories) db.categories=meta.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
         adoptCompletions(d);
@@ -2668,9 +2680,10 @@ function autoPullIfStale(){
         var check=sanitizeIncomingItems(d.items);
         db.items=check.kept;
         if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
-        if(Array.isArray(d.templates)) db.templates=d.templates;
+        var meta=sanitizeIncomingMeta(d);
+        if(meta.templates) db.templates=meta.templates;
         if(Array.isArray(d.trash)) db.trash=d.trash;
-        if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
+        if(meta.categories) db.categories=meta.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
         adoptCompletions(d);
@@ -2714,14 +2727,17 @@ function ackPublicRepo(owner,repo){
 function guardPublicRepo(cfg){
   if(ackedPublicRepo(cfg.owner,cfg.repo)) return Promise.resolve();
   return checkRepoVisibility(cfg).then(function(isPublic){
-    if(isPublic!==true) return; // Private、または判定不能なら先へ進む
-    var ok=confirm(
-      "「"+cfg.owner+"/"+cfg.repo+"」はPublicリポジトリです。\n\n"+
-      "締切の内容（タイトル・メモなど）が誰でも見られる状態になります。\n\n"+
-      "本当にこのリポジトリを使い続けますか？"
-    );
+    if(isPublic===false) return; // Private なら先へ進む
+    // Public、または判定できなかった（null）ときは確認する。判定できないまま黙って進めない
+    var ok=confirm(isPublic===true
+      ? "「"+cfg.owner+"/"+cfg.repo+"」はPublicリポジトリです。\n\n"+
+        "締切の内容（タイトル・メモなど）が誰でも見られる状態になります。\n\n"+
+        "本当にこのリポジトリを使い続けますか？"
+      : "「"+cfg.owner+"/"+cfg.repo+"」の公開設定を確認できませんでした。\n\n"+
+        "Publicなら、締切の内容（タイトル・メモなど）が誰でも見られる状態になります。\n\n"+
+        "このまま続けますか？");
     if(!ok) return Promise.reject(new Error("__public_cancelled__"));
-    ackPublicRepo(cfg.owner,cfg.repo);
+    if(isPublic===true) ackPublicRepo(cfg.owner,cfg.repo); // Publicと承知した場合だけ記録する
   });
 }
 
@@ -2895,9 +2911,8 @@ function sendToDiscord(s6,s5){
   var g=function(id){ return s5.querySelector("#"+id); };
   fetchWebhookFromRepo(g,statusEl)
     .then(function(url){
-      store.set("dc-hook", url);           // 次回以降は取得しなくて済む
+      // 保存はしない。この端末に保存するかは「この端末に保存」の選択に任せる（URLはGitHubのスクリプトが持つ）
       s6.querySelector("#dcHook").value=url;
-      s6.querySelector("#dcRemember").checked=true;
       return post(url);
     })
     .catch(function(err){
@@ -2962,9 +2977,10 @@ function proceedPull(cfg,statusEl){
       if(check.quarantined.length){
         db.quarantine=db.quarantine.concat(check.quarantined);
       }
-      if(Array.isArray(d.templates)) db.templates=d.templates;
+      var meta=sanitizeIncomingMeta(d);
+      if(meta.templates) db.templates=meta.templates;
       if(Array.isArray(d.trash)) db.trash=d.trash;
-      if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
+      if(meta.categories) db.categories=meta.categories;
       if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
       adoptCompletions(d);
@@ -3005,13 +3021,11 @@ function syncToGitHub(g,s5){
   statusEl.textContent="リポジトリの公開設定を確認しています…";
   guardPublicRepo(cfg).then(function(){
     proceedSync(cfg,statusEl);
-  }).catch(function(err){
-    if(err&&err.message==="__public_cancelled__"){
-      statusEl.textContent="同期を中止しました。";
-    } else {
-      // 確認自体が失敗した場合は、安全側に倒して同期は進める
-      proceedSync(cfg,statusEl);
-    }
+  }, function(err){
+    // 中止したとき、または公開設定を確かめられなかったときは送らない（公開されるかもしれない内容を送らない）
+    statusEl.textContent=(err&&err.message==="__public_cancelled__")
+      ? "同期を中止しました。"
+      : "公開設定を確認できなかったため、同期を中止しました。";
   });
 }
 
@@ -3069,16 +3083,6 @@ function doSync(cfg,statusEl,backedUp){
   var payload=syncPayload(); // 自動同期と同じ内容を送る（以前は catReminders が抜けていた）
   var content=utf8ToBase64(JSON.stringify(payload,null,2));
 
-  // 現在のsha(ファイルの版番号)を取得する。キャッシュされた古いshaを送ると409になるため無効化する
-  function fetchSha(){
-    return fetch(api+"?ref="+encodeURIComponent(branch)+"&_="+Date.now(),
-                 {headers:headers, cache:"no-store"})
-      .then(function(res){
-        if(res.status===404) return null; // まだ無い＝新規作成
-        if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
-        return res.json().then(function(j){ return j.sha; });
-      });
-  }
   function put(sha){
     var body={ message:"締切データを同期（"+new Date().toLocaleString("ja-JP")+"）",
                content:content, branch:branch };
@@ -3104,8 +3108,11 @@ function doSync(cfg,statusEl,backedUp){
     })
     .then(put)
     .then(function(res){
-      if(res.status===409){ // 版が競合したら最新shaを取り直して1度だけやり直す
-        return fetchSha().then(put);
+      if(res.status===409){ // 版が競合したら、他端末の更新を確認し直してから1度だけやり直す（自動同期と同じ）
+        return fetchRemoteState(cfg).then(function(r){
+          if(remoteHasUnknownChanges(r)) throw new Error("__sync_cancelled__");
+          return put(r.sha);
+        });
       }
       return res;
     })
@@ -3746,7 +3753,11 @@ function expandOccurrences(it, fromDate, toDate){
   var d=parseItemDate(it), anchor=anchorDayOf(it);
   var span=it.start?(d-new Date(it.start)):0;
   var limit=(it.repCount&&it.repCount>0)?it.repCount:60; // 無期限でも60回で打ち切る
-  for(var k=0;k<limit;k++){
+  // 無期限の繰り返しは、締切が古くても表示範囲の手前まで先に送ってから数える。
+  // 数え始めを保存された締切にすると、放置された予定は60回分が過去で尽きて将来の回が出ない
+  var k0=0;
+  if(!(it.repCount>0)){ for(;d<fromDate && k0<5000;k0++) d=nextOccurrence(d,it.rep,anchor); }
+  for(var k=k0;k<k0+limit;k++){
     if(d>toDate) break;
     if(d>=fromDate && skip.indexOf(toLocalISO(d))<0){
       var copy=Object.assign({},it);
