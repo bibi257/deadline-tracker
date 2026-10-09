@@ -152,6 +152,7 @@ fi
 #              月末(31日など)は各月の末日に丸める。$anchor はアプリが記録した基準日(repDay)
 #   next_occ : 基準時刻 $t 以降で最初の回(取りやめた回=skip は飛ばす)
 #   rows_safe: 1行1件で渡すため、タイトル等の改行と区切り文字を除く
+# shellcheck disable=SC2016  # jq のプログラム。$t・$anchor は jq の変数なのでシェルに展開させない
 JQ_LIB='
 def ep: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
 def ok: (.due | type) == "string" and ((.due | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) != null);
@@ -366,7 +367,8 @@ send_weekly_review(){
     end
   ' || echo "注意: 「この1週間の達成」の集計に失敗したため、件数のみ表示します" >&2)
 
-  local CONTENT="# 📅 来週の見通し"$'\n'"### $(TZ=Asia/Tokyo date -d "@${NOW_EPOCH}" "+%-m月%-d日（$(jp_dow "@$NOW_EPOCH")）")の週次レビュー"$'\n\n'
+  local CONTENT
+  CONTENT="# 📅 来週の見通し"$'\n'"### $(TZ=Asia/Tokyo date -d "@${NOW_EPOCH}" "+%-m月%-d日（$(jp_dow "@$NOW_EPOCH")）")の週次レビュー"$'\n\n'
   CONTENT="${CONTENT}## 🗓️ 来週7日間"$'\n'"${BY_DAY}"
   if [ -n "$WEEK_DONE" ]; then
     CONTENT="${CONTENT}"$'\n'"## 🏆 この1週間の達成"$'\n'"${WEEK_DONE}"
