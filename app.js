@@ -558,7 +558,8 @@ function render(){
   document.documentElement.classList.toggle("no-motion", !motionOn());
   setTimeout(countUpSummary, 0);
 
-  var tabView=(view==="day")?"week":view; // 日表示は今週タブの一部として扱う
+  // 日表示は今週タブ、超過・定期予定は一覧タブの一部として扱う（設定は歯車なので、どのタブも選ばない）
+  var tabView=(view==="day")?"week":(view==="over"||view==="rep")?"list":view;
   var tabsChanged=(tabView!==_lastTabView);
   document.querySelectorAll(".tab").forEach(function(t){
     t.setAttribute("aria-selected", t.dataset.view===tabView?"true":"false");
@@ -570,12 +571,15 @@ function render(){
   });
   if(tabsChanged) _lastTabView=tabView;
   if(_tabsScroller) requestAnimationFrame(_tabsScroller.update);
-  // 超過タブには件数を出し、開かなくても気づけるようにする
-  var overTab=document.querySelector('.tab[data-view="over"]');
-  if(overTab){
-    var n=over.length;
-    overTab.innerHTML="超過"+(n?'<span class="tab-badge">'+n+"</span>":"");
+  // 期限切れの件数は一覧タブに出し、ほかの画面にいても気づけるようにする
+  var overBadge=document.querySelector('.tab[data-view="list"] .tab-badge');
+  if(overBadge){
+    overBadge.hidden=!over.length;
+    overBadge.textContent=over.length||"";
+    overBadge.setAttribute("aria-label","期限切れ "+over.length+" 件");
   }
+  var gear=document.getElementById("gearBtn");
+  if(gear) gear.setAttribute("aria-pressed", view==="set"?"true":"false");
   document.getElementById("fabAdd").style.display = (view==="set")?"none":"";
 
   main.innerHTML="";
@@ -839,7 +843,7 @@ function cardOf(it){
         if(confirm(key+" の回だけ取りやめます。よろしいですか？")) animateCardOut(el, "skipping", "休み", function(){ skipOccurrence(it.id, key); });
       });
       add("カレンダーへ","primary",function(){ downloadICS([it], it.title); });
-      var note=h('<div style="font-size:11.5px;color:var(--ink-3);margin-top:6px">完了・編集は「定期予定」タブから行ってください</div>');
+      var note=h('<div style="font-size:11.5px;color:var(--ink-3);margin-top:6px">完了・編集は「定期予定」の一覧（一覧の下のリンク）から行ってください</div>');
       el.querySelector(".body").appendChild(note);
     } else {
       add("完了にする","main",function(){ complete(it, el); });
@@ -864,6 +868,15 @@ function cardOf(it){
     });
   }
   add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ animateCardOut(el, "deleting", "", function(){ deleteItem(it); }); } });
+  var mainAct=acts.querySelector(".act.main");
+  if(mainAct){
+    var more=h('<div class="more" hidden></div>');
+    Array.prototype.slice.call(acts.children).forEach(function(b){ if(b!==mainAct) more.appendChild(b); });
+    var tg=h('<button type="button" class="act more-btn" aria-expanded="false" aria-label="ほかの操作" title="ほかの操作">…</button>');
+    tg.onclick=function(){ more.hidden=!more.hidden; tg.setAttribute("aria-expanded", more.hidden?"false":"true"); };
+    acts.appendChild(tg);
+    acts.parentNode.appendChild(more);
+  }
   return el;
 }
 
@@ -891,7 +904,7 @@ function autoSyncWith(cfg){
       if(remoteHasUnknownChanges(r)){
         if(!_autoSyncBlockedShown){
           _autoSyncBlockedShown=true;
-          toast("GitHubに他の端末の更新があるため、自動同期を止めました。設定タブで読み込むか同期するかを選んでください");
+          toast("GitHubに他の端末の更新があるため、自動同期を止めました。設定（右上の歯車）で読み込むか同期するかを選んでください");
         }
         return null;
       }
@@ -1176,15 +1189,36 @@ function purgeQuarantineItem(qid){
 function isRepeating(it){ return !!(it.rep&&it.rep!=="none"); }
 
 /* タイトル・メモの部分一致で絞り込む検索欄 */
+var searchOpen=false;
 function searchBar(){
-  var bar=h('<div style="margin:12px 0 -2px"><input type="text" id="searchBox" placeholder="タイトルで検索"></div>');
+  var bar=h('<div class="search-row"><input type="text" id="searchBox" placeholder="タイトル・メモで検索" aria-label="タイトル・メモで検索"><button type="button" class="btn">閉じる</button></div>');
   var input=bar.querySelector("input");
   input.value=searchKw;
   input.oninput=function(){
     searchKw=input.value;
     renderListBody(); // 欄自体は再描画せず、結果だけ差し替えてIME入力中の欠落を防ぐ
   };
+  bar.querySelector("button").onclick=function(){ searchOpen=false; searchKw=""; render(); };
   return bar;
+}
+/* 一覧の絞り込みの列：カテゴリの右に「↻ 定期」（定期予定も出すか）と虫めがね（検索欄を開く）を置く */
+function listFilterRow(){
+  var showRoutine=store.get("list-show-routine")!=="0";
+  var row=h('<div class="fbar"></div>');
+  row.appendChild(filterBar());
+  var tools=h('<div class="ftools">'+
+    '<button type="button" class="chip rt-chip" aria-pressed="'+showRoutine+'" title="定期予定も一覧に出す"><i aria-hidden="true">↻</i>定期</button>'+
+    '<button type="button" class="chip icon-chip" aria-label="タイトル・メモで検索" aria-expanded="'+searchOpen+'">'+
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg></button></div>');
+  tools.children[0].onclick=function(){ store.set("list-show-routine", showRoutine?"0":"1"); render(); };
+  tools.children[1].onclick=function(){
+    searchOpen=!searchOpen;
+    if(!searchOpen) searchKw="";
+    render();
+    var box=document.getElementById("searchBox"); if(box) box.focus();
+  };
+  row.appendChild(tools);
+  return row;
 }
 function matchesSearch(it){
   if(!searchKw.trim()) return true;
@@ -1195,8 +1229,8 @@ function matchesSearch(it){
 function renderList(){
   main.appendChild(quickBar());
   main.appendChild(todaySummary());
-  main.appendChild(filterBar());
-  main.appendChild(searchBar());
+  main.appendChild(listFilterRow());
+  if(searchOpen||searchKw.trim()) main.appendChild(searchBar());
   var body=h('<div id="listBody"></div>');
   main.appendChild(body);
   renderListBody();
@@ -1356,35 +1390,33 @@ function todayItems(){
 }
 function todaySummary(){
   var t=todayItems();
-  var collapsed=store.get("ui-summary-collapsed")==="1";
+  var open=store.get("ui-summary-open")==="1";
   var total=t.due.length+t.routines.length+t.starts.length;
-  var el=h('<section class="sum"><button class="sum-head" aria-expanded="'+(!collapsed)+'"><b>今日のサマリー</b>'+
-    '<span>'+(collapsed?(total?"今日 "+total+" 件"+(t.stale.length?"・滞留 "+t.stale.length+" 件":"")+"　▾":"今日の予定なし　▾"):"▴")+'</span></button></section>');
-  el.querySelector(".sum-head").onclick=function(){ store.set("ui-summary-collapsed", collapsed?"0":"1"); render(); };
-  if(collapsed) return el;
-  var body=h('<div class="sum-body"></div>');
-  function cell(n,label,cls,fn){
-    var c=h('<button class="sum-cell '+(n&&cls?cls:"")+'"><span class="num" data-to="'+n+'">'+n+'</span><small>'+label+'</small></button>');
-    c.onclick=fn; body.appendChild(c);
+  var el=h('<section class="sum" aria-label="今日のサマリー"><div class="sum-row"><b class="sum-title">今日</b><div class="sum-cells"></div>'+
+    '<button type="button" class="sum-toggle" aria-expanded="'+open+'">'+(open?"▴ 閉じる":"▾ 予定")+'</button></div></section>');
+  var cells=el.querySelector(".sum-cells");
+  function cell(n,label,title,cls,fn){
+    var c=h('<button type="button" class="sum-cell '+(n&&cls?cls:"")+'" title="'+title+'"><small>'+label+'</small><span class="num" data-to="'+n+'">'+n+'</span></button>');
+    c.onclick=fn; cells.appendChild(c);
   }
-  var goWeek=function(){ view="week"; window.scrollTo(0,0); render(); };
-  cell(t.due.length,"今日が締切","hot",goWeek);
-  cell(t.routines.length,"今日の定期予定","rt",goWeek);
-  cell(t.starts.length,"今日から開始","",goWeek);
-  cell(t.stale.length,"7日以上の滞留","hot",function(){ view="over"; window.scrollTo(0,0); render(); });
+  function go(v){ return function(){ view=v; window.scrollTo(0,0); render(); }; }
+  cell(t.due.length,"締切","今日が締切","hot",go("week"));
+  cell(t.routines.length,"定期","今日の定期予定（定期予定の一覧へ）","rt",go("rep"));
+  cell(t.starts.length,"開始","今日から開始","",go("week"));
+  cell(t.stale.length,"滞留","7日以上の滞留（超過の一覧へ）","hot",go("over"));
+  el.querySelector(".sum-toggle").onclick=function(){ store.set("ui-summary-open", open?"0":"1"); render(); };
+  if(!open) return el;
+  var ul=h('<ul class="sum-list"></ul>');
   var lines=t.due.concat(t.routines,t.starts).slice(0,5);
-  if(lines.length){
-    var ul=h('<ul class="sum-list"></ul>');
-    lines.forEach(function(i){
-      var d=parseItemDate(i);
-      var when=t.starts.indexOf(i)>=0?"開始":(i.allDay?"終日":fmtTime(d));
-      ul.appendChild(h('<li>'+(isRepeating(i)?"🔁 ":"・")+'<span class="num">'+escHtml(when)+'</span>　'+escHtml(i.title)+'</li>'));
-    });
-    var more=total-lines.length;
-    if(more>0) ul.appendChild(h('<li style="color:var(--ink-3)">ほか '+more+' 件</li>'));
-    body.appendChild(ul);
-  }
-  el.appendChild(body);
+  lines.forEach(function(i){
+    var d=parseItemDate(i);
+    var when=t.starts.indexOf(i)>=0?"開始":(i.allDay?"終日":fmtTime(d));
+    ul.appendChild(h('<li>'+(isRepeating(i)?"🔁 ":"・")+'<span class="num">'+escHtml(when)+'</span>　'+escHtml(i.title)+'</li>'));
+  });
+  if(!lines.length) ul.appendChild(h('<li style="color:var(--ink-3)">今日の予定はありません</li>'));
+  var more=total-lines.length;
+  if(more>0) ul.appendChild(h('<li style="color:var(--ink-3)">ほか '+more+' 件</li>'));
+  el.appendChild(ul);
   return el;
 }
 
@@ -1392,11 +1424,8 @@ function renderListBody(){
   var body=document.getElementById("listBody");
   if(!body) return;
   body.innerHTML="";
-  // 定期予定は次の回だけを並べる（この端末だけの設定で隠せる）
+  // 定期予定は次の回だけを並べる（この端末だけの設定で隠せる。切り替えは絞り込みの列の「↻ 定期」）
   var showRoutine=store.get("list-show-routine")!=="0";
-  var rtToggle=h('<label class="cal-opt list-opt"><input type="checkbox"'+(showRoutine?" checked":"")+'>定期予定も表示</label>');
-  rtToggle.querySelector("input").onchange=function(){ store.set("list-show-routine", this.checked?"1":"0"); renderListBody(); };
-  body.appendChild(rtToggle);
   var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&(showRoutine||!isRepeating(i))&&matchesSearch(i); }).sort(sortByDue);
   if(!list.length){
     var msg=searchKw.trim()
@@ -1423,19 +1452,29 @@ function renderListBody(){
     if(g[0]==="期限切れ"){
       arr.sort(function(a,b){ return overdueDays(b)-overdueDays(a); });
       var stale=arr.filter(isStale).length;
-      body.appendChild(h('<div class="group-label">'+g[0]+(stale?'（うち '+stale+' 件が7日以上）':'')+'</div>'));
+      var lbl=h('<div class="group-label">'+g[0]+(stale?'（うち '+stale+' 件が7日以上）':'')+'<button type="button" class="group-link">超過の一覧 ›</button></div>');
+      lbl.querySelector("button").onclick=function(){ view="over"; window.scrollTo(0,0); render(); };
+      body.appendChild(lbl);
     } else {
       body.appendChild(h('<div class="group-label">'+g[0]+'</div>'));
     }
     arr.forEach(function(i){ body.appendChild(cardOf(i)); });
   });
-  var all=h('<div style="margin:20px 0 0"><button class="act primary" style="padding:8px 14px">表示中の締切をまとめてカレンダーへ書き出す</button></div>');
-  all.querySelector("button").onclick=function(){ downloadICS(list,"deadlines"); };
+  var all=h('<div class="list-foot"><button class="act primary">表示中の締切をまとめてカレンダーへ書き出す</button><button type="button" class="act">定期予定の一覧 ›</button></div>');
+  all.children[0].onclick=function(){ downloadICS(list,"deadlines"); };
+  all.children[1].onclick=function(){ view="rep"; window.scrollTo(0,0); render(); };
   body.appendChild(all);
 }
 
 /* 期限を過ぎたものだけを集める。経過が長いものほど上に出す */
+/* タブの無い画面（超過・定期予定）の見出し。一覧へ戻るボタンを付ける */
+function subHead(title){
+  var el=h('<div class="sub-head"><button type="button" class="nav back">‹ 一覧</button><h2>'+escHtml(title)+'</h2></div>');
+  el.querySelector("button").onclick=function(){ view="list"; window.scrollTo(0,0); render(); };
+  return el;
+}
 function renderOverdue(){
+  main.appendChild(subHead("超過"));
   main.appendChild(filterBar());
   // 完了にし忘れた定期予定の回もここに出す（完了にすると次回へ進む）
   var list=activeItems()
@@ -1665,12 +1704,13 @@ function renderDay(){
 }
 /* 日表示から予定を開く。繰り返しの回は表示用の複製なので、定期予定タブへ移る */
 function openFromDayView(i){
-  if(isRepeating(i)){ view="rep"; window.scrollTo(0,0); render(); toast("定期予定は「定期予定」タブから編集・完了できます"); return; }
+  if(isRepeating(i)){ view="rep"; window.scrollTo(0,0); render(); toast("定期予定はこの一覧から編集・完了できます"); return; }
   var orig=db.items.filter(function(x){ return x.id===i.id; })[0];
   if(orig) openDialog(orig);
 }
 
 function renderRepeat(){
+  main.appendChild(subHead("定期予定"));
   main.appendChild(filterBar());
   var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&isRepeating(i); }).sort(sortByDue);
   if(!list.length){
@@ -2530,7 +2570,7 @@ function proceedPull(cfg,statusEl){
       markSynced("読み込み");
       markPulled();
       store.set("gh-known-updatedAt", db.updatedAt); // GitHub側もこの時刻の内容と一致した
-      statusEl.textContent="読み込みました（"+n+"件）。"+(check.quarantined.length?(" "+check.quarantined.length+"件は形式が不正のため隔離しました（設定タブで確認できます）。"):"");
+      statusEl.textContent="読み込みました（"+n+"件）。"+(check.quarantined.length?(" "+check.quarantined.length+"件は形式が不正のため隔離しました（設定で確認できます）。"):"");
       toast("GitHubから"+n+"件を読み込みました"+(check.quarantined.length?"（"+check.quarantined.length+"件は隔離）":""));
     })
     .catch(function(err){
@@ -3114,7 +3154,21 @@ function streakInfo(){
   var d=new Date(), todayKey=toLocalISO(d), doneToday=!!days[todayKey], n=0;
   if(!doneToday) d.setDate(d.getDate()-1);
   while(days[toLocalISO(d)]){ n++; d.setDate(d.getDate()-1); }
-  return {n:n, doneToday:doneToday};
+  // 直近7日（6日前〜今日）に自分で完了した日があるか。ヘッダーのマスに使う
+  var week=[], t=new Date();
+  for(var k=6;k>=0;k--){ var x=new Date(t.getFullYear(),t.getMonth(),t.getDate()-k); week.push({key:toLocalISO(x), on:!!days[toLocalISO(x)]}); }
+  return {n:n, doneToday:doneToday, week:week};
+}
+
+/* 連続日数の印。ラジオ体操カードのように、直近7日のうち自分で完了した日のマスを塗る（右端が今日） */
+function streakHtml(st, warn){
+  var cells=st.week.map(function(w,i){
+    return '<i class="'+(w.on?"on":"")+(i===st.week.length-1?" today":"")+'"></i>';
+  }).join("");
+  var label="連続 "+st.n+" 日"+(warn?"・今日まだ":"")+"。直近7日で完了した日："+st.week.filter(function(w){ return w.on; }).length+" 日";
+  return '<span class="lv-streak'+(warn?' warn':'')+'" role="img" aria-label="'+label+'" title="'+(warn?"今日1件完了すると連続が続きます":"毎日1件以上完了した日数（マスは左が6日前、右端が今日）")+'">'+
+    '<small>連続</small><b class="num">'+st.n+'</b>日<span class="lv-cells" aria-hidden="true">'+cells+'</span>'+
+    (warn?'<span class="lv-todo">今日まだ</span>':'')+'</span>';
 }
 
 /* ヘッダーのレベル・EXPゲージ・連続日数。ゲージは前回表示した値から伸ばす */
@@ -3127,7 +3181,7 @@ function renderLevelBar(){
   bar.innerHTML='<span class="lv-num">Lv.'+lv+'</span>'+
     '<span class="lv-gauge" title="次のレベルまで '+(EXP_PER_LEVEL-into)+' EXP"><b></b></span>'+
     '<span class="lv-exp">'+into+'/'+EXP_PER_LEVEL+'</span>'+
-    (st.n?'<span class="lv-streak'+(warn?' warn':'')+'" title="'+(warn?"今日1件完了すると連続が続きます":"毎日1件以上完了した日数")+'">🔥'+st.n+'日連続'+(warn?'・今日まだ':'')+'</span>':'');
+    (st.n?streakHtml(st, warn):'');
   if(flash) bar.appendChild(flash);
   var g=bar.querySelector(".lv-gauge b");
   var toPct=into/EXP_PER_LEVEL*100;
@@ -3489,9 +3543,10 @@ function softRender(){
 document.querySelectorAll(".tab").forEach(function(t){
   t.onclick=function(){ view=t.dataset.view; window.scrollTo(0,0); render(); };
 });
+document.getElementById("gearBtn").onclick=function(){ view=(view==="set")?"list":"set"; window.scrollTo(0,0); render(); };
 document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
 load(); autoCompleteOverdueItems(); applyTheme();
-var _tabsScroller=makeHScroll(document.querySelector("nav.tabs")); // タブ列もパソコンで動かせるように
+var _tabsScroller=null; // タブは4つに絞ったので、横に動かす仕組みは使わない
 render();
 handleExportParam();
 handleActionParam();

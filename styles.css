@@ -465,3 +465,95 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
 .hscroll .filters{cursor:grab}
 .hscroll.dragging .filters,.hscroll.dragging .tabs{cursor:grabbing;user-select:none}
 .filters .chip{flex-shrink:0;white-space:nowrap}
+
+/* =====================================================================
+   一覧画面の整理（タブを4つに・上部を詰める・カードの操作を「完了」と「…」に）
+   ===================================================================== */
+[hidden]{display:none!important}
+:root{--tabbar-h:0px}
+
+/* ---- 設定は見出しの右上の歯車から ---- */
+.head-in{position:relative}
+.gear{position:absolute;top:14px;right:0;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid var(--rule);background:transparent;border-radius:var(--radius);color:var(--ink-2);padding:0}
+.gear svg{width:16px;height:16px}
+.gear:hover{color:var(--ink);border-color:var(--ink-3)}
+.gear[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.count{margin-top:34px}
+
+/* ---- 画面のタブ（4つ）。広い画面では見出しの下に、スマホでは画面の下に固定 ---- */
+.tabs{overflow:visible;margin:0;padding:0}
+.tab{display:inline-flex;align-items:center;gap:5px;position:relative}
+.tab svg{width:16px;height:16px;flex-shrink:0}
+.tab .tab-badge{margin-left:0}
+@media (max-width:720px){
+  :root{--tabbar-h:58px}
+  .tabs{
+    position:fixed;left:0;right:0;bottom:0;z-index:25;display:grid;grid-template-columns:repeat(4,1fr);gap:0;
+    background:var(--paper);border-top:3px double var(--rule);padding:0 4px env(safe-area-inset-bottom)
+  }
+  .tab{flex-direction:column;justify-content:center;gap:1px;height:var(--tabbar-h);padding:0;font-size:11.5px;
+    border-bottom:0;border-top:2px solid transparent;margin:-2px 0 0}
+  .tab svg{width:20px;height:20px}
+  .tab[aria-selected="true"]{border-top-color:var(--ink)}
+  .tab .tab-badge{position:absolute;top:5px;left:calc(50% + 6px)}
+  body{padding-bottom:calc(96px + var(--tabbar-h) + env(safe-area-inset-bottom))}
+  .fab{bottom:calc(12px + var(--tabbar-h) + env(safe-area-inset-bottom))}
+  .toast{bottom:calc(76px + var(--tabbar-h) + env(safe-area-inset-bottom))}
+}
+
+/* ---- 今日のサマリー：集計行1行 ---- */
+.sum{margin:12px 0 0}
+.sum-row{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;padding:6px 0}
+.sum-title{font-weight:700;font-size:13px;letter-spacing:.06em}
+.sum-cells{display:flex;flex-wrap:wrap;gap:0 12px}
+.sum .sum-row .sum-cell{display:inline-flex;align-items:baseline;gap:4px;border:0;padding:2px 0;background:none}
+.sum .sum-row .sum-cell small{display:inline;font-size:12px;color:var(--ink-2);letter-spacing:.02em}
+.sum .sum-row .sum-cell .num{display:inline;font-size:17px;font-weight:600;line-height:1.3}
+.sum .sum-row .sum-cell:hover small{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+.sum-toggle{margin-left:auto;border:0;background:none;padding:2px 0;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.sum-toggle:hover{color:var(--ink)}
+.sum .sum-list{margin:0;padding:6px 0 8px}
+
+/* ---- 絞り込みの列：カテゴリ＋「↻ 定期」＋虫めがね ---- */
+.fbar{display:flex;align-items:center;padding-top:14px}
+.fbar .hscroll{flex:1;min-width:0}
+.fbar .filters{margin-right:0;padding:0 10px 2px 16px}
+.fbar .hs-next{right:0}
+.ftools{display:flex;gap:6px;align-items:center;padding:0 0 2px 8px;border-left:1px solid var(--rule)}
+.rt-chip i{font-style:normal;color:var(--routine);margin-right:3px}
+.rt-chip[aria-pressed="true"]{background:transparent;color:var(--ink);border-color:var(--routine);box-shadow:inset 0 0 0 1px var(--routine)}
+.icon-chip{display:inline-flex;align-items:center;justify-content:center;width:32px;padding:3px 0}
+.icon-chip svg{width:14px;height:14px}
+.icon-chip[aria-expanded="true"]{border-color:var(--ink);color:var(--ink)}
+.search-row{display:flex;gap:6px;margin:12px 0 -2px}
+.search-row input{flex:1;min-width:0}
+.search-row .btn{padding:6px 12px;font-size:13px;white-space:nowrap}
+
+/* ---- 期限切れの見出しから超過へ、一覧の末尾から定期予定へ ---- */
+.group-link{order:1;border:0;background:none;padding:0;font-size:12px;font-weight:500;letter-spacing:.02em;color:var(--ink-2);white-space:nowrap}
+.group-link:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+.list-foot{display:flex;flex-wrap:wrap;gap:8px 12px;margin:20px 0 0}
+.list-foot .act{padding:8px 14px;margin:0}
+.sub-head{display:flex;align-items:center;gap:10px;margin:16px 0 0}
+.sub-head h2{margin:0;font-size:15px;font-weight:700;letter-spacing:.06em}
+.nav.back{width:auto;padding:0 10px;font-size:12.5px}
+
+/* ---- カードの操作：「完了にする」と「…」。…でほかの操作を開く ---- */
+.acts .more-btn{margin-left:auto;font-weight:700;letter-spacing:.12em;padding:3px 10px}
+.acts .more-btn:hover{text-decoration:none;background:var(--rule-2)}
+.acts .more-btn[aria-expanded="true"]{background:var(--rule-2);color:var(--ink)}
+.more{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 0 -6px;padding-top:8px;border-top:1px dashed var(--rule)}
+.more .act{border:1px solid var(--rule)}
+
+/* ---- 連続日数：直近7日のマス（ラジオ体操カードの判子のように、完了した日を塗る） ---- */
+.lv-streak{display:inline-flex;align-items:center;gap:4px;line-height:1.6;white-space:nowrap}
+.lv-streak small{font-size:10.5px;color:var(--ink-3);letter-spacing:.06em}
+.lv-streak .num{font-weight:600}
+.lv-cells{display:inline-flex;gap:2px;margin-left:2px}
+.lv-cells i{display:block;width:8px;height:8px;border:1px solid var(--ink-3)}
+.lv-cells i.on{background:var(--ink);border-color:var(--ink)}
+.lv-cells i.today{border-style:dashed}
+.lv-streak.warn{color:var(--ink)}
+.lv-streak.warn .lv-cells i.today{border-color:var(--red)}
+.lv-todo{color:var(--red);font-weight:700;font-size:10.5px}
