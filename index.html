@@ -2714,14 +2714,17 @@ function ackPublicRepo(owner,repo){
 function guardPublicRepo(cfg){
   if(ackedPublicRepo(cfg.owner,cfg.repo)) return Promise.resolve();
   return checkRepoVisibility(cfg).then(function(isPublic){
-    if(isPublic!==true) return; // Private、または判定不能なら先へ進む
-    var ok=confirm(
-      "「"+cfg.owner+"/"+cfg.repo+"」はPublicリポジトリです。\n\n"+
-      "締切の内容（タイトル・メモなど）が誰でも見られる状態になります。\n\n"+
-      "本当にこのリポジトリを使い続けますか？"
-    );
+    if(isPublic===false) return; // Private なら先へ進む
+    // Public、または判定できなかった（null）ときは確認する。判定できないまま黙って進めない
+    var ok=confirm(isPublic===true
+      ? "「"+cfg.owner+"/"+cfg.repo+"」はPublicリポジトリです。\n\n"+
+        "締切の内容（タイトル・メモなど）が誰でも見られる状態になります。\n\n"+
+        "本当にこのリポジトリを使い続けますか？"
+      : "「"+cfg.owner+"/"+cfg.repo+"」の公開設定を確認できませんでした。\n\n"+
+        "Publicなら、締切の内容（タイトル・メモなど）が誰でも見られる状態になります。\n\n"+
+        "このまま続けますか？");
     if(!ok) return Promise.reject(new Error("__public_cancelled__"));
-    ackPublicRepo(cfg.owner,cfg.repo);
+    if(isPublic===true) ackPublicRepo(cfg.owner,cfg.repo); // Publicと承知した場合だけ記録する
   });
 }
 
@@ -3004,13 +3007,11 @@ function syncToGitHub(g,s5){
   statusEl.textContent="リポジトリの公開設定を確認しています…";
   guardPublicRepo(cfg).then(function(){
     proceedSync(cfg,statusEl);
-  }).catch(function(err){
-    if(err&&err.message==="__public_cancelled__"){
-      statusEl.textContent="同期を中止しました。";
-    } else {
-      // 確認自体が失敗した場合は、安全側に倒して同期は進める
-      proceedSync(cfg,statusEl);
-    }
+  }, function(err){
+    // 中止したとき、または公開設定を確かめられなかったときは送らない（公開されるかもしれない内容を送らない）
+    statusEl.textContent=(err&&err.message==="__public_cancelled__")
+      ? "同期を中止しました。"
+      : "公開設定を確認できなかったため、同期を中止しました。";
   });
 }
 
