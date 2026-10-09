@@ -64,8 +64,14 @@ def main():
                 start = parse_dt(it["start"])
             except (TypeError, ValueError, AttributeError):
                 errors.append(name + " start が日時として読めません: %r" % it.get("start"))
-        if due and start and start > due:
-            errors.append(name + " start が due より後です")
+        if due and start:
+            try:
+                late = start > due
+            except TypeError:  # 片方だけタイムゾーンがある（末尾の Z や +09:00 が無い）
+                errors.append(name + " start と due のタイムゾーンが揃っていません")
+                late = False
+            if late:
+                errors.append(name + " start が due より後です")
 
         rep = it.get("rep", "none")
         if not isinstance(rep, str) or rep not in REPS:
