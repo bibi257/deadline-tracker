@@ -672,6 +672,17 @@ function sanitizeIncomingItems(rawItems){
   });
   return {kept:kept, quarantined:quarantined};
 }
+/* 取り込んだテンプレート・カテゴリの形を整える。名前が文字列でないものは捨てる
+   （項目と同じく、壊れた値で候補や表示を崩さないため）。無ければ null を返す */
+function sanitizeIncomingMeta(d){
+  var out={templates:null, categories:null};
+  if(Array.isArray(d.templates)) out.templates=d.templates.filter(function(t){ return t&&typeof t==="object"&&typeof t.name==="string"&&t.name; });
+  if(Array.isArray(d.categories)){
+    var cats=d.categories.filter(function(c){ return typeof c==="string"&&c.trim(); });
+    if(cats.length) out.categories=cats;
+  }
+  return out;
+}
 
 /* ========== 日付ユーティリティ ========== */
 function pad(n){ return (n<10?"0":"")+n; }
@@ -2512,9 +2523,10 @@ function renderSettings(){
         var check=sanitizeIncomingItems(d.items);
         db.items=check.kept;
         if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
-        if(Array.isArray(d.templates)) db.templates=d.templates;
+        var meta=sanitizeIncomingMeta(d);
+        if(meta.templates) db.templates=meta.templates;
         if(Array.isArray(d.trash)) db.trash=d.trash;
-        if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
+        if(meta.categories) db.categories=meta.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
         adoptCompletions(d);
@@ -2668,9 +2680,10 @@ function autoPullIfStale(){
         var check=sanitizeIncomingItems(d.items);
         db.items=check.kept;
         if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
-        if(Array.isArray(d.templates)) db.templates=d.templates;
+        var meta=sanitizeIncomingMeta(d);
+        if(meta.templates) db.templates=meta.templates;
         if(Array.isArray(d.trash)) db.trash=d.trash;
-        if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
+        if(meta.categories) db.categories=meta.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
         adoptCompletions(d);
@@ -2964,9 +2977,10 @@ function proceedPull(cfg,statusEl){
       if(check.quarantined.length){
         db.quarantine=db.quarantine.concat(check.quarantined);
       }
-      if(Array.isArray(d.templates)) db.templates=d.templates;
+      var meta=sanitizeIncomingMeta(d);
+      if(meta.templates) db.templates=meta.templates;
       if(Array.isArray(d.trash)) db.trash=d.trash;
-      if(Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
+      if(meta.categories) db.categories=meta.categories;
       if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
       adoptCompletions(d);
