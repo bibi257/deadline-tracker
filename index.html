@@ -2895,9 +2895,8 @@ function sendToDiscord(s6,s5){
   var g=function(id){ return s5.querySelector("#"+id); };
   fetchWebhookFromRepo(g,statusEl)
     .then(function(url){
-      store.set("dc-hook", url);           // 次回以降は取得しなくて済む
+      // 保存はしない。この端末に保存するかは「この端末に保存」の選択に任せる（URLはGitHubのスクリプトが持つ）
       s6.querySelector("#dcHook").value=url;
-      s6.querySelector("#dcRemember").checked=true;
       return post(url);
     })
     .catch(function(err){
