@@ -33,6 +33,11 @@ jobs:
           bash -n .github/scripts/send_digest.sh
           python3 -m py_compile .github/scripts/*.py
 
+      # ubuntu-latest に shellcheck は入っている。警告が出たら直すか、理由を書いて
+      # `# shellcheck disable=SCxxxx` で外す（黙って握りつぶすと壊れた通知に気づけない）
+      - name: シェルスクリプトを shellcheck で調べる
+        run: shellcheck .github/scripts/*.sh
+
       - name: 毎朝の通知を試しに作る（送信しない）
         run: DRY_RUN=1 bash .github/scripts/send_digest.sh
 
