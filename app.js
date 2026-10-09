@@ -10,6 +10,87 @@ var store={
   set:function(k,v){ if(hasLS){try{localStorage.setItem(k,v);}catch(e){toast("保存できませんでした（空き容量を確認してください）");}} else {mem[k]=v;} }
 };
 
+/* ========== 秘密の保存（GitHubトークン） ==========
+   localStorage に平文では置かない。この端末のブラウザに「取り出せない鍵」（WebCrypto・extractable:false）を作って
+   IndexedDB に置き、AES-GCM で暗号化した文字列（enc1:...）だけを localStorage に保存する。
+   守れるもの：localStorage の中身だけが漏れた場合（端末のバックアップ・画面の写り込み・保存領域の抜き出しなど）。
+   守れないもの：このページで動くスクリプト自体が乗っ取られた場合（鍵を使って復号できてしまう。そちらはCSPで防ぐ）。
+   暗号化できない環境（IndexedDB/WebCrypto が使えない）では、平文で残さず「保存しない」ことにする。 */
+var _secretCache={};   // 復号済みの値（このページを開いている間だけ。画面を閉じる直前の自動同期が間に合うように）
+function _b64(buf){ var a=new Uint8Array(buf), s=""; for(var i=0;i<a.length;i++) s+=String.fromCharCode(a[i]); return btoa(s); }
+function _unb64(str){ var s=atob(str), a=new Uint8Array(s.length); for(var i=0;i<s.length;i++) a[i]=s.charCodeAt(i); return a; }
+function _secretKey(){
+  if(!(window.crypto&&crypto.subtle&&window.indexedDB)) return Promise.resolve(null);
+  return new Promise(function(resolve){
+    var req;
+    try{ req=indexedDB.open("deadline-secret",1); }catch(e){ resolve(null); return; }
+    req.onupgradeneeded=function(){ req.result.createObjectStore("keys"); };
+    req.onerror=function(){ resolve(null); };
+    req.onsuccess=function(){
+      var idb=req.result;
+      var done=function(k){ idb.close(); resolve(k||null); };
+      try{
+        var got=idb.transaction("keys").objectStore("keys").get("k");
+        got.onerror=function(){ done(null); };
+        got.onsuccess=function(){
+          if(got.result) return done(got.result);
+          crypto.subtle.generateKey({name:"AES-GCM",length:256}, false, ["encrypt","decrypt"]).then(function(key){
+            // 別のタブが先に作っていたらそちらを使う（二重に作ると、先に暗号化した値が読めなくなるため）
+            var tx=idb.transaction("keys","readwrite"), os=tx.objectStore("keys"), again=os.get("k"), use=key;
+            again.onsuccess=function(){ if(again.result) use=again.result; else os.put(key,"k"); };
+            tx.oncomplete=function(){ done(use); };
+            tx.onerror=tx.onabort=function(){ done(null); };
+          }).catch(function(){ done(null); });
+        };
+      }catch(e){ done(null); }
+    };
+  });
+}
+/* name の値を暗号化して保存する。保存できたら true、できなければ false（平文では残さない） */
+function secretSet(name, value){
+  if(!value){ secretDel(name); return Promise.resolve(true); }
+  _secretCache[name]=value;
+  if(!hasLS){ store.set(name, value); return Promise.resolve(true); } // 保存領域が無い環境では、もともとメモリにしか残らない
+  return _secretKey().then(function(key){
+    if(!key) throw 0;
+    var iv=crypto.getRandomValues(new Uint8Array(12));
+    return crypto.subtle.encrypt({name:"AES-GCM",iv:iv}, key, new TextEncoder().encode(value)).then(function(ct){
+      store.set(name, "enc1:"+_b64(iv)+":"+_b64(ct));
+      return true;
+    });
+  }).catch(function(){ try{ localStorage.removeItem(name); }catch(e){} return false; });
+}
+function secretDel(name){
+  delete _secretCache[name];
+  if(hasLS){ try{ localStorage.removeItem(name); }catch(e){} } else { delete mem[name]; }
+}
+/* 保存してある値を返す（無ければ ""）。以前の版が平文で保存した値はそのまま使い、暗号化し直す */
+function secretGet(name){
+  if(_secretCache[name]) return Promise.resolve(_secretCache[name]);
+  var raw=store.get(name);
+  if(!raw) return Promise.resolve("");
+  if(raw.indexOf("enc1:")!==0){
+    _secretCache[name]=raw;
+    if(hasLS) secretSet(name, raw).then(function(ok){ // 暗号化できればその場で置き換える。できなければ平文は残さず消す（今回の起動中は使える）
+      if(!ok) toast("この端末では暗号化して保存できないため、保存してあったトークンを消しました。次回は入力し直してください");
+    });
+    return Promise.resolve(raw);
+  }
+  var parts=raw.split(":");
+  return _secretKey().then(function(key){
+    if(!key||parts.length!==3) throw 0;
+    return crypto.subtle.decrypt({name:"AES-GCM",iv:_unb64(parts[1])}, key, _unb64(parts[2]));
+  }).then(function(buf){
+    var v=new TextDecoder().decode(buf);
+    _secretCache[name]=v;
+    return v;
+  }).catch(function(){
+    // 鍵が消えている（サイトデータの削除など）と復号できない。読めない値は残さず、入力し直してもらう
+    secretDel(name);
+    return "";
+  });
+}
+
 var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},catColors:Object.create(null),settings:{dayHour:9,theme:"auto"},updatedAt:null};
 function load(){
   var raw=store.get(KEY); if(!raw) return;
@@ -790,9 +871,9 @@ function cardOf(it){
 function autoSyncIfConfigured(){
   clearTimeout(_autoSyncTimer); _autoSyncTimer=null;
   if(!db.settings.autoSync) return;
-  var cfg=getStoredGhConfig();
-  if(!cfg) return;
-
+  getStoredGhConfig().then(function(cfg){ if(cfg) autoSyncWith(cfg); }).catch(function(){});
+}
+function autoSyncWith(cfg){
   var pushedAt=db.updatedAt; // 送信中に別の編集が入っても、送った時点の値を記録するため捕捉しておく
   var content=utf8ToBase64(JSON.stringify(syncPayload(),null,2));
 
@@ -1975,6 +2056,7 @@ function renderSettings(){
     '<label class="field"><span>Personal Access Token（Contents: Read and write）</span><input type="password" id="ghToken" placeholder="このリポジトリだけに絞ったトークンを推奨"></label>'+
     '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
     '<input type="checkbox" id="ghRemember" style="width:auto">この端末にトークンを保存して次回から入力を省く</label>'+
+    '<p id="ghSecretNote" style="font-size:12.5px;color:var(--red);margin:-4px 0 12px"></p>'+
     '<div class="row"></div><p id="ghStatus" style="margin-top:8px"></p></div>');
   var g=function(id){ return s5.querySelector("#"+id); };
   var saved=JSON.parse(store.get("gh-sync")||"{}");
@@ -1982,8 +2064,11 @@ function renderSettings(){
   g("ghOwner").value=saved.owner||guess.owner||"";
   g("ghRepo").value=saved.repo||guess.repo||"";
   g("ghBranch").value=saved.branch||"main";
-  g("ghToken").value=store.get("gh-token")||"";
   g("ghRemember").checked=!!store.get("gh-token");
+  secretGet("gh-token").then(function(t){ // 暗号化して保存してあるので、復号できてから入れる（入力し始めていたら上書きしない）
+    if(t && !g("ghToken").value) g("ghToken").value=t;
+    if(!t) g("ghRemember").checked=false;
+  });
   if(!saved.owner&&guess.owner) s5.querySelector("#ghStatus").textContent="保存先の候補として "+guess.owner+"/"+guess.repo+" を入れました。実際のPrivateリポジトリ名に合わせて直してください。";
   // このリポジトリが以前「Publicと承知の上」で確認済みなら、開くたびに気づけるよう常に出す
   if(saved.owner && saved.repo && ackedPublicRepo(saved.owner, saved.repo)){
@@ -2056,13 +2141,15 @@ function guessRepoFromURL(){
    トークンを保存していない端末では自動受け入れ機能自体が動かない（安全側） */
 function getStoredGhConfig(){
   var saved=JSON.parse(store.get("gh-sync")||"{}");
-  var token=store.get("gh-token");
-  if(!saved.owner||!saved.repo||!token) return null;
-  return {
-    owner:saved.owner, repo:saved.repo, branch:saved.branch||"main",
-    api:"https://api.github.com/repos/"+saved.owner+"/"+saved.repo+"/contents/data.json",
-    headers:{"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"}
-  };
+  if(!saved.owner||!saved.repo) return Promise.resolve(null);
+  return secretGet("gh-token").then(function(token){
+    if(!token) return null;
+    return {
+      owner:saved.owner, repo:saved.repo, branch:saved.branch||"main",
+      api:"https://api.github.com/repos/"+saved.owner+"/"+saved.repo+"/contents/data.json",
+      headers:{"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"}
+    };
+  });
 }
 
 /* この端末のデータが「前回GitHubと一致していた状態から何も変わっていない」ときだけ、
@@ -2070,9 +2157,10 @@ function getStoredGhConfig(){
    ローカルにまだ送っていない変更がある場合は、データを失わないよう自動では上書きしない */
 var _staleNoticeShown=false;
 function autoPullIfStale(){
-  var cfg=getStoredGhConfig();
-  if(!cfg) return; // 同期の設定自体が無ければ何もしない
-
+  // 同期の設定自体が無ければ何もしない
+  return getStoredGhConfig().then(function(cfg){ return cfg ? autoPullWith(cfg) : undefined; }).catch(function(){});
+}
+function autoPullWith(cfg){
   var rawHeaders=Object.assign({}, cfg.headers, {"Accept":"application/vnd.github.raw"});
   return fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(), {headers:rawHeaders, cache:"no-store"})
     .then(function(res){
@@ -2168,8 +2256,12 @@ function ghConfig(g,statusEl){
       branch=g("ghBranch").value.trim()||"main", token=g("ghToken").value.trim();
   if(!owner||!repo||!token){ statusEl.textContent="ユーザー名・リポジトリ名・トークンをすべて入力してください。"; return null; }
   store.set("gh-sync", JSON.stringify({owner:owner,repo:repo,branch:branch}));
-  if(g("ghRemember").checked){ store.set("gh-token", token); }
-  else if(hasLS){ try{ localStorage.removeItem("gh-token"); }catch(e){} }
+  if(g("ghRemember").checked){
+    // 同期の結果表示に上書きされないよう、専用の欄に出す
+    secretSet("gh-token", token).then(function(ok){
+      g("ghSecretNote").textContent=ok?"":"この端末では暗号化して保存できないため、トークンは保存しませんでした（今回の操作だけに使います）。";
+    });
+  } else { secretDel("gh-token"); g("ghSecretNote").textContent=""; }
   return {
     owner:owner, repo:repo, branch:branch,
     api:"https://api.github.com/repos/"+owner+"/"+repo+"/contents/data.json",
