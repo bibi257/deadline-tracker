@@ -951,11 +951,14 @@ function fitDiscord(text){
   return text.length>1900 ? text.slice(0,1880)+"\n…（件数が多いため省略しました）" : text;
 }
 
+/* 自動通知は「この端末に保存」したWebhook URLだけを使う。保存されていないときは黙らず知らせる */
+var AUTO_NOTIFY_NEEDS_SAVE="Discordへの自動通知は、Webhook URLを「この端末に保存」したときだけ送られます";
+
 /* 締切を登録・編集したとき、設定が揃っていればDiscordへ通知する */
 function autoNotifyIfConfigured(){
   if(!db.settings.autoNotify) return;
   secretGet("dc-hook").then(function(hook){
-    if(!hook) return;
+    if(!hook){ toast(AUTO_NOTIFY_NEEDS_SAVE); return; }
     return fetch(hook,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({content:fitDiscord(buildDigestText())})});
   }).catch(function(){});
@@ -2057,6 +2060,7 @@ function renderSettings(){
     '<label class="field"><span>Personal Access Token（Contents: Read and write）</span><input type="password" id="ghToken" placeholder="このリポジトリだけに絞ったトークンを推奨"></label>'+
     '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
     '<input type="checkbox" id="ghRemember" style="width:auto">この端末にトークンを保存して次回から入力を省く</label>'+
+    '<p style="font-size:11.5px;color:var(--ink-3);margin:-6px 0 12px">保存すると、トークンは暗号化してこのブラウザの中に残ります。共用の端末では保存しないでください。</p>'+
     '<p id="ghSecretNote" style="font-size:12.5px;color:var(--red);margin:-4px 0 12px"></p>'+
     '<div class="row"></div><p id="ghStatus" style="margin-top:8px"></p></div>');
   var g=function(id){ return s5.querySelector("#"+id); };
@@ -2098,6 +2102,7 @@ function renderSettings(){
     '<label class="field"><span>Discord Webhook URL（空欄でGitHubから自動取得）</span><input type="password" id="dcHook" placeholder="通常は空欄のままで大丈夫です"></label>'+
     '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
     '<input type="checkbox" id="dcRemember" style="width:auto">この端末に保存して次回から取得を省く</label>'+
+    '<p style="font-size:11.5px;color:var(--ink-3);margin:-6px 0 12px">保存すると、Webhook URLは暗号化してこのブラウザの中に残ります。URLを知っている人は誰でもDiscordへ投稿できるので、共用の端末では保存しないでください。</p>'+
     '<p id="dcSecretNote" style="font-size:12.5px;color:var(--red);margin:-4px 0 12px"></p>'+
     '<div class="row"></div><p id="dcStatus" style="margin-top:8px"></p></div>');
   s6.querySelector("#dcRemember").checked=!!store.get("dc-hook");
@@ -2113,7 +2118,7 @@ function renderSettings(){
 
   // 登録時の自動処理
   var s7=h('<div class="sec"><h3>登録したときの自動処理</h3>'+
-    '<p>締切を登録・編集したときに、以下を自動で行います。上の設定が済んでいない場合は何も起きません。</p></div>');
+    '<p>締切を登録・編集したときに、以下を自動で行います。上の設定が済んでいない場合は何も起きません。Discordへの自動通知は、上の欄でWebhook URLを「この端末に保存」している場合だけ送られます（保存していないときは、その旨を表示します）。</p></div>');
   [["autoSync","GitHubへ自動で同期する","同期ボタンを押し忘れても、翌朝のDiscord通知に反映されます"],
    ["autoNotify","Discordへ自動で通知する","登録するたびにチャンネルへ送信されます（頻繁だと煩わしい場合があります）"]
   ].forEach(function(p){
@@ -2122,7 +2127,12 @@ function renderSettings(){
       '<span>'+escHtml(p[1])+'<br><span style="font-size:11.5px;color:var(--ink-3)">'+escHtml(p[2])+'</span></span></label>');
     var cb=wrap.querySelector("input");
     cb.checked=!!db.settings[p[0]];
-    cb.onchange=function(){ db.settings[p[0]]=cb.checked; saveRaw(); toast(cb.checked?"有効にしました":"無効にしました"); }; // 設定は同期対象外なのでupdatedAtは進めない
+    cb.onchange=function(){
+      db.settings[p[0]]=cb.checked; saveRaw(); // 設定は同期対象外なのでupdatedAtは進めない
+      if(!cb.checked){ toast("無効にしました"); return; }
+      if(p[0]!=="autoNotify"){ toast("有効にしました"); return; }
+      secretGet("dc-hook").then(function(hook){ toast(hook?"有効にしました":AUTO_NOTIFY_NEEDS_SAVE); });
+    };
     s7.appendChild(wrap);
   });
   main.appendChild(s7);
@@ -2309,9 +2319,13 @@ function fetchWebhookFromRepo(g,statusEl){
       }
       var m=text.match(/DEFAULT_WEBHOOK_URL\s*=\s*"([^"]+)"/);
       if(!m||!m[1]) throw new Error("スクリプト内にWebhook URLが見つかりません。");
+      if(!isDiscordWebhookUrl(m[1])) throw new Error("スクリプト内の値がDiscordのWebhook URLの形式ではありません。");
       return m[1];
     });
 }
+
+/* DiscordのWebhook URLの形式かどうか。手入力のURLも、GitHubから取り出したURLも同じ基準で確かめる */
+function isDiscordWebhookUrl(u){ return /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(u); }
 
 /* Discordへ送る本文を組み立てる（毎朝のダイジェストと同じ書式に揃える） */
 function buildDigestText(){
@@ -2417,7 +2431,7 @@ function sendToDiscord(s6,s5){
   }
 
   if(hook){
-    if(!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(hook)){
+    if(!isDiscordWebhookUrl(hook)){
       statusEl.textContent="DiscordのWebhook URLの形式ではありません。"; return;
     }
     var note=s6.querySelector("#dcSecretNote");

@@ -129,8 +129,9 @@ GitHub Pages で動く静的なWebアプリ（HTML 1枚＋JavaScript 1本）で�
 
 ```
 deadline-tracker（Public / GitHub Pages で公開）
-├── index.html              画面の骨組みとCSS
+├── index.html              画面の骨組み
 ├── app.js                  アプリ本体のJavaScript（CSPで inline script を許さないため分けている）
+├── styles.css              見た目（CSS。CSPで <style> 要素を許さないため分けている）
 ├── manifest.webmanifest    ホーム画面追加用の設定
 ├── service-worker.js       オフライン起動用
 ├── assets/
@@ -179,7 +180,7 @@ Public リポジトリはファイル一覧もコミット履歴も公開され�
 
 ### 1. アプリを公開する
 
-1. `index.html`・`app.js`・`manifest.webmanifest`・`service-worker.js`・`assets/` フォルダを、自分の Public リポジトリにアップロードする
+1. `index.html`・`app.js`・`styles.css`・`manifest.webmanifest`・`service-worker.js`・`assets/` フォルダを、自分の Public リポジトリにアップロードする
 2. **Settings → Pages** を開き、Source を `Deploy from a branch`、Branch を `main / (root)` にして Save
 3. 1〜2分待つと `https://<ユーザー名>.github.io/<リポジトリ名>/` で開く
 
@@ -324,7 +325,7 @@ Discord などの添付ファイルを直接タップすると、iOS は「照�
 - 守れるのは、localStorage の中身だけが漏れた場合（バックアップの流出・保存領域の抜き出し・画面の写り込みなど）。同じページで動くスクリプトが乗っ取られた場合は、鍵を使って復号されてしまう。そちらは CSP（`script-src 'self'`：`app.js` 以外のスクリプトを実行しない、通信先は GitHub・Discord だけ）で防ぐ
 - ブラウザのサイトデータを消すなどで鍵が失われると、保存済みの値は読めなくなる。そのときは自動で消えるので、入力し直す（Webhook URL は空欄のまま送れば、GitHub の設定から取り直せる）
 - 暗号化できない環境（IndexedDB / WebCrypto が使えない）では、平文で残さず保存しない。設定タブにその旨が出て、今回の操作にだけトークンを使う
-- CSP のため、HTML にインライン `<script>` や `onclick="..."` を書かない（イベントは `app.js` で付ける）。`style-src` の `'unsafe-inline'` は、画面を組み立てる `style="..."` のために残している
+- CSP のため、HTML にインライン `<script>` や `onclick="..."` を書かない（イベントは `app.js` で付ける）。CSS は `styles.css` に置き、`<style>` 要素も許さない（`style-src-elem`）。`'unsafe-inline'` は、画面を組み立てる `style="..."` の属性のためだけに許している（`style-src-attr`。`style-src` 側の指定は、これを知らない古いブラウザ向けの予備）
 
 ---
 
