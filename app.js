@@ -10,7 +10,7 @@ var store={
   set:function(k,v){ if(hasLS){try{localStorage.setItem(k,v);}catch(e){toast("保存できませんでした（空き容量を確認してください）");}} else {mem[k]=v;} }
 };
 
-/* ========== 秘密の保存（GitHubトークン） ==========
+/* ========== 秘密の保存（GitHubトークン・Discord の Webhook URL） ==========
    localStorage に平文では置かない。この端末のブラウザに「取り出せない鍵」（WebCrypto・extractable:false）を作って
    IndexedDB に置き、AES-GCM で暗号化した文字列（enc1:...）だけを localStorage に保存する。
    守れるもの：localStorage の中身だけが漏れた場合（端末のバックアップ・画面の写り込み・保存領域の抜き出しなど）。
@@ -954,10 +954,11 @@ function fitDiscord(text){
 /* 締切を登録・編集したとき、設定が揃っていればDiscordへ通知する */
 function autoNotifyIfConfigured(){
   if(!db.settings.autoNotify) return;
-  var hook=store.get("dc-hook");
-  if(!hook) return;
-  fetch(hook,{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({content:fitDiscord(buildDigestText())})}).catch(function(){});
+  secretGet("dc-hook").then(function(hook){
+    if(!hook) return;
+    return fetch(hook,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({content:fitDiscord(buildDigestText())})});
+  }).catch(function(){});
 }
 
 /* 期限切れからの経過日数。滞留（長く放置されている状態）の判定に使う */
@@ -2097,9 +2098,14 @@ function renderSettings(){
     '<label class="field"><span>Discord Webhook URL（空欄でGitHubから自動取得）</span><input type="password" id="dcHook" placeholder="通常は空欄のままで大丈夫です"></label>'+
     '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
     '<input type="checkbox" id="dcRemember" style="width:auto">この端末に保存して次回から取得を省く</label>'+
+    '<p id="dcSecretNote" style="font-size:12.5px;color:var(--red);margin:-4px 0 12px"></p>'+
     '<div class="row"></div><p id="dcStatus" style="margin-top:8px"></p></div>');
-  s6.querySelector("#dcHook").value=store.get("dc-hook")||"";
   s6.querySelector("#dcRemember").checked=!!store.get("dc-hook");
+  secretGet("dc-hook").then(function(u){ // 暗号化して保存してあるので、復号できてから入れる（入力し始めていたら上書きしない）
+    var box=s6.querySelector("#dcHook");
+    if(u && !box.value) box.value=u;
+    if(!u) s6.querySelector("#dcRemember").checked=false;
+  });
   var bSend=h('<button class="btn fill">今すぐ送信</button>');
   bSend.onclick=function(){ sendToDiscord(s6,s5); };
   s6.querySelector(".row").appendChild(bSend);
@@ -2414,8 +2420,13 @@ function sendToDiscord(s6,s5){
     if(!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(hook)){
       statusEl.textContent="DiscordのWebhook URLの形式ではありません。"; return;
     }
-    if(s6.querySelector("#dcRemember").checked){ store.set("dc-hook", hook); }
-    else if(hasLS){ try{ localStorage.removeItem("dc-hook"); }catch(e){} }
+    var note=s6.querySelector("#dcSecretNote");
+    if(s6.querySelector("#dcRemember").checked){
+      // 送信結果の表示に上書きされないよう、専用の欄に出す
+      secretSet("dc-hook", hook).then(function(ok){
+        note.textContent=ok?"":"この端末では暗号化して保存できないため、Webhook URLは保存しませんでした（今回の送信だけに使います）。";
+      });
+    } else { secretDel("dc-hook"); note.textContent=""; }
     post(hook);
     return;
   }
