@@ -4,7 +4,7 @@
 //
 // キャッシュ名を変えると古いキャッシュは自動で破棄される。
 // 中身（index.html等）を大きく更新したときは、この名前も変えると確実に切り替わる。
-const CACHE_NAME = "deadline-tracker-v6";
+const CACHE_NAME = "deadline-tracker-v7";
 const CORE_FILES = [
   "./",
   "./index.html",
