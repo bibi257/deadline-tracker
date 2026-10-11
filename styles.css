@@ -605,7 +605,7 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .lg-sw.load3{margin-right:6px}
 @media (max-width:420px){.grid{grid-template-columns:repeat(7,minmax(0,1fr)) 24px}.wk{font-size:11px}}
 
-/* ---- 広い画面（960px以上）：カードを2列に。カレンダーは月の表と選んだ日の予定を左右に ---- */
+/* ---- 広い画面（960px以上）：カードを2列に（設定で1列も選べる）。カレンダーは月の表と選んだ日の予定を左右に ---- */
 @media (min-width:960px){
   .wrap{max-width:1040px}
   /* 今週・日表示・設定は縦に読む画面なので、これまでの幅のまま */
@@ -616,6 +616,11 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
   body[data-view="over"] #main>:not(.card):not(.card-pair),
   body[data-view="rep"] #main>:not(.card):not(.card-pair),
   body[data-view="done"] #main>:not(.card):not(.card-pair){grid-column:1/-1}
+  /* 設定で「1列」を選んだときは、カードを縦に1列で並べる（幅は今週の画面と同じ） */
+  body[data-cols="1"] #listBody,body[data-cols="1"][data-view="over"] #main,
+  body[data-cols="1"][data-view="rep"] #main,body[data-cols="1"][data-view="done"] #main{display:block}
+  body[data-cols="1"][data-view="list"] #main,body[data-cols="1"][data-view="over"] #main,
+  body[data-cols="1"][data-view="rep"] #main,body[data-cols="1"][data-view="done"] #main{max-width:720px}
   .cal-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:28px;align-items:start}
   .cal-side{padding-top:18px}
   .cal-side .sel-title{margin-top:0}

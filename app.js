@@ -558,6 +558,7 @@ function render(){
   else if(over.length){ document.getElementById("cntNum").textContent=over.length; document.getElementById("cntLabel").textContent="期限切れ"; }
   else { document.getElementById("cntNum").textContent=soon.length; document.getElementById("cntLabel").textContent="7日以内"; }
   document.body.setAttribute("data-view", view);
+  document.body.setAttribute("data-cols", db.settings.cols==="1"?"1":"2"); // 広い画面のカードの並び（styles.css の 960px 以上で効く）
   renderLevelBar();
   document.documentElement.classList.toggle("no-motion", !motionOn());
   document.documentElement.classList.toggle("techo", techoStyle());
@@ -2063,6 +2064,16 @@ function renderSettings(){
     s3.querySelector(".row").appendChild(b);
   });
   main.appendChild(s3);
+
+  // 広い画面の並び
+  var s3w=h('<div class="sec"><h3>広い画面の並び</h3><p>PCなど幅の広い画面（960px以上）で、一覧・超過・定期予定・完了のカードを何列に並べるかを選びます。スマホなど狭い画面では、どちらでも1列です。この端末だけの設定です。</p><div class="row"></div></div>');
+  [["2","2列"],["1","1列"]].forEach(function(p){
+    var b=h('<button class="chip">'+p[1]+'</button>');
+    b.setAttribute("aria-pressed", (db.settings.cols==="1"?"1":"2")===p[0]?"true":"false");
+    b.onclick=function(){ db.settings.cols=p[0]; saveRaw(); render(); }; // 設定は同期対象外なのでupdatedAtは進めない
+    s3w.querySelector(".row").appendChild(b);
+  });
+  main.appendChild(s3w);
 
   // 完了の演出
   var s3b=h('<div class="sec"><h3>演出</h3><p>「ゲーム風」は、登録したときに「クエスト受注」、完了にしたときに「ミッション達成」、今日の締切を全部片付けたら「全クリア」（ボーナス +'+ALL_CLEAR_BONUS+' EXP）の帯を出します（タップですぐ閉じます）。「手帳風」は帯を出さず、完了にしたカードに「済」の印を押し、全部片付けた日は「皆済」の印を出します。「なし」にすると、延期・休み・削除のカードの動き、期限切れの点滅、数字の数え上げも止まります。端末で「視差効果を減らす」をオンにしている場合は動きを出しません。<br>いまの記録：Lv.'+levelOf(totalExp())+'（累計 '+totalExp()+' EXP・完了 '+db.completions.length+' 件の記録）。記録は GitHub 同期で端末間に共有され、週次レビューにも載ります。</p><div class="row"></div></div>');
