@@ -1829,7 +1829,7 @@ function renderCal(){
     var dk=toLocalISO(new Date(i.due));
     (loadByDay[dk]=loadByDay[dk]||[]).push(i);
   });
-  var wkN=0, wkCats={};
+  var wkN=0, wkCats=Object.create(null);
 
   for(var k=0;k<42;k++){
     var d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+k);
@@ -1854,7 +1854,7 @@ function renderCal(){
     });
     (function(key){ day.onclick=function(){ selDay=(selDay===key?null:key); render(); }; })(key);
     grid.appendChild(day);
-    if(k%7===6){ grid.appendChild(weekCell(wkN, wkCats)); wkN=0; wkCats={}; }
+    if(k%7===6){ grid.appendChild(weekCell(wkN, wkCats)); wkN=0; wkCats=Object.create(null); }
   }
   cm.appendChild(grid);
   cm.appendChild(h('<p class="cal-legend"><span class="lg-sw load1"></span><span class="lg-sw load2"></span><span class="lg-sw load3"></span>'+

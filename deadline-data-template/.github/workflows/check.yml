@@ -1,12 +1,13 @@
 name: スクリプトとデータの検証
 
 # data.json やスクリプトが更新されたとき、Discordへは送らずに
-# 「エラーなく通知文と.icsを作れるか」だけを確かめる
+# 「エラーなく通知文と.icsを作れるか」と、テスト用データでの出力が正解どおりかを確かめる
 on:
   push:
     paths:
       - "data.json"
       - ".github/**"
+      - "tests/**"
   workflow_dispatch:
 
 permissions:
@@ -38,6 +39,17 @@ jobs:
       - name: シェルスクリプトを shellcheck で調べる
         run: shellcheck .github/scripts/*.sh
 
+      - name: 繰り返しの日付計算を確かめる（jq 版・Python 版を正解表と照合）
+        run: python3 tests/test_recurrence.py
+
+      - name: メール送信が証明書を検証しているか確かめる（送信しない）
+        run: python3 tests/test_tls.py
+
+      - name: 通知文・feed・メール・.ics をテスト用データで作り、正解と比べる
+        # 出力を変える修正をしたときは `python3 tests/run_snapshots.py --update` で正解を作り直し、
+        # git diff tests/expected で変化が意図どおりか確かめてからコミットする
+        run: python3 tests/run_snapshots.py
+
       - name: 毎朝の通知を試しに作る（送信しない）
         run: DRY_RUN=1 bash .github/scripts/send_digest.sh
 
@@ -63,11 +75,10 @@ jobs:
       - name: 夜の再通知を試しに作る（送信しない）
         run: DRY_RUN=1 DIGEST_MODE=evening NOW="$(TZ=Asia/Tokyo date +'%Y-%m-%d') 20:47" bash .github/scripts/send_digest.sh
 
-      - name: 失敗を Discord に知らせる
-        if: failure() && github.event_name == 'push'
-        env:
-          URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          [ -n "$URL" ] || exit 0
-          jq -n --arg c "⚠️ 締切データの検証に失敗しました: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" '{content: $c}' \
-            | curl -sf -H "Content-Type: application/json" -d @- "$URL" || true
+  notify:
+    needs: [check]
+    if: failure()
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      note: "data.json かスクリプトに問題があります。"
+    secrets: inherit

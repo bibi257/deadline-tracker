@@ -17,6 +17,12 @@ from datetime import datetime, timedelta, timezone
 JST = timezone(timedelta(hours=9))
 
 
+def now_jst():
+    """現在時刻(JST)。環境変数 NOW="2026-10-05 06:47"（JST）で差し替えられる（テスト用。send_digest.sh の NOW と同じ）"""
+    v = os.environ.get("NOW")
+    return datetime.strptime(v, "%Y-%m-%d %H:%M").replace(tzinfo=JST) if v else datetime.now(JST)
+
+
 def parse_dt(s):
     """ISO8601(末尾Z / ミリ秒つきも可)を datetime に変換する。"""
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
@@ -117,7 +123,7 @@ def vevent(it, day_hour, reminders=None):
 
     lines = ["BEGIN:VEVENT",
              "UID:%s@deadline-tracker" % it.get("id", "x"),
-             "DTSTAMP:" + utc(datetime.now(timezone.utc)),
+             "DTSTAMP:" + utc(now_jst()),
              "SEQUENCE:%d" % it.get("seq", 0)]
     if all_day:
         # 終日予定。DTENDは翌日を指す決まりなので1日足す

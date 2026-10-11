@@ -40,3 +40,11 @@ jobs:
           TARGET: ${{ github.event.inputs.target || 'auto' }}
           DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
         run: python3 .github/scripts/send_feed_mail.py "$RUNNER_TEMP/feed.json"
+
+  notify:
+    needs: [mail]
+    if: failure()
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      note: "モーニングブリーフ用のメールが届いていません。"
+    secrets: inherit

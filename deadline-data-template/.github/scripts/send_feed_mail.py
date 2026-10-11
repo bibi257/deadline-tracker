@@ -16,6 +16,7 @@ import json
 import os
 import re
 import smtplib
+import ssl
 import sys
 from datetime import date, datetime, timedelta, timezone
 from email.mime.text import MIMEText
@@ -24,6 +25,12 @@ from email.utils import formatdate, make_msgid
 JST = timezone(timedelta(hours=9))
 DOW = "月火水木金土日"
 SUBJECT_PREFIX = "【締切トラッカー】"
+
+
+def now_jst():
+    """現在時刻(JST)。環境変数 NOW="2026-10-05 06:47"（JST）で差し替えられる（テスト用。send_digest.sh の NOW と同じ）"""
+    v = os.environ.get("NOW")
+    return datetime.strptime(v, "%Y-%m-%d %H:%M").replace(tzinfo=JST) if v else datetime.now(JST)
 
 
 def jp(d):
@@ -127,7 +134,7 @@ def build_body(feed, target):
 def _starttls():
     s = smtplib.SMTP("smtp.gmail.com", 587, timeout=30)
     try:
-        s.starttls()
+        s.starttls(context=ssl.create_default_context())  # 証明書を検証する（context なしだと検証されない）
     except BaseException:
         s.close()
         raise
@@ -135,7 +142,7 @@ def _starttls():
 
 
 def _ssl():
-    return smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30)
+    return smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30, context=ssl.create_default_context())
 
 
 def _text(v):
@@ -146,7 +153,7 @@ def main():
     with open(sys.argv[1], encoding="utf-8") as f:
         feed = json.load(f)
 
-    now = datetime.now(JST)
+    now = now_jst()
     mode = os.environ.get("TARGET", "auto")
     if mode == "tomorrow" or (mode == "auto" and now.hour >= 15):
         target = now.date() + timedelta(days=1)

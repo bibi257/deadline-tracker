@@ -1,0 +1,10 @@
+----- [DRY_RUN] 送信内容 -----
+<@100000000000000001> 
+# 🌙 まだ終わっていません（5件）
+- **レポート下書き**　`課題`　🔴 10 日超過　[✅完了](<https://example.com/app/?done=t01>)
+- 🔁 **定例会**　`電大navi`　🔴 7 日超過　[✅完了](<https://example.com/app/?done=t09>)
+- **資料提出**　`新聞委員会`　🔴 1 日超過　[✅完了](<https://example.com/app/?done=t02>)
+- **シフト提出**　`バイト`　🔴 締切を過ぎました　[✅完了](<https://example.com/app/?done=t03>)
+- 🔁 **記事投稿**　`電大navi`　⚡ 今日中　[✅完了](<https://example.com/app/?done=t10>)
+
+[アプリで完了にする](https://example.com/app/)

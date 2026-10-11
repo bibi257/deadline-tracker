@@ -36,6 +36,7 @@ ATTACH_ICS="0"
 # .ics内の「当日リマインド」の時刻(24時間表記の時)
 ICS_DAY_HOUR="9"
 # 週次レビューの負荷予報で ⚠️ を付ける件数（1週間の合計 / 1カテゴリ）
+# deadline-tracker の app.js にも同じ閾値（LOAD_WARN / CAT_WARN）があり、カレンダーの週の ⚠ に使う。変えるときは両方そろえる
 LOAD_WARN="6"
 CAT_WARN="3"
 # 週次レビューの月初めに支出をまとめるカテゴリ。メモの「¥1,980」「1980円」を集計する。空にすると出さない
@@ -292,7 +293,7 @@ send_weekly_review(){
       while IFS=$'\x1f' read -r key title cat rep; do
         if [ "$key" = "$d" ]; then
           mark="-"
-          [ "$rep" != "none" ] && mark="🔁"
+          [ "$rep" != "none" ] && mark="- 🔁"
           DAY_LINES="${DAY_LINES}${mark} ${title}　\`${cat}\`"$'\n'
         fi
       done <<< "$NEXT7"

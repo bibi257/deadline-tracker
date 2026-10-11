@@ -38,3 +38,11 @@ jobs:
             | curl -sf -X PATCH -H "Authorization: Bearer $GIST_TOKEN" \
                 -H "Accept: application/vnd.github+json" \
                 -d @- "https://api.github.com/gists/$GIST_ID" >/dev/null
+
+  notify:
+    needs: [ics]
+    if: failure()
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      note: "購読カレンダー（.ics）が更新されていません。"
+    secrets: inherit
