@@ -145,6 +145,7 @@ deadline-tracker（Public / GitHub Pages で公開）
 ├── service-worker.js       オフライン起動用
 ├── assets/
 │   └── icon-180/192/512.png    アイコン
+├── .github/                    PR をマージしたとき、変更点を Gmail で自分宛てに送る（下の「マージ時のメール」）
 └── deadline-data-template/     Private側に置くファイルの雛形（設定は空。使い方は同梱のREADME）
 
 deadline-data（Private / データと自動送信）
@@ -234,6 +235,15 @@ iPhone では Safari で開いて共有ボタン →「ホーム画面に追加�
 
 > ⚠️ 購読用 .ics の秘密 Gist は、**URL を知っていれば誰でも読める**。メモは書き出さないが、タイトル・日時・カテゴリは外に出る。
 > 外に出したくなければ Secret を登録しない（登録しない間は何も公開されない）。
+
+## マージ時のメール
+
+main への PR をマージすると、`.github/workflows/merge-mail.yml` が変更点（PR の説明・コミット・変更したファイルと行数）を
+自分宛てに Gmail で送る。件名は「【deadline-tracker】#番号 タイトル をマージしました」。
+deadline-data にも同じ仕組みがある（スクリプト `send_merge_mail.py` は両方で同じもの。片方を直したらもう片方にも写す）。
+
+- このリポジトリの Settings → Secrets and variables → Actions に、deadline-data と同じ `GMAIL_ADDRESS`・`GMAIL_APP_PASSWORD` を登録する。未登録なら送らない
+- PR を通さない直接の push や、マージせずに閉じた PR では送らない
 
 ---
 
