@@ -3,6 +3,7 @@ name: マージした変更を Gmail へ送る
 # main への PR をマージしたとき、変更点（PR の説明・コミット・変更したファイル）を自分宛てにメールで送る。
 # 送信には Secret の GMAIL_ADDRESS / GMAIL_APP_PASSWORD（deadline-data と同じ値）を使う。未設定なら送らない。
 # PR を通さない直接の push では送らない。
+# Dependabot の PR には Actions の Secret が渡らない（Dependabot 用の Secret のみ）ため、その PR のマージでは届かない。
 on:
   pull_request:
     types: [closed]

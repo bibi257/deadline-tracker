@@ -15,6 +15,7 @@ import json
 import os
 import re
 import smtplib
+import ssl
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -94,7 +95,7 @@ def build(event, commits, files):
 def _starttls():
     s = smtplib.SMTP("smtp.gmail.com", 587, timeout=30)
     try:
-        s.starttls()
+        s.starttls(context=ssl.create_default_context())  # 証明書を検証する（context なしだと検証されない）
     except BaseException:
         s.close()
         raise
@@ -102,7 +103,7 @@ def _starttls():
 
 
 def _ssl():
-    return smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30)
+    return smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30, context=ssl.create_default_context())
 
 
 def _text(v):
