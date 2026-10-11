@@ -535,7 +535,7 @@ function h(html){ var t=document.createElement("template"); t.innerHTML=html.tri
 function escHtml(s){ return String(s).replace(/[&<>"]/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
 
 /* ========== 描画 ========== */
-var _lastTabView=null;
+var _lastTabView=null, _lastPageView=null;
 function render(){
   resetColorCache();
   var now=new Date();
@@ -597,6 +597,9 @@ function render(){
   else if(view==="cal") renderCal();
   else if(view==="done") renderDone();
   else renderSettings();
+  // 画面を切り替えたときだけ演出と音を出す（同じ画面の再描画・同期・起動直後の描画では出さない）
+  if(_lastPageView!==null && view!==_lastPageView) pageTransition(_lastPageView, view);
+  _lastPageView=view;
 }
 
 /* カテゴリの絞り込み。数が多くて画面に収まらないときは横に動かせる（スワイプ・ホイール・ドラッグ・‹ ›）。
@@ -2086,7 +2089,7 @@ function renderSettings(){
   main.appendChild(s3b);
 
   // 効果音
-  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときに短い音を鳴らします。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
+  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたときに短い音を鳴らします（手帳風では紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
@@ -3139,8 +3142,23 @@ function playKaisai(exp){
   el.onclick=close; document.body.appendChild(el); setTimeout(close, 2200);
 }
 
+/* 画面の切り替え：タブの並び（左から一覧・今週・カレンダー・完了・設定）で右へ進むときは右から、
+   戻るときは左から中身を滑り込ませる。超過・定期予定は一覧の奥、日表示は今週の奥として扱う。
+   手帳風では紙をめくるように傾けて入れる。動きは演出「なし」・視差効果を減らす設定で止まる（styles.css の .no-motion） */
+var PAGE_ORDER={list:0, over:.3, rep:.6, week:1, day:1.5, cal:2, done:3, set:4};
+function pageTransition(from, to){
+  var fwd=(PAGE_ORDER[to]||0)>=(PAGE_ORDER[from]||0);
+  main.classList.remove("page-fwd","page-back");
+  void main.offsetWidth; // 付け直しても動きが最初から始まるように、一度描画を確定させる
+  main.classList.add(fwd?"page-fwd":"page-back");
+  playSfx(techoStyle()?"turn":"page");
+}
+main.addEventListener("animationend", function(e){
+  if(e.target===main) main.classList.remove("page-fwd","page-back");
+});
+
 /* 効果音：Web Audio API でその場で作る（音声ファイルは使わない）。設定でオン/オフ、初期値はオフ。
-   音を出す操作は、登録・完了・削除の3つ。端末の設定（演出とは別）なので同期の対象外 */
+   音を出す操作は、登録・完了・削除と画面の切り替え。端末の設定（演出とは別）なので同期の対象外 */
 var _audioCtx=null;
 function soundOn(){ return db.settings.sound==="on"; }
 function audioCtx(){
@@ -3157,15 +3175,17 @@ function unlockAudio(){
   if(ctx && ctx.state==="suspended") ctx.resume().catch(function(){});
 }
 ["pointerdown","keydown","touchend"].forEach(function(ev){ document.addEventListener(ev, unlockAudio, {passive:true}); });
-/* 音の並び [周波数Hz, 開始秒, 長さ秒]。長さは余韻が消えるまで。
-   やわらかい正弦波に、1オクターブ上の小さな倍音を重ねてベルのような響きにし、ゆっくり減衰させる */
+/* 音の並び [周波数Hz, 開始秒, 長さ秒, 音量(省略時 .16)]。長さは余韻が消えるまで。
+   やわらかい正弦波に、1オクターブ上の小さな倍音を重ねてベルのような響きにし、ゆっくり減衰させる。
+   画面の切り替えは何度も鳴るので、短く小さくする */
 var SFX={
   add:    [[660,0,.65],[880,.12,1.15]],                       // 登録：軽い2音（上がる）
   done:   [[523.25,0,.8],[659.25,.12,.9],[783.99,.24,1.8]],   // 完了：ド・ミ・ソ（明るい）
-  remove: [[440,0,.65],[329.63,.12,1.2]]                      // 削除：2音（下がる）
+  remove: [[440,0,.65],[329.63,.12,1.2]],                     // 削除：2音（下がる）
+  page:   [[1046.5,0,.16,.06],[1567.98,.05,.22,.045]]          // 画面の切り替え：ごく短い2音
 };
 function playSfx(kind){
-  if(!soundOn() || !SFX[kind]) return;
+  if(!soundOn() || !(SFX[kind] || kind==="turn")) return;
   try{
     var ctx=audioCtx(); if(!ctx) return;
     if(ctx.state==="suspended") ctx.resume().catch(function(){});
@@ -3180,12 +3200,30 @@ function playSfx(kind){
       osc.connect(g); g.connect(ctx.destination);
       osc.start(s); osc.stop(e+.02);
     };
+    if(kind==="turn"){ pageTurn(ctx, t0); return; }
     SFX[kind].forEach(function(n){
-      var s=t0+n[1];
-      tone(n[0], s, n[2], .16);          // 基音
-      tone(n[0]*2, s, n[2]*.5, .04);     // 倍音（早めに消えて、余韻は丸く残る）
+      var s=t0+n[1], peak=n[3]||.16;
+      tone(n[0], s, n[2], peak);         // 基音
+      tone(n[0]*2, s, n[2]*.5, peak/4);  // 倍音（早めに消えて、余韻は丸く残る）
     });
   }catch(e){ /* 音が出せなくても操作は止めない */ }
+}
+
+/* 手帳風の画面の切り替え：紙をめくる「さっ」という音。ノイズを帯域フィルターに通し、
+   通す高さを上げながら短く鳴らす（約0.2秒） */
+function pageTurn(ctx, t0){
+  var len=.22, n=Math.floor(ctx.sampleRate*len), buf=ctx.createBuffer(1, n, ctx.sampleRate), d=buf.getChannelData(0);
+  for(var i=0;i<n;i++) d[i]=Math.random()*2-1;
+  var src=ctx.createBufferSource(), bp=ctx.createBiquadFilter(), g=ctx.createGain();
+  src.buffer=buf;
+  bp.type="bandpass"; bp.Q.value=1.2;
+  bp.frequency.setValueAtTime(1800, t0);
+  bp.frequency.exponentialRampToValueAtTime(5200, t0+len);
+  g.gain.setValueAtTime(.0001, t0);
+  g.gain.exponentialRampToValueAtTime(.09, t0+.05);
+  g.gain.exponentialRampToValueAtTime(.0001, t0+len);
+  src.connect(bp); bp.connect(g); g.connect(ctx.destination);
+  src.start(t0); src.stop(t0+len+.02);
 }
 
 /* 経験値：期限内に早く終えるほど多い。100 EXP ごとにレベルが1上がる（この端末だけの記録） */

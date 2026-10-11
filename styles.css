@@ -428,9 +428,20 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
 .quest.allclear .quest-title{font-size:clamp(19px,6.2vw,27px);letter-spacing:.06em;white-space:nowrap;color:#FFF3C4}
 .quest.allclear .quest-exp{color:#FFD34D}
 
+/* ---- 画面の切り替え（app.js の pageTransition）。進むときは右から、戻るときは左から入る ---- */
+#main.page-fwd{animation:page-in-fwd .28s cubic-bezier(.2,.7,.2,1)}
+#main.page-back{animation:page-in-back .28s cubic-bezier(.2,.7,.2,1)}
+@keyframes page-in-fwd{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+@keyframes page-in-back{from{opacity:0;transform:translateX(-24px)}to{opacity:1;transform:none}}
+/* 手帳風：綴じ側を軸にして、紙をめくるように少し傾けて入れる */
+.techo #main.page-fwd{animation:page-turn-fwd .34s cubic-bezier(.2,.7,.2,1);transform-origin:left center}
+.techo #main.page-back{animation:page-turn-back .34s cubic-bezier(.2,.7,.2,1);transform-origin:right center}
+@keyframes page-turn-fwd{from{opacity:0;transform:perspective(1400px) rotateY(-14deg)}to{opacity:1;transform:none}}
+@keyframes page-turn-back{from{opacity:0;transform:perspective(1400px) rotateY(14deg)}to{opacity:1;transform:none}}
+
 /* 演出「なし」・視差効果を減らす設定では、常時動くものも止める */
-.no-motion .card.over:not(.done),.no-motion .lv-streak.warn,.no-motion .lv-num.up{animation:none}
-@media (prefers-reduced-motion:reduce){.card.over:not(.done),.lv-streak.warn,.lv-num.up,.card.leaving{animation:none!important}.lv-gauge b.grow{transition:none}}
+.no-motion .card.over:not(.done),.no-motion .lv-streak.warn,.no-motion .lv-num.up,.no-motion #main.page-fwd,.no-motion #main.page-back{animation:none}
+@media (prefers-reduced-motion:reduce){.card.over:not(.done),.lv-streak.warn,.lv-num.up,.card.leaving,#main.page-fwd,#main.page-back{animation:none!important}.lv-gauge b.grow{transition:none}}
 
 /* ---- カテゴリの色 ---- */
 .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:0;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
