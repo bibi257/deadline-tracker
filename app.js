@@ -575,7 +575,6 @@ function render(){
     }
   });
   if(tabsChanged) _lastTabView=tabView;
-  if(_tabsScroller) requestAnimationFrame(_tabsScroller.update);
   // 期限切れの件数は一覧タブに出し、ほかの画面にいても気づけるようにする
   var overBadge=document.querySelector('.tab[data-view="list"] .tab-badge');
   if(overBadge){
@@ -3577,15 +3576,16 @@ if("serviceWorker" in navigator && location.protocol!=="file:"){
 var APP_BUILD=null;
 function checkForUpdate(){
   if(location.protocol==="file:") return;
-  // index.html と app.js の両方を見る（スタンプの更新を忘れて app.js だけ変えた場合も、長さの違いで気づける）
+  // index.html・app.js・styles.css を見る（スタンプの更新を忘れて app.js や styles.css だけ変えた場合も、長さの違いで気づける）
   var fresh=function(url){ return fetch(url+"?_="+Date.now(),{cache:"no-store"}).then(function(res){ return res.ok?res.text():null; }); };
-  Promise.all([fresh(location.pathname), fresh(new URL("app.js",location.href).pathname)])
+  var path=function(f){ return new URL(f,location.href).pathname; };
+  Promise.all([fresh(location.pathname), fresh(path("app.js")), fresh(path("styles.css"))])
     .then(function(r){
-      var html=r[0], js=r[1];
-      if(!html || js===null) return;
+      var html=r[0], js=r[1], css=r[2];
+      if(!html || js===null || css===null) return;
       // ビルドスタンプ（無ければ内容の長さ）を版番号として使う
       var m=html.match(/<meta name="build-stamp" content="([^"]*)">/);
-      var build=(m?m[1]:"")+"/"+html.length+"/"+js.length;
+      var build=(m?m[1]:"")+"/"+html.length+"/"+js.length+"/"+css.length;
       if(APP_BUILD===null){ APP_BUILD=build; return; }
       if(build!==APP_BUILD){
         APP_BUILD=build;
@@ -3616,7 +3616,6 @@ document.querySelectorAll(".tab").forEach(function(t){
 document.getElementById("gearBtn").onclick=function(){ view=(view==="set")?"list":"set"; window.scrollTo(0,0); render(); };
 document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
 load(); autoCompleteOverdueItems(); applyTheme();
-var _tabsScroller=null; // タブは4つに絞ったので、横に動かす仕組みは使わない
 render();
 handleExportParam();
 handleActionParam();
