@@ -26,18 +26,24 @@ deadline-data（Private）
     │   ├── build-feed.yml     feed.json を作る（任意。「モーニングブリーフとの連携」）
     │   ├── send-feed-mail.yml 締切一覧を自分宛ての Gmail で送る（任意）
     │   ├── publish-ics.yml    購読用 .ics を秘密 Gist へ書き出す（任意）
-    │   └── prune-backups.yml  backups/ を毎月間引く（任意）
+    │   ├── prune-backups.yml  backups/ を毎月間引く（任意）
+    │   ├── notify-failure.yml 各ワークフローが失敗したら Discord に知らせる共通部品（任意。他のワークフローが `uses:` で呼ぶ）
+    │   ├── watch-digest.yml   朝の通知が GitHub 側で飛ばされたとき、午前中に検知して送り直す（任意）
+    │   └── merge-mail.yml     PR をマージしたとき、変更点を自分宛ての Gmail で送る（任意）
+    ├── dependabot.yml         Actions のバージョンを月1回更新する PR を出す（任意）
     └── scripts/
         ├── send_digest.sh
         ├── build_ics.py
         ├── validate_data.py   data.json の中身チェック
         ├── build_feed.py
         ├── send_feed_mail.py
+        ├── send_merge_mail.py
         └── prune_backups.py
+tests/                     check.yml が使うテスト（繰り返しの日付計算・メール送信の証明書検証・出力の正解との照合）。.gitattributes も一緒に置く
 ```
 
 必須なのは `daily-digest.yml`・`send_digest.sh`・`build_ics.py` の3つ。それ以外は、使う機能の分だけ置けばよい。
-ただし `check.yml` は全スクリプトを試しに動かすので、置くなら `scripts/` の6つをすべて置くこと（使わない機能の分は `check.yml` からその手順を消してもよい）。
+ただし `check.yml` は全スクリプトを試しに動かすので、置くなら `scripts/` のスクリプトと `tests/` をすべて置くこと（使わない機能の分は `check.yml` からその手順を消してもよい）。
 
 GitHub の Web 画面から作る場合は、**Add file → Create new file** でファイル名にスラッシュを含めて入力すると、フォルダごと作られる。
 

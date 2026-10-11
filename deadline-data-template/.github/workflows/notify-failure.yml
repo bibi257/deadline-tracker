@@ -1,0 +1,47 @@
+name: 失敗を Discord に知らせる
+
+# 各ワークフローの最後に `uses:` で呼ぶ共通の部品（単独では動かない）。
+# 朝の通知やメールが失敗しても、何も届かないだけで「今日は締切が無い」と見分けがつかないため、
+# 失敗したらその旨を Discord に送る。Secret の DISCORD_WEBHOOK_URL が無ければ何もしない。
+# 呼び出し側の書き方:
+#   notify:
+#     needs: [<本体のジョブ>]
+#     if: failure()
+#     uses: ./.github/workflows/notify-failure.yml
+#     with: { note: "（省略可）通知に添える一言" }
+#     secrets: inherit
+on:
+  workflow_call:
+    inputs:
+      note:
+        type: string
+        default: ""
+    secrets:
+      DISCORD_WEBHOOK_URL:
+        required: false
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Discord に送る
+        # github.* は呼び出し元のワークフローの値になる（名前・実行のURL）
+        env:
+          URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          WORKFLOW: ${{ github.workflow }}
+          EVENT: ${{ github.event_name }}
+          NOTE: ${{ inputs.note }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -n "$URL" ] || { echo "DISCORD_WEBHOOK_URL が未設定のため送りません"; exit 0; }
+          case "$EVENT" in
+            schedule) how="定期実行" ;;
+            push) how="データ・スクリプトの更新" ;;
+            workflow_dispatch) how="手動実行" ;;
+            *) how="$EVENT" ;;
+          esac
+          jq -n --arg c "⚠️ 「${WORKFLOW}」が失敗しました（${how}）。${NOTE}"$'\n'"<${RUN_URL}>" '{content: $c}' \
+            | curl -sf --retry 3 --retry-delay 2 -H "Content-Type: application/json" -d @- "$URL" >/dev/null

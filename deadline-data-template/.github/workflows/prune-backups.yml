@@ -25,3 +25,9 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -q -m "古いバックアップを間引く"
           git pull -q --rebase origin main && git push -q origin HEAD:main
+
+  notify:
+    needs: [prune]
+    if: failure()
+    uses: ./.github/workflows/notify-failure.yml
+    secrets: inherit

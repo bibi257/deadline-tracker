@@ -53,3 +53,11 @@ jobs:
           else
             DIGEST_MODE=daily bash .github/scripts/send_digest.sh
           fi
+
+  notify:
+    needs: [digest]
+    if: failure()
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      note: "今回の締切通知は届いていません。Actions の「Run workflow」で送り直せます。"
+    secrets: inherit

@@ -54,3 +54,11 @@ jobs:
           done
           echo "feed.json を push できませんでした" >&2
           exit 1
+
+  notify:
+    needs: [feed]
+    if: failure()
+    uses: ./.github/workflows/notify-failure.yml
+    with:
+      note: "feed.json が古いままの可能性があります。"
+    secrets: inherit

@@ -12,11 +12,18 @@
 """
 import calendar
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 
 JST = timezone(timedelta(hours=9))
 REP_LABEL = {"weekly": "毎週", "biweekly": "隔週", "monthly": "毎月", "yearly": "毎年"}
+
+
+def now_jst():
+    """現在時刻(JST)。環境変数 NOW="2026-10-05 06:47"（JST）で差し替えられる（テスト用。send_digest.sh の NOW と同じ）"""
+    v = os.environ.get("NOW")
+    return datetime.strptime(v, "%Y-%m-%d %H:%M").replace(tzinfo=JST) if v else datetime.now(JST)
 
 
 def parse_dt(s):
@@ -87,7 +94,7 @@ def main():
     with open(src, encoding="utf-8") as f:
         data = json.load(f)
 
-    now = datetime.now(JST)
+    now = now_jst()
     frm = now.date()
     to = frm + timedelta(days=days)
     items = []
