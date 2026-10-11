@@ -58,7 +58,11 @@ function secretSet(name, value){
       store.set(name, "enc1:"+_b64(iv)+":"+_b64(ct));
       return true;
     });
-  }).catch(function(){ try{ localStorage.removeItem(name); }catch(e){} return false; });
+  }).catch(function(){
+    // 鍵を取れなかっただけで、すでに暗号化して保存してある値まで消さない（平文で残っている値だけを消す）
+    try{ var old=localStorage.getItem(name); if(old&&old.indexOf("enc1:")!==0) localStorage.removeItem(name); }catch(e){}
+    return false;
+  });
 }
 function secretDel(name){
   delete _secretCache[name];
@@ -2113,7 +2117,7 @@ function renderSettings(){
   g("ghRemember").checked=!!store.get("gh-token");
   secretGet("gh-token").then(function(t){ // 暗号化して保存してあるので、復号できてから入れる（入力し始めていたら上書きしない）
     if(t && !g("ghToken").value) g("ghToken").value=t;
-    if(!t) g("ghRemember").checked=false;
+    if(!t && !store.get("gh-token")) g("ghRemember").checked=false; // 鍵を取れなかっただけで値が残っているなら、チェックは外さない
   });
   if(!saved.owner&&guess.owner) s5.querySelector("#ghStatus").textContent="保存先の候補として "+guess.owner+"/"+guess.repo+" を入れました。実際のPrivateリポジトリ名に合わせて直してください。";
   // このリポジトリが以前「Publicと承知の上」で確認済みなら、開くたびに気づけるよう常に出す
@@ -2150,7 +2154,7 @@ function renderSettings(){
   secretGet("dc-hook").then(function(u){ // 暗号化して保存してあるので、復号できてから入れる（入力し始めていたら上書きしない）
     var box=s6.querySelector("#dcHook");
     if(u && !box.value) box.value=u;
-    if(!u) s6.querySelector("#dcRemember").checked=false;
+    if(!u && !store.get("dc-hook")) s6.querySelector("#dcRemember").checked=false;
   });
   var bSend=h('<button class="btn fill">今すぐ送信</button>');
   bSend.onclick=function(){ sendToDiscord(s6,s5); };
