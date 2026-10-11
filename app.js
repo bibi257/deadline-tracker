@@ -556,6 +556,7 @@ function render(){
   document.body.setAttribute("data-view", view);
   renderLevelBar();
   document.documentElement.classList.toggle("no-motion", !motionOn());
+  document.documentElement.classList.toggle("techo", techoStyle());
   setTimeout(countUpSummary, 0);
 
   // 日表示は今週タブ、超過・定期予定は一覧タブの一部として扱う（設定は歯車なので、どのタブも選ばない）
@@ -1723,19 +1724,21 @@ function renderRepeat(){
     if(!arr.length) return;
     main.appendChild(h('<div class="group-label">'+labels[rep]+'</div>'));
     arr.forEach(function(i){
-      main.appendChild(cardOf(i));
-      // 取りやめた回があれば一覧を出し、戻せるようにする
-      if(i.skip&&i.skip.length){
-        var box=h('<div class="skipbox">'+
-          '<div style="font-size:11.5px;color:var(--ink-3);letter-spacing:.1em;margin-bottom:6px">取りやめた回</div>'+
-          '<div class="row"></div></div>');
-        i.skip.slice().sort().forEach(function(k){
-          var b=h('<button class="act">'+escHtml(k)+' を戻す</button>');
-          b.onclick=(function(id,key){ return function(){ unskipOccurrence(id,key); }; })(i.id,k);
-          box.querySelector(".row").appendChild(b);
-        });
-        main.appendChild(box);
-      }
+      var card=cardOf(i);
+      // 取りやめた回があれば一覧を出し、戻せるようにする（2列のときも離れないよう、カードと一緒に包む）
+      if(!(i.skip&&i.skip.length)){ main.appendChild(card); return; }
+      var pair=h('<div class="card-pair"></div>');
+      pair.appendChild(card);
+      main.appendChild(pair);
+      var box=h('<div class="skipbox">'+
+        '<div style="font-size:11.5px;color:var(--ink-3);letter-spacing:.1em;margin-bottom:6px">取りやめた回</div>'+
+        '<div class="row"></div></div>');
+      i.skip.slice().sort().forEach(function(k){
+        var b=h('<button class="act">'+escHtml(k)+' を戻す</button>');
+        b.onclick=(function(id,key){ return function(){ unskipOccurrence(id,key); }; })(i.id,k);
+        box.querySelector(".row").appendChild(b);
+      });
+      pair.appendChild(box);
     });
   });
   var all=h('<div style="margin:20px 0 0"><button class="act primary" style="padding:8px 14px">定期予定をまとめてカレンダーへ書き出す</button></div>');
@@ -1750,8 +1753,24 @@ function renderDone(){
   list.forEach(function(i){ main.appendChild(cardOf(i)); });
 }
 
+/* 週の負荷の閾値。週次レビューの負荷予報（deadline-data の send_digest.sh）と同じ値にそろえる */
+var LOAD_WARN=6, CAT_WARN=3;
+/* カレンダー右端の「週」の列：その週の未完了の件数。多い週は ⚠ を付け、内訳を title に出す */
+function weekCell(n, cats){
+  var names=Object.keys(cats).sort(function(a,b){ return cats[b]-cats[a]; });
+  var warn=n>=LOAD_WARN || names.some(function(c){ return cats[c]>=CAT_WARN; });
+  var detail=names.map(function(c){ return c+" "+cats[c]+(cats[c]>=CAT_WARN?" ⚠":""); }).join("・");
+  var label=n?"この週の締切 "+n+" 件"+(warn?"（多め）":"")+(detail?"："+detail:""):"この週の締切はありません";
+  return h('<div class="wk'+(warn?" warn":"")+'" title="'+escHtml(label)+'" aria-label="'+escHtml(label)+'">'+
+    (n?(warn?'<i aria-hidden="true">⚠</i>':'')+'<span class="num">'+n+'</span>':'')+'</div>');
+}
+
 function renderCal(){
   main.appendChild(filterBar());
+  // 広い画面（960px以上）では、月の表と選んだ日の予定を左右に並べる（styles.css）
+  var layout=h('<div class="cal-layout"><div class="cal-main"></div><div class="cal-side"></div></div>');
+  var cm=layout.querySelector(".cal-main"), side=layout.querySelector(".cal-side");
+  main.appendChild(layout);
   var y=calRef.getFullYear(), m=calRef.getMonth();
   var head=h('<div class="cal-head"><h2><span class="num">'+y+"."+pad(m+1)+'</span></h2><div class="row"></div></div>');
   var prev=h('<button class="nav">‹</button>'), today=h('<button class="nav" style="width:auto;padding:0 10px;font-size:12px">今月</button>'), next=h('<button class="nav">›</button>');
@@ -1759,13 +1778,13 @@ function renderCal(){
   next.onclick=function(){ calRef=new Date(y,m+1,1); selDay=null; render(); };
   today.onclick=function(){ calRef=new Date(); selDay=null; render(); };
   head.querySelector(".row").append(prev,today,next);
-  main.appendChild(head);
+  cm.appendChild(head);
 
   // 定期予定の帯をまとめて出し入れする（この端末だけの表示設定）
   var showRoutine=store.get("cal-show-routine")!=="0";
   var rtToggle=h('<label class="cal-opt"><input type="checkbox"'+(showRoutine?" checked":"")+'>定期予定の帯を表示</label>');
   rtToggle.querySelector("input").onchange=function(){ store.set("cal-show-routine", this.checked?"1":"0"); render(); };
-  main.appendChild(rtToggle);
+  cm.appendChild(rtToggle);
   // 帯の色分け：カテゴリの色 / 締切の近さ（状態）の色（この端末だけの表示設定）
   var mode=calColorMode();
   var modeRow=h('<div class="cal-opt cal-mode">帯の色：</div>');
@@ -1775,10 +1794,11 @@ function renderCal(){
     b.onclick=function(){ store.set("cal-color-mode", p[0]); render(); };
     modeRow.appendChild(b);
   });
-  main.appendChild(modeRow);
+  cm.appendChild(modeRow);
 
   var grid=h('<div class="grid"></div>');
   DOW.forEach(function(d,i){ grid.appendChild(h('<div class="dow'+(i===0?" sun":i===6?" sat":"")+'">'+d+'</div>')); });
+  grid.appendChild(h('<div class="dow wk-h" title="その週（日〜土）の未完了の件数">週</div>'));
   var first=new Date(y,m,1), start=new Date(y,m,1-first.getDay());
   var gridEnd=new Date(start.getFullYear(),start.getMonth(),start.getDate()+41,23,59,59);
   // 繰り返しは表示範囲ぶんだけ展開する
@@ -1797,12 +1817,27 @@ function renderCal(){
     });
   }
 
+  // 負荷：その日が締切の未完了の件数（定期予定の回も含む。帯の表示設定には左右されない）。
+  // 週の合計と1カテゴリの件数は、週次レビューの負荷予報（send_digest.sh の LOAD_WARN / CAT_WARN）と同じ閾値で ⚠ を付ける
+  var loadByDay={};
+  items.forEach(function(i){
+    if(i.done) return;
+    var dk=toLocalISO(new Date(i.due));
+    (loadByDay[dk]=loadByDay[dk]||[]).push(i);
+  });
+  var wkN=0, wkCats={};
+
   for(var k=0;k<42;k++){
     var d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+k);
     var key=toLocalISO(d);
+    var dayLoad=(loadByDay[key]||[]).length;
+    wkN+=dayLoad;
+    (loadByDay[key]||[]).forEach(function(i){ var c=i.cat||"その他"; wkCats[c]=(wkCats[c]||0)+1; });
     var hol=holidayName(key);
-    var day=h('<button class="day'+(d.getMonth()!==m?" out":"")+(key===todayKey?" is-today":"")+(selDay===key?" sel":"")+(hol?" holiday":"")+'" '+
-      (hol?'title="'+escHtml(hol)+'"':'')+'><span class="d">'+d.getDate()+'</span>'+
+    var dayTitle=[hol, dayLoad?"締切 "+dayLoad+" 件":""].filter(Boolean).join("・");
+    var day=h('<button class="day'+(d.getMonth()!==m?" out":"")+(key===todayKey?" is-today":"")+(selDay===key?" sel":"")+(hol?" holiday":"")+
+      (dayLoad?" load"+Math.min(dayLoad,3):"")+'" '+
+      (dayTitle?'title="'+escHtml(dayTitle)+'"':'')+'><span class="d">'+d.getDate()+'</span>'+
       (hol?'<span class="holname">'+escHtml(hol)+'</span>':'')+'</button>');
     // 帯：定期予定は、全体で隠しているときと、その予定だけ隠す設定のときは出さない
     var hit=hitsOn(key).filter(function(i){ return !isRepeating(i) || (showRoutine && !i.calHide); });
@@ -1815,8 +1850,11 @@ function renderCal(){
     });
     (function(key){ day.onclick=function(){ selDay=(selDay===key?null:key); render(); }; })(key);
     grid.appendChild(day);
+    if(k%7===6){ grid.appendChild(weekCell(wkN, wkCats)); wkN=0; wkCats={}; }
   }
-  main.appendChild(grid);
+  cm.appendChild(grid);
+  cm.appendChild(h('<p class="cal-legend"><span class="lg-sw load1"></span><span class="lg-sw load2"></span><span class="lg-sw load3"></span>'+
+    'マスの濃さはその日の未完了の締切の数（1・2・3件以上）。右端は週の件数で、'+LOAD_WARN+'件以上か1カテゴリ'+CAT_WARN+'件以上の週に ⚠</p>'));
 
   if(selDay){
     var sel=hitsOn(selDay).sort(sortByDue);
@@ -1824,11 +1862,11 @@ function renderCal(){
     var selHead=h('<div class="sel-title" style="display:flex;justify-content:space-between;align-items:center">'+(dd.getMonth()+1)+"月"+dd.getDate()+"日（"+DOW[dd.getDay()]+"）の予定"+
       '<button class="act">時間軸で見る</button></div>');
     selHead.querySelector("button").onclick=function(){ openDayView(selDay); };
-    main.appendChild(selHead);
-    if(!sel.length) main.appendChild(h('<div class="empty">この日の締切はありません。</div>'));
-    else sel.forEach(function(i){ main.appendChild(cardOf(i)); });
+    side.appendChild(selHead);
+    if(!sel.length) side.appendChild(h('<div class="empty">この日の締切はありません。</div>'));
+    else sel.forEach(function(i){ side.appendChild(cardOf(i)); });
   } else {
-    main.appendChild(h('<div class="sel-title">日付をタップすると、その日の予定が出ます</div>'));
+    side.appendChild(h('<div class="sel-title">日付をタップすると、その日の予定が出ます</div>'));
   }
 }
 
@@ -2024,8 +2062,8 @@ function renderSettings(){
   main.appendChild(s3);
 
   // 完了の演出
-  var s3b=h('<div class="sec"><h3>演出</h3><p>登録したときは「クエスト受注」、完了にしたときは「ミッション達成」、今日の締切を全部片付けたら「全クリア」（ボーナス +'+ALL_CLEAR_BONUS+' EXP）の帯を出します（タップですぐ閉じます）。延期・休み・削除のカードの動き、期限切れの点滅、数字の数え上げも、ここで止められます。端末で「視差効果を減らす」をオンにしている場合は出しません。<br>いまの記録：Lv.'+levelOf(totalExp())+'（累計 '+totalExp()+' EXP・完了 '+db.completions.length+' 件の記録）。記録は GitHub 同期で端末間に共有され、週次レビューにも載ります。</p><div class="row"></div></div>');
-  [["on","あり"],["off","なし"]].forEach(function(p){
+  var s3b=h('<div class="sec"><h3>演出</h3><p>「ゲーム風」は、登録したときに「クエスト受注」、完了にしたときに「ミッション達成」、今日の締切を全部片付けたら「全クリア」（ボーナス +'+ALL_CLEAR_BONUS+' EXP）の帯を出します（タップですぐ閉じます）。「手帳風」は帯を出さず、完了にしたカードに「済」の印を押し、全部片付けた日は「皆済」の印を出します。「なし」にすると、延期・休み・削除のカードの動き、期限切れの点滅、数字の数え上げも止まります。端末で「視差効果を減らす」をオンにしている場合は動きを出しません。<br>いまの記録：Lv.'+levelOf(totalExp())+'（累計 '+totalExp()+' EXP・完了 '+db.completions.length+' 件の記録）。記録は GitHub 同期で端末間に共有され、週次レビューにも載ります。</p><div class="row"></div></div>');
+  [["on","ゲーム風"],["techo","手帳風"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (db.settings.motion||"on")===p[0]?"true":"false");
     b.onclick=function(){ db.settings.motion=p[0]; saveRaw(); render(); }; // 設定は同期対象外なのでupdatedAtは進めない
@@ -2929,7 +2967,7 @@ dlgForm.addEventListener("submit",function(e){
     db.items.push(it);
     justAddedId=it.id;
     playSfx("add");
-    if(motionOn()) playQuestAccept(it);
+    if(motionOn() && !techoStyle()) playQuestAccept(it);
     else toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
     // 隔離項目の修復中だった場合は、保存できたので隔離から取り除く
     if(fixingQuarantineId!==null){
@@ -3046,12 +3084,20 @@ function complete(it, cardEl){
   save();
   scheduleAutoSync();
   playSfx("done");
-  if(cardEl && motionOn()){
+  var techo=techoStyle();
+  var msg=techo
+    ? (sub?"済。"+sub:"済の印を押しました")+"（+"+reward.gain+" EXP"+(reward.allClear?"・今日の締切は皆済":"")+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）"
+    : (sub?"完了。"+sub:"完了にしました")+"（EXP +"+reward.gain+(reward.allClear?"・本日のクエスト全クリア":"")+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）";
+  if(cardEl && motionOn() && techo){
+    // 手帳風：帯は出さず、カードに「済」の印を押してから畳む。全部片付いた日は畳んだあとに「皆済」の印
+    stampCard(cardEl);
+    foldCard(cardEl, function(){ render(); toast(msg); if(reward.allClear) playKaisai(reward.allClear); });
+  } else if(cardEl && motionOn()){
     // 今日の全クリアは、達成の帯が閉じたあと（自動でもタップでも）続けて出す
     playQuestClear(it.title, reward, sub, reward.allClear?function(){ playAllClear(reward.allClear); }:null);
     foldCard(cardEl, render);
   } else {
-    toast((sub?"完了。"+sub:"完了にしました")+"（EXP +"+reward.gain+(reward.allClear?"・本日のクエスト全クリア":"")+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）");
+    toast(msg);
     render();
   }
 }
@@ -3060,6 +3106,23 @@ function complete(it, cardEl){
 function motionOn(){
   if(db.settings.motion==="off") return false;
   return !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+/* 演出を「手帳風」にしているか。動きの有無（motionOn）とは別に、言葉と印の見た目を手帳に寄せる */
+function techoStyle(){ return db.settings.motion==="techo"; }
+
+/* 手帳風の完了：カードに朱色の「済」の印を押す（畳むまでの間だけ見える） */
+function stampCard(card){
+  card.appendChild(h('<span class="done-stamp" aria-hidden="true">済</span>'));
+}
+/* 手帳風の全クリア：画面の中央に「皆済」の丸印を押す。タップでもすぐ閉じる */
+function playKaisai(exp){
+  var old=document.querySelector(".seal-pop"); if(old) old.remove();
+  var el=h('<div class="seal-pop" role="status" aria-live="polite">'+
+    '<div class="seal" aria-hidden="true"><span>皆済</span></div>'+
+    '<p class="seal-cap">今日が締切のものは、すべて済みました<br><b class="num">+'+exp+' EXP</b></p></div>');
+  var gone=false;
+  function close(){ if(gone) return; gone=true; el.classList.add("out"); setTimeout(function(){ el.remove(); }, 260); }
+  el.onclick=close; document.body.appendChild(el); setTimeout(close, 2200);
 }
 
 /* 効果音：Web Audio API でその場で作る（音声ファイルは使わない）。設定でオン/オフ、初期値はオフ。
@@ -3165,9 +3228,12 @@ function streakHtml(st, warn){
   var cells=st.week.map(function(w,i){
     return '<i class="'+(w.on?"on":"")+(i===st.week.length-1?" today":"")+'"></i>';
   }).join("");
-  var label="連続 "+st.n+" 日"+(warn?"・今日まだ":"")+"。直近7日で完了した日："+st.week.filter(function(w){ return w.on; }).length+" 日";
-  return '<span class="lv-streak'+(warn?' warn':'')+'" role="img" aria-label="'+label+'" title="'+(warn?"今日1件完了すると連続が続きます":"毎日1件以上完了した日数（マスは左が6日前、右端が今日）")+'">'+
+  var onDays=st.week.filter(function(w){ return w.on; }).length;
+  var full=(onDays===st.week.length); // 直近7日すべて完了した日がある＝皆勤
+  var label="連続 "+st.n+" 日"+(warn?"・今日まだ":"")+"。直近7日で完了した日："+onDays+" 日"+(full?"（皆勤）":"");
+  return '<span class="lv-streak'+(warn?' warn':'')+'" role="img" aria-label="'+label+'" title="'+(warn?"今日1件完了すると連続が続きます":full?"直近7日、毎日1件以上完了しました（皆勤）":"毎日1件以上完了した日数（マスは左が6日前、右端が今日）")+'">'+
     '<small>連続</small><b class="num">'+st.n+'</b>日<span class="lv-cells" aria-hidden="true">'+cells+'</span>'+
+    (full?'<span class="lv-kaikin" aria-hidden="true">皆勤</span>':'')+
     (warn?'<span class="lv-todo">今日まだ</span>':'')+'</span>';
 }
 
