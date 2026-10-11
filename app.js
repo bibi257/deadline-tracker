@@ -575,7 +575,6 @@ function render(){
     }
   });
   if(tabsChanged) _lastTabView=tabView;
-  if(_tabsScroller) requestAnimationFrame(_tabsScroller.update);
   // 期限切れの件数は一覧タブに出し、ほかの画面にいても気づけるようにする
   var overBadge=document.querySelector('.tab[data-view="list"] .tab-badge');
   if(overBadge){
@@ -3147,11 +3146,12 @@ function unlockAudio(){
   if(ctx && ctx.state==="suspended") ctx.resume().catch(function(){});
 }
 ["pointerdown","keydown","touchend"].forEach(function(ev){ document.addEventListener(ev, unlockAudio, {passive:true}); });
-/* 音の並び [周波数Hz, 開始秒, 長さ秒]。やわらかい正弦波＋短いアタックと減衰で、クリック音を避ける */
+/* 音の並び [周波数Hz, 開始秒, 長さ秒]。長さは余韻が消えるまで。
+   やわらかい正弦波に、1オクターブ上の小さな倍音を重ねてベルのような響きにし、ゆっくり減衰させる */
 var SFX={
-  add:    [[660,0,.11],[880,.09,.16]],                       // 登録：軽い2音（上がる）
-  done:   [[523.25,0,.12],[659.25,.09,.12],[783.99,.18,.26]], // 完了：ド・ミ・ソ（明るい）
-  remove: [[440,0,.11],[329.63,.09,.2]]                       // 削除：2音（下がる）
+  add:    [[660,0,.65],[880,.12,1.15]],                       // 登録：軽い2音（上がる）
+  done:   [[523.25,0,.8],[659.25,.12,.9],[783.99,.24,1.8]],   // 完了：ド・ミ・ソ（明るい）
+  remove: [[440,0,.65],[329.63,.12,1.2]]                      // 削除：2音（下がる）
 };
 function playSfx(kind){
   if(!soundOn() || !SFX[kind]) return;
@@ -3159,14 +3159,20 @@ function playSfx(kind){
     var ctx=audioCtx(); if(!ctx) return;
     if(ctx.state==="suspended") ctx.resume().catch(function(){});
     var t0=ctx.currentTime+.02;
-    SFX[kind].forEach(function(n){
-      var osc=ctx.createOscillator(), g=ctx.createGain(), s=t0+n[1], e=s+n[2];
-      osc.type="sine"; osc.frequency.setValueAtTime(n[0], s);
+    // 重なっても音割れしないよう、音量は控えめにする（3音が重なっても合計1を超えない）
+    var tone=function(freq, s, len, peak){
+      var osc=ctx.createOscillator(), g=ctx.createGain(), e=s+len;
+      osc.type="sine"; osc.frequency.setValueAtTime(freq, s);
       g.gain.setValueAtTime(.0001, s);
-      g.gain.exponentialRampToValueAtTime(.18, s+.015);
+      g.gain.exponentialRampToValueAtTime(peak, s+.015);
       g.gain.exponentialRampToValueAtTime(.0001, e);
       osc.connect(g); g.connect(ctx.destination);
       osc.start(s); osc.stop(e+.02);
+    };
+    SFX[kind].forEach(function(n){
+      var s=t0+n[1];
+      tone(n[0], s, n[2], .16);          // 基音
+      tone(n[0]*2, s, n[2]*.5, .04);     // 倍音（早めに消えて、余韻は丸く残る）
     });
   }catch(e){ /* 音が出せなくても操作は止めない */ }
 }
@@ -3577,15 +3583,16 @@ if("serviceWorker" in navigator && location.protocol!=="file:"){
 var APP_BUILD=null;
 function checkForUpdate(){
   if(location.protocol==="file:") return;
-  // index.html と app.js の両方を見る（スタンプの更新を忘れて app.js だけ変えた場合も、長さの違いで気づける）
+  // index.html・app.js・styles.css を見る（スタンプの更新を忘れて app.js や styles.css だけ変えた場合も、長さの違いで気づける）
   var fresh=function(url){ return fetch(url+"?_="+Date.now(),{cache:"no-store"}).then(function(res){ return res.ok?res.text():null; }); };
-  Promise.all([fresh(location.pathname), fresh(new URL("app.js",location.href).pathname)])
+  var path=function(f){ return new URL(f,location.href).pathname; };
+  Promise.all([fresh(location.pathname), fresh(path("app.js")), fresh(path("styles.css"))])
     .then(function(r){
-      var html=r[0], js=r[1];
-      if(!html || js===null) return;
+      var html=r[0], js=r[1], css=r[2];
+      if(!html || js===null || css===null) return;
       // ビルドスタンプ（無ければ内容の長さ）を版番号として使う
       var m=html.match(/<meta name="build-stamp" content="([^"]*)">/);
-      var build=(m?m[1]:"")+"/"+html.length+"/"+js.length;
+      var build=(m?m[1]:"")+"/"+html.length+"/"+js.length+"/"+css.length;
       if(APP_BUILD===null){ APP_BUILD=build; return; }
       if(build!==APP_BUILD){
         APP_BUILD=build;
@@ -3616,7 +3623,6 @@ document.querySelectorAll(".tab").forEach(function(t){
 document.getElementById("gearBtn").onclick=function(){ view=(view==="set")?"list":"set"; window.scrollTo(0,0); render(); };
 document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
 load(); autoCompleteOverdueItems(); applyTheme();
-var _tabsScroller=null; // タブは4つに絞ったので、横に動かす仕組みは使わない
 render();
 handleExportParam();
 handleActionParam();
