@@ -148,7 +148,7 @@ deadline-tracker（Public / GitHub Pages で公開）
 ├── assets/
 │   └── icon-180/192/512.png    アイコン
 ├── .github/                    PR をマージしたとき、変更点を Gmail で自分宛てに送る（下の「マージ時のメール」）
-└── deadline-data-template/     Private側に置くファイルの雛形（設定は空。使い方は同梱のREADME）
+└── deadline-data-template/     Private側に置く send_digest.sh の雛形（設定は空。使い方は同梱のREADME）
 
 deadline-data（Private / データと自動送信）
 ├── data.json                           締切データ（アプリから自動生成・更新）
@@ -171,7 +171,8 @@ deadline-data（Private / データと自動送信）
         └── prune_backups.py            バックアップの間引き
 ```
 
-> `deadline-data-template/` に、上のファイルがすべて入っている（個人の設定値は空）。必要なものだけ選んで置けばよい。
+> `deadline-data-template/` には、個人の設定値を空にした `send_digest.sh` だけを置いている。ほかのファイルは deadline-data にあるものと同じなので、
+> そちらから写す（同じファイルを2か所で持たないため）。必要なものだけ選んで置けばよい。
 > 置いたものだけが動き、Secret を登録していない機能は何もせずに終わる。
 
 Public リポジトリはファイル一覧もコミット履歴も公開される。ファイル名を変えたり深い階層に置いても隠したことにはならないため、リポジトリの分離が唯一の確実な方法になる。
@@ -215,7 +216,7 @@ iPhone では Safari で開いて共有ボタン →「ホーム画面に追加�
 
 1. Discord のチャンネル設定 →「連携サービス」→「ウェブフック」で URL を取得する
 2. Private リポジトリに `.github/workflows/daily-digest.yml` と `.github/scripts/`（`send_digest.sh`・`build_ics.py`）を配置する
-   - **`deadline-data-template/` の中身をそのままコピーすればよい**（設定値は空にしてある）
+   - `send_digest.sh` は **`deadline-data-template/` のもの**（設定値は空にしてある）、それ以外は元の deadline-data（このアプリのデータ用リポジトリ）の同じ場所のファイルを写す
    - GitHub 上で **Add file → Create new file** を選び、ファイル名にスラッシュを含めて入力するとフォルダごと作られる
    - ワークフロー内の `run:` のパスと、スクリプトの実際の置き場所を一致させること
 3. Webhook URL を設定する（Private リポジトリの Secrets に `DISCORD_WEBHOOK_URL` として登録するか、`send_digest.sh` の冒頭に記入する）。メンション先などもスクリプト冒頭で設定する
@@ -225,7 +226,7 @@ iPhone では Safari で開いて共有ボタン →「ホーム画面に追加�
 
 ### 4. 任意の追加機能
 
-どれも `deadline-data-template/` の対応するファイルを `deadline-data` 側に置くだけで、置かなければ何も起きない。
+どれも元の deadline-data（このアプリのデータ用リポジトリ）の対応するファイルを自分の Private リポジトリに置くだけで、置かなければ何も起きない。
 
 | 機能 | 置くもの | 必要な設定 |
 |---|---|---|
