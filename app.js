@@ -3146,11 +3146,12 @@ function unlockAudio(){
   if(ctx && ctx.state==="suspended") ctx.resume().catch(function(){});
 }
 ["pointerdown","keydown","touchend"].forEach(function(ev){ document.addEventListener(ev, unlockAudio, {passive:true}); });
-/* 音の並び [周波数Hz, 開始秒, 長さ秒]。やわらかい正弦波＋短いアタックと減衰で、クリック音を避ける */
+/* 音の並び [周波数Hz, 開始秒, 長さ秒]。長さは余韻が消えるまで。
+   やわらかい正弦波に、1オクターブ上の小さな倍音を重ねてベルのような響きにし、ゆっくり減衰させる */
 var SFX={
-  add:    [[660,0,.11],[880,.09,.16]],                       // 登録：軽い2音（上がる）
-  done:   [[523.25,0,.12],[659.25,.09,.12],[783.99,.18,.26]], // 完了：ド・ミ・ソ（明るい）
-  remove: [[440,0,.11],[329.63,.09,.2]]                       // 削除：2音（下がる）
+  add:    [[660,0,.4],[880,.12,.7]],                         // 登録：軽い2音（上がる）
+  done:   [[523.25,0,.5],[659.25,.12,.55],[783.99,.24,1.1]],  // 完了：ド・ミ・ソ（明るい）
+  remove: [[440,0,.4],[329.63,.12,.75]]                      // 削除：2音（下がる）
 };
 function playSfx(kind){
   if(!soundOn() || !SFX[kind]) return;
@@ -3158,14 +3159,20 @@ function playSfx(kind){
     var ctx=audioCtx(); if(!ctx) return;
     if(ctx.state==="suspended") ctx.resume().catch(function(){});
     var t0=ctx.currentTime+.02;
-    SFX[kind].forEach(function(n){
-      var osc=ctx.createOscillator(), g=ctx.createGain(), s=t0+n[1], e=s+n[2];
-      osc.type="sine"; osc.frequency.setValueAtTime(n[0], s);
+    // 重なっても音割れしないよう、音量は控えめにする（3音が重なっても合計1を超えない）
+    var tone=function(freq, s, len, peak){
+      var osc=ctx.createOscillator(), g=ctx.createGain(), e=s+len;
+      osc.type="sine"; osc.frequency.setValueAtTime(freq, s);
       g.gain.setValueAtTime(.0001, s);
-      g.gain.exponentialRampToValueAtTime(.18, s+.015);
+      g.gain.exponentialRampToValueAtTime(peak, s+.015);
       g.gain.exponentialRampToValueAtTime(.0001, e);
       osc.connect(g); g.connect(ctx.destination);
       osc.start(s); osc.stop(e+.02);
+    };
+    SFX[kind].forEach(function(n){
+      var s=t0+n[1];
+      tone(n[0], s, n[2], .16);          // 基音
+      tone(n[0]*2, s, n[2]*.5, .04);     // 倍音（早めに消えて、余韻は丸く残る）
     });
   }catch(e){ /* 音が出せなくても操作は止めない */ }
 }
