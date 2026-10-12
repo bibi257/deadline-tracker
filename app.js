@@ -3149,8 +3149,11 @@ var PAGE_ORDER={list:0, over:.3, rep:.6, week:1, day:1.5, cal:2, done:3, set:4};
 function pageTransition(from, to){
   var fwd=(PAGE_ORDER[to]||0)>=(PAGE_ORDER[from]||0);
   main.classList.remove("page-fwd","page-back");
-  void main.offsetWidth; // 付け直しても動きが最初から始まるように、一度描画を確定させる
-  main.classList.add(fwd?"page-fwd":"page-back");
+  // 動かないときはクラスを付けない（animationend が来ず残ると、あとで演出を戻した瞬間に動いてしまう）
+  if(motionOn()){
+    void main.offsetWidth; // 付け直しても動きが最初から始まるように、一度描画を確定させる
+    main.classList.add(fwd?"page-fwd":"page-back");
+  }
   playSfx(techoStyle()?"turn":"page");
 }
 main.addEventListener("animationend", function(e){
