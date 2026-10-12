@@ -3147,8 +3147,11 @@ function playKaisai(exp){
    動きは演出「なし」・視差効果を減らす設定で止まる（styles.css の .no-motion） */
 function pageTransition(){
   main.classList.remove("page-in");
-  void main.offsetWidth; // 付け直しても動きが最初から始まるように、一度描画を確定させる
-  main.classList.add("page-in");
+  // 動かないときはクラスを付けない（animationend が来ず残ると、あとで演出を戻した瞬間に動いてしまう）
+  if(motionOn()){
+    void main.offsetWidth; // 付け直しても動きが最初から始まるように、一度描画を確定させる
+    main.classList.add("page-in");
+  }
   playSfx(techoStyle()?"turn":"page");
 }
 main.addEventListener("animationend", function(e){
