@@ -598,7 +598,7 @@ function render(){
   else if(view==="done") renderDone();
   else renderSettings();
   // 画面を切り替えたときだけ演出と音を出す（同じ画面の再描画・同期・起動直後の描画では出さない）
-  if(_lastPageView!==null && view!==_lastPageView) pageTransition(_lastPageView, view);
+  if(_lastPageView!==null && view!==_lastPageView) pageTransition();
   _lastPageView=view;
 }
 
@@ -3142,22 +3142,20 @@ function playKaisai(exp){
   el.onclick=close; document.body.appendChild(el); setTimeout(close, 2200);
 }
 
-/* 画面の切り替え：タブの並び（左から一覧・今週・カレンダー・完了・設定）で右へ進むときは右から、
-   戻るときは左から中身を滑り込ませる。超過・定期予定は一覧の奥、日表示は今週の奥として扱う。
-   手帳風では紙をめくるように傾けて入れる。動きは演出「なし」・視差効果を減らす設定で止まる（styles.css の .no-motion） */
-var PAGE_ORDER={list:0, over:.3, rep:.6, week:1, day:1.5, cal:2, done:3, set:4};
-function pageTransition(from, to){
-  var fwd=(PAGE_ORDER[to]||0)>=(PAGE_ORDER[from]||0);
-  main.classList.remove("page-fwd","page-back");
+/* 画面の切り替え：中身を短くふわっと表示する（その場で薄い状態から濃くなるだけ）。
+   横に滑らせたり傾けたりすると酔いやすいので、位置は動かさない。
+   動きは演出「なし」・視差効果を減らす設定で止まる（styles.css の .no-motion） */
+function pageTransition(){
+  main.classList.remove("page-in");
   // 動かないときはクラスを付けない（animationend が来ず残ると、あとで演出を戻した瞬間に動いてしまう）
   if(motionOn()){
     void main.offsetWidth; // 付け直しても動きが最初から始まるように、一度描画を確定させる
-    main.classList.add(fwd?"page-fwd":"page-back");
+    main.classList.add("page-in");
   }
   playSfx(techoStyle()?"turn":"page");
 }
 main.addEventListener("animationend", function(e){
-  if(e.target===main) main.classList.remove("page-fwd","page-back");
+  if(e.target===main) main.classList.remove("page-in");
 });
 
 /* 効果音：Web Audio API でその場で作る（音声ファイルは使わない）。設定でオン/オフ、初期値はオフ。
