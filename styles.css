@@ -428,9 +428,9 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
 .quest.allclear .quest-title{font-size:clamp(19px,6.2vw,27px);letter-spacing:.06em;white-space:nowrap;color:#FFF3C4}
 .quest.allclear .quest-exp{color:#FFD34D}
 
-/* ---- 画面の切り替え（app.js の pageTransition）。酔わないよう位置は動かさず、薄い状態から濃くするだけ ---- */
-#main.page-in{animation:page-in .18s ease-out}
-@keyframes page-in{from{opacity:.25}to{opacity:1}}
+/* ---- 画面の切り替え（app.js の pageTransition）。どの画面へ移っても同じ向き（右から少しだけ）で入る ---- */
+#main.page-in{animation:page-in .2s ease-out}
+@keyframes page-in{from{opacity:.25;transform:translateX(12px)}to{opacity:1;transform:none}}
 
 /* 演出「なし」・視差効果を減らす設定では、常時動くものも止める */
 .no-motion .card.over:not(.done),.no-motion .lv-streak.warn,.no-motion .lv-num.up,.no-motion #main.page-in{animation:none}
