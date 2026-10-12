@@ -3142,8 +3142,8 @@ function playKaisai(exp){
   el.onclick=close; document.body.appendChild(el); setTimeout(close, 2200);
 }
 
-/* 画面の切り替え：中身を短くふわっと表示する（その場で薄い状態から濃くなるだけ）。
-   横に滑らせたり傾けたりすると酔いやすいので、位置は動かさない。
+/* 画面の切り替え：中身を右から少しだけ（12px）滑らせながら表示する。
+   進む・戻るで向きが変わったり大きく動いたりすると酔いやすいので、向きは常に同じ・距離は小さくする。
    動きは演出「なし」・視差効果を減らす設定で止まる（styles.css の .no-motion） */
 function pageTransition(){
   main.classList.remove("page-in");
