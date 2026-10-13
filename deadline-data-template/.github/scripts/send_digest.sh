@@ -322,7 +322,8 @@ send_weekly_review(){
   # アプリが記録している「完了の記録」(completions)から、この1週間の完了のタイミングをまとめる。
   # 記録が無い（古いアプリのデータ）場合は、従来どおり件数だけを出す
   local WEEK_DONE
-  WEEK_DONE=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" "$JQ_LIB"'
+  # 滞留の行は「✅ 完了したもの」の一覧より前に出す（一覧の末尾に続けると完了の1件に見えるため）
+  WEEK_DONE=$(echo "$JSON" | jq -r --argjson now "$NOW_EPOCH" --argjson stale "$STALE_COUNT" "$JQ_LIB"'
     def dow: ["日","月","火","水","木","金","土"][(. + 32400 | gmtime | .[6])];
     def md: (. + 32400 | strftime("%m/%d") | sub("^0"; "") | sub("/0"; "/")) + "（" + dow + "）" + (. + 32400 | strftime(" %H:%M"));
     def leadtxt: if .kind == "auto" then "自動完了"
@@ -359,6 +360,7 @@ send_weekly_review(){
            else empty end),
           (if $clears > 0 then "- 🌟 本日のクエスト全クリア：\($clears)日" else empty end),
           "- 獲得EXP：+\($gain)（Lv.\($lv)・累計 \($total) EXP）" + (if $lv > $lv0 then "　🎉 Lv.\($lv0) → Lv.\($lv) にレベルアップ！" else "" end),
+          (if $stale > 0 then "- ⚠️ 7日以上の滞留：\($stale)件" else empty end),
           (if ($w | length) > 0 then
              "\n### ✅ 完了したもの",
              ([ $w | reverse | .[0:10][] | "- \(.t | md)　\(.title // "" | clean)　`\(.cat // "その他" | clean)`　\(leadtxt)" ] | .[]),
@@ -375,9 +377,9 @@ send_weekly_review(){
     CONTENT="${CONTENT}"$'\n'"## 🏆 この1週間の達成"$'\n'"${WEEK_DONE}"
   else
     CONTENT="${CONTENT}"$'\n'"## 📊 この1週間"$'\n'"- 完了：${DONE_COUNT}件"
-  fi
-  if [ "$STALE_COUNT" -gt 0 ]; then
-    CONTENT="${CONTENT}"$'\n'"- ⚠️ 7日以上の滞留：${STALE_COUNT}件"
+    if [ "$STALE_COUNT" -gt 0 ]; then
+      CONTENT="${CONTENT}"$'\n'"- ⚠️ 7日以上の滞留：${STALE_COUNT}件"
+    fi
   fi
   local EXTRA=""
   local REP_STATS
