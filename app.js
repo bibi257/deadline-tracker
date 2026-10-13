@@ -2918,6 +2918,16 @@ document.getElementById("fSpan").addEventListener("change",syncDialogRows);
 document.getElementById("fAllDay").addEventListener("change",syncDialogRows);
 document.getElementById("fRep").addEventListener("change",syncDialogRows);
 
+/* 入力欄で Enter を押したら保存する。何もしないとフォームの既定の送信ボタン（先頭の「やめる」）が使われ、
+   入力が捨てられてしまう。メモの改行・選択欄・日本語変換の確定中の Enter と、色のカラーコード欄（独自に処理）はそのまま */
+dlgForm.addEventListener("keydown",function(e){
+  if(e.key!=="Enter" || e.isComposing || e.keyCode===229 || e.defaultPrevented) return;
+  if(e.target.tagName!=="INPUT" || e.target.type==="color") return;
+  e.preventDefault();
+  var saveBtn=dlgForm.querySelector('button[value="save"]');
+  if(dlgForm.requestSubmit) dlgForm.requestSubmit(saveBtn); else saveBtn.click();
+});
+
 dlgForm.addEventListener("submit",function(e){
   var val=e.submitter?e.submitter.value:"save";
   if(val!=="save") return;
