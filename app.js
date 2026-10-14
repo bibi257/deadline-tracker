@@ -2957,10 +2957,12 @@ document.getElementById("fAllDay").addEventListener("change",syncDialogRows);
 document.getElementById("fRep").addEventListener("change",syncDialogRows);
 
 /* 入力欄で Enter を押したら保存する。何もしないとフォームの既定の送信ボタン（先頭の「やめる」）が使われ、
-   入力が捨てられてしまう。メモの改行・選択欄・日本語変換の確定中の Enter と、色のカラーコード欄（独自に処理）はそのまま */
+   入力が捨てられてしまう。メモは Enter で改行し、Ctrl+Enter（Mac は ⌘+Enter）で保存する。
+   選択欄・日本語変換の確定中の Enter と、色のカラーコード欄（独自に処理）はそのまま */
 dlgForm.addEventListener("keydown",function(e){
   if(e.key!=="Enter" || e.isComposing || e.keyCode===229 || e.defaultPrevented) return;
-  if(e.target.tagName!=="INPUT" || e.target.type==="color") return;
+  var memoSave=e.target.tagName==="TEXTAREA" && (e.ctrlKey || e.metaKey);
+  if(!memoSave && (e.target.tagName!=="INPUT" || e.target.type==="color")) return;
   e.preventDefault();
   var saveBtn=dlgForm.querySelector('button[value="save"]');
   if(dlgForm.requestSubmit) dlgForm.requestSubmit(saveBtn); else saveBtn.click();
