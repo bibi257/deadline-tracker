@@ -123,8 +123,8 @@ def main():
         return 0
 
     # コピー時に混ざりやすい空白(全角・改行・ゼロ幅を含む)や引用符を取り除く
-    addr = re.sub(r"[\s​﻿\"']", "", os.environ.get("GMAIL_ADDRESS", ""))
-    pw = re.sub(r"[\s​﻿\"']", "", os.environ.get("GMAIL_APP_PASSWORD", ""))
+    addr = re.sub(r"[\s\u200b\ufeff\"']", "", os.environ.get("GMAIL_ADDRESS", ""))
+    pw = re.sub(r"[\s\u200b\ufeff\"']", "", os.environ.get("GMAIL_APP_PASSWORD", ""))
     if not addr or not pw:
         print("GMAIL_ADDRESS / GMAIL_APP_PASSWORD の Secret が未設定のため、メールは送りません。", file=sys.stderr)
         return 0  # 未設定でもワークフロー全体は失敗扱いにしない
