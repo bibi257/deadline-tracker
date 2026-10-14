@@ -97,6 +97,8 @@ function secretGet(name){
 }
 
 var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},catColors:Object.create(null),settings:{dayHour:9,theme:"auto"},updatedAt:null};
+/* 読めなかった保存データの元の文字列。次に保存して上書きされる前に退避する（writeDb を参照） */
+var _unreadableRaw=null;
 function load(){
   var raw=store.get(KEY); if(!raw) return;
   try{
@@ -115,23 +117,42 @@ function load(){
     if(d&&d.settings) db.settings=Object.assign(db.settings,d.settings);
     if(d&&d.updatedAt) db.updatedAt=d.updatedAt;
     if(d) adoptCompletions(d);
-  }catch(e){}
+  }catch(e){
+    // 読めなかった元のデータは、次に保存して上書きされる前に退避する（writeDb を参照）
+    _unreadableRaw=raw;
+    toast("保存されていたデータを読めませんでした。次に保存するとき、元のデータを「"+KEY+"-unreadable」に残します");
+  }
   // 以前この端末だけに持っていた経験値(settings.exp)は、同期される記録へ移す
   if(db.settings.exp){ db.expCarry=(db.expCarry||0)+db.settings.exp; delete db.settings.exp; }
-  // ゴミ箱は30日を過ぎたものと、上限(30件)を超えた古いものを読み込み時に整理する
+  // ゴミ箱は、壊れた項目を除いて trashId を補い（古い形式との互換）、30日を過ぎたものと上限(30件)を超えた古いものを整理する
+  db.trash=normalizeTrash(db.trash);
   var cutoff=Date.now()-30*86400000;
   db.trash=db.trash.filter(function(t){ return new Date(t.deletedAt).getTime()>=cutoff; });
   if(db.trash.length>30) db.trash=db.trash.slice(db.trash.length-30);
-  // trashIdが無い古い形式のエントリには後付けで振る(実装変更前のデータとの互換)
-  db.trash.forEach(function(t){
-    if(!t.trashId) t.trashId="tr"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-  });
 }
 /* 通常の保存。呼ぶたびに「この端末で今変更した」時刻を刻む */
-function save(){ db.updatedAt=new Date().toISOString(); store.set(KEY,JSON.stringify(db)); }
+function save(){ db.updatedAt=new Date().toISOString(); writeDb(); }
+/* 保存データを書く。読めなかった元のデータがあれば、上書きする前に別のキーへ退避する */
+function writeDb(){
+  if(_unreadableRaw!==null){
+    try{ store.set(KEY+"-unreadable", _unreadableRaw); }catch(e){}
+    _unreadableRaw=null;
+  }
+  store.set(KEY,JSON.stringify(db));
+}
+/* ゴミ箱の項目を整える。元に戻せない（item が無い）項目は除き、trashId が無い古い形式には振る。
+   読み込み・取り込み・同期の取り込みで使う */
+function normalizeTrash(list){
+  if(!Array.isArray(list)) return [];
+  return list.filter(function(t){ return t && typeof t==="object" && t.item && typeof t.item==="object"; })
+    .map(function(t){
+      if(!t.trashId) t.trashId="tr"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+      return t;
+    });
+}
 /* GitHubから受け取った内容をそのまま保存するとき用。
    updatedAtは呼び出し側でリモートの値に合わせてから使うため、ここでは上書きしない */
-function saveRaw(){ store.set(KEY,JSON.stringify(db)); }
+function saveRaw(){ writeDb(); }
 
 /* 完了の記録（いつ・締切の何時間前に終えたか・獲得EXP）。data.json に入れて端末間で同期し、
    週次レビューでまとめる。古い記録は上限を超えたら捨て、そのEXPだけ expCarry に繰り越す */
@@ -381,7 +402,7 @@ function isHoliday(d){ return !!HOLIDAYS[toLocalISO(d)]; }
 function isDayOff(d){ return d.getDay()===0||d.getDay()===6||isHoliday(d); }
 
 /* ========== .ics 生成 ========== */
-function esc(s){ return String(s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n"); }
+function esc(s){ return String(s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r\n|\r|\n/g,"\\n"); }
 function utc(d){
   return d.getUTCFullYear()+pad(d.getUTCMonth()+1)+pad(d.getUTCDate())+"T"+
          pad(d.getUTCHours())+pad(d.getUTCMinutes())+pad(d.getUTCSeconds())+"Z";
@@ -413,9 +434,9 @@ function veventOf(it){
   var begin=it.start?new Date(it.start):new Date(due.getTime()-30*60000);
   var end=due;
   var L=["BEGIN:VEVENT",
-    "UID:"+it.id+"@deadline-tracker",
+    "UID:"+esc(it.id)+"@deadline-tracker",
     "DTSTAMP:"+utc(new Date()),
-    "SEQUENCE:"+(it.seq||0)];
+    "SEQUENCE:"+(parseInt(it.seq,10)||0)];
   if(it.allDay){
     // 終日予定。DTENDは翌日を指す決まりなので1日足す
     var s=it.start?new Date(it.start):due;
@@ -895,7 +916,21 @@ function autoSyncIfConfigured(){
   if(!db.settings.autoSync) return;
   getStoredGhConfig().then(function(cfg){ if(cfg) autoSyncWith(cfg); }).catch(function(){});
 }
+/* 自動同期は確認ダイアログを出せないので、同期先が Public（または公開かどうか判定できない）なら送らず、一度だけ知らせる。
+   Public と承知済みのリポジトリは従来どおり送る（手動の同期と同じ判定） */
+var _autoSyncPublicShown=false;
 function autoSyncWith(cfg){
+  if(ackedPublicRepo(cfg.owner,cfg.repo)) return runAutoSync(cfg);
+  checkRepoVisibility(cfg).then(function(isPublic){
+    if(isPublic===false) return runAutoSync(cfg);
+    if(_autoSyncPublicShown) return;
+    _autoSyncPublicShown=true;
+    toast(isPublic===true
+      ? "同期先がPublicのため、自動同期を止めました。手動の同期で確認できます"
+      : "同期先の公開設定を確認できないため、自動同期を止めました。手動の同期で確認できます");
+  });
+}
+function runAutoSync(cfg){
   var pushedAt=db.updatedAt; // 送信中に別の編集が入っても、送った時点の値を記録するため捕捉しておく
   var content=utf8ToBase64(JSON.stringify(syncPayload(),null,2));
 
@@ -1136,6 +1171,7 @@ function postpone(it){
 /* ゴミ箱から個別に復元する。同じidが既に一覧にある場合(自動pull等で復活済み)は
    上書きせず、その旨を知らせるだけにする */
 function restoreFromTrash(trashId){
+  if(!trashId) return; // id の無い項目をまとめて触らないよう、何もしない
   var idx=db.trash.findIndex(function(t){ return t.trashId===trashId; });
   if(idx<0) return;
   var entry=db.trash[idx];
@@ -1151,6 +1187,7 @@ function restoreFromTrash(trashId){
   scheduleAutoSync();
 }
 function purgeTrashItem(trashId){
+  if(!trashId) return; // id の無い項目をまとめて消さないよう、何もしない
   db.trash=db.trash.filter(function(t){ return t.trashId!==trashId; });
   save(); render();
 }
@@ -1353,7 +1390,8 @@ function quickBar(){
   }
   input.oninput=update;
   function go(){ if(!input.value.trim()){ input.focus(); return; } openQuickDialog(parseQuick(input.value)); }
-  input.onkeydown=function(e){ if(e.key==="Enter" && !e.isComposing){ e.preventDefault(); go(); } };
+  // 日本語変換を確定する Enter は除く（Safari は isComposing が false で keyCode 229 のまま届くことがある）
+  input.onkeydown=function(e){ if(e.key==="Enter" && !e.isComposing && e.keyCode!==229){ e.preventDefault(); go(); } };
   wrap.querySelector("button").onclick=go;
   update();
   if(quickHelpOpen && !quickText.trim()){
@@ -2128,7 +2166,7 @@ function renderSettings(){
         if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
         var meta=sanitizeIncomingMeta(d);
         if(meta.templates) db.templates=meta.templates;
-        if(Array.isArray(d.trash)) db.trash=d.trash;
+        if(Array.isArray(d.trash)) db.trash=normalizeTrash(d.trash);
         if(meta.categories) db.categories=meta.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
@@ -2304,7 +2342,7 @@ function autoPullWith(cfg){
         if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
         var meta=sanitizeIncomingMeta(d);
         if(meta.templates) db.templates=meta.templates;
-        if(Array.isArray(d.trash)) db.trash=d.trash;
+        if(Array.isArray(d.trash)) db.trash=normalizeTrash(d.trash);
         if(meta.categories) db.categories=meta.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
@@ -2614,7 +2652,7 @@ function proceedPull(cfg,statusEl){
       }
       var meta=sanitizeIncomingMeta(d);
       if(meta.templates) db.templates=meta.templates;
-      if(Array.isArray(d.trash)) db.trash=d.trash;
+      if(Array.isArray(d.trash)) db.trash=normalizeTrash(d.trash);
       if(meta.categories) db.categories=meta.categories;
       if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
@@ -2928,9 +2966,15 @@ dlgForm.addEventListener("keydown",function(e){
   if(dlgForm.requestSubmit) dlgForm.requestSubmit(saveBtn); else saveBtn.click();
 });
 
+/* 押されたボタンを覚えておく（submitter に対応しない古いブラウザ用）。分からないときは保存しない */
+var lastSubmitBtn=null;
+dlgForm.addEventListener("click",function(e){
+  var b=e.target.closest?e.target.closest("button"):null;
+  lastSubmitBtn=(b&&b.type==="submit"&&b.form===dlgForm)?b:null;
+});
 dlgForm.addEventListener("submit",function(e){
-  var val=e.submitter?e.submitter.value:"save";
-  if(val!=="save") return;
+  var btn=e.submitter||lastSubmitBtn; lastSubmitBtn=null;
+  if(!btn||btn.value!=="save") return;
   var title=document.getElementById("fTitle").value.trim();
   var date=document.getElementById("fDate").value;
   var allDay=document.getElementById("fAllDay").checked;
@@ -3099,6 +3143,9 @@ function upcomingDue(it){
 }
 
 function complete(it, cardEl){
+  // 同期で一覧が差し替わっていると、渡された項目は古いことがある。いまの項目で完了させる
+  it=db.items.find(function(x){ return x.id===it.id; });
+  if(!it){ render(); return; }
   var before=totalExp();
   var wasToday=toLocalISO(parseItemDate(it))===toLocalISO(new Date());
   var r=applyCompletion(it, "manual");
@@ -3669,12 +3716,18 @@ document.addEventListener("visibilitychange",function(){
 
 /* 定期的な再描画。入力欄を操作中や設定タブを開いているときは、
    打ちかけの内容(検索語・トークンなど)が消えないよう描画を見送る */
+/* 入力中は描き直さない（打ちかけの文字が消えるため）。入力欄から離れたときに、止めていた描き直しを行う */
+var renderAfterInput=false;
 function softRender(){
   var a=document.activeElement;
   if(view==="set") return;
-  if(a && main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+  if(a && main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){ renderAfterInput=true; return; }
+  renderAfterInput=false;
   render();
 }
+main.addEventListener("focusout",function(){
+  if(renderAfterInput) setTimeout(softRender,0);
+});
 
 /* ========== 起動 ========== */
 document.querySelectorAll(".tab").forEach(function(t){
