@@ -986,12 +986,18 @@ function syncPayload(){
 function fetchRemoteState(cfg){
   return fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(),{headers:cfg.headers, cache:"no-store"})
     .then(function(res){
-      if(res.status===404) return {sha:null, updatedAt:null};
+      if(res.status===404) return {sha:null, updatedAt:null, itemCount:0};
       if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
       return res.json().then(function(j){
-        var at=null;
-        try{ if(j.content) at=JSON.parse(base64ToUtf8(j.content)).updatedAt||null; }catch(e){}
-        return {sha:j.sha, updatedAt:at};
+        var at=null, n=0;
+        try{
+          if(j.content){
+            var d=JSON.parse(base64ToUtf8(j.content));
+            at=d.updatedAt||null;
+            n=Array.isArray(d.items)?d.items.length:0;
+          }
+        }catch(e){}
+        return {sha:j.sha, updatedAt:at, itemCount:n};
       });
     });
 }
@@ -2223,9 +2229,11 @@ function renderSettings(){
          +(ls.stale?'<br>しばらく同期されていません。登録した内容が毎朝の連絡に反映されていない可能性があります。':''))
         :'まだ一度も同期していません。')+'</p>');
   s5.insertBefore(lsEl, s5.querySelector(".two"));
-  var bSync=h('<button class="btn fill">GitHubに同期する</button>');
+  // この端末の締切が0件なら、先にすることは読み込み（別の端末で初めて設定したときの上書き事故を防ぐ）
+  var emptyHere=!db.items.length;
+  var bSync=h('<button class="btn'+(emptyHere?'':' fill')+'">GitHubに同期する</button>');
   bSync.onclick=function(){ syncToGitHub(g,s5); };
-  var bPull=h('<button class="btn">GitHubから読み込む</button>');
+  var bPull=h('<button class="btn'+(emptyHere?' fill':'')+'">GitHubから読み込む</button>');
   bPull.onclick=function(){ pullFromGitHub(g,s5); };
   s5.querySelector(".row").append(bSync,bPull);
   main.appendChild(s5);
@@ -2703,6 +2711,20 @@ function syncToGitHub(g,s5){
 }
 
 function proceedSync(cfg,statusEl){
+  // この端末の締切が0件（別の端末で初めて設定した直後など）のまま送ると、GitHub上のデータが空で上書きされてしまう。
+  // GitHub側に中身があるときは、送らずに読み込む。無いとき（初回の保存先づくり）は従来どおり送る
+  if(db.items.length) return proceedSyncChecked(cfg,statusEl);
+  statusEl.textContent="GitHub上の内容を確認しています…";
+  fetchRemoteState(cfg).then(function(r){
+    if(r.itemCount>0){
+      toast("この端末の締切は0件のため、上書きせずGitHubから読み込みます");
+      proceedPull(cfg,statusEl);
+    } else {
+      proceedSyncChecked(cfg,statusEl);
+    }
+  }, function(){ proceedSyncChecked(cfg,statusEl); }); // 確認できなくても、この先の同期処理が同じ通信で失敗を知らせる
+}
+function proceedSyncChecked(cfg,statusEl){
   // この端末がGitHub上のデータを24時間以上取得していない場合、
   // 他の端末で更新された内容を上書きしてしまう恐れがあるので確認を挟む
   var hours=hoursSincePulled();
