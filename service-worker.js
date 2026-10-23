@@ -4,7 +4,7 @@
 //
 // キャッシュ名を変えると古いキャッシュは自動で破棄される。
 // 中身（index.html等）を大きく更新したときは、この名前も変えると確実に切り替わる。
-const CACHE_NAME = "deadline-tracker-v8";
+const CACHE_NAME = "deadline-tracker-v9";
 const CORE_FILES = [
   "./",
   "./index.html",
@@ -40,6 +40,8 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (url.origin !== location.origin) return; // 外部リソース（フォント等）には関与しない
+  // Worker の API（締切データそのもの）と購読用 .ics は、保存も古い内容の返却もしない（個人情報を端末のキャッシュに残さないため）
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/ics/")) return;
 
   event.respondWith(
     fetch(event.request)

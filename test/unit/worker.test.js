@@ -109,6 +109,17 @@ test('?force=1 は版が違っても上書きでき、必ず世代バックア�
   assert.equal(snap.body.rev, 1);
 });
 
+test('?backup=1 は間隔内でも、上書き前の内容を世代バックアップに残す（版の確認は通常どおり）', async () => {
+  const { call } = setup();
+  await call('PUT', '/api/data', { body: sample(1), headers: { 'If-Match': '0' } });
+  await call('PUT', '/api/data', { body: sample(2), headers: { 'If-Match': '1' } }); // 1件目のバックアップ
+  const b = await call('PUT', '/api/data?backup=1', { body: sample(3), headers: { 'If-Match': '2' } });
+  assert.equal(b.status, 200);
+  assert.equal((await call('GET', '/api/snapshots')).body.snapshots.length, 2);
+  const stale = await call('PUT', '/api/data?backup=1', { body: sample(4), headers: { 'If-Match': '1' } });
+  assert.equal(stale.status, 409, 'backup は版の確認を飛ばさない');
+});
+
 test('世代バックアップは30分以上あいたときだけ残す', async () => {
   const { call, clock } = setup();
   await call('PUT', '/api/data', { body: sample(1), headers: { 'If-Match': '0' } });
