@@ -82,7 +82,9 @@ async function countHit(env, key, windowSec) {
 }
 
 async function authorize(env, request) {
-  if (typeof env.APP_KEY !== 'string' || env.APP_KEY.length < MIN_KEY_LENGTH) {
+  // ダッシュボードに貼ったキーの前後に空白や改行が混ざっても通るようにする
+  const appKey = typeof env.APP_KEY === 'string' ? env.APP_KEY.trim() : '';
+  if (appKey.length < MIN_KEY_LENGTH) {
     throw new HttpError(503, `アクセスキー（APP_KEY）が未設定か短すぎます（${MIN_KEY_LENGTH}文字以上）`);
   }
   const ipKey = `auth:${await sha256Hex(clientIp(request))}`;
@@ -91,7 +93,7 @@ async function authorize(env, request) {
   }
   const m = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '');
   // 長さの違いから中身が推測されないよう、ハッシュにそろえてから比べる
-  const ok = !!m && safeEqual(await sha256Hex(m[1]), await sha256Hex(env.APP_KEY));
+  const ok = !!m && safeEqual(await sha256Hex(m[1]), await sha256Hex(appKey));
   if (!ok) {
     await countHit(env, ipKey, AUTH_MISS_WINDOW);
     throw new HttpError(401, 'アクセスキーが違います');
