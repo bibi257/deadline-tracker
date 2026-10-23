@@ -25,10 +25,10 @@
       }
     ]
   },
-  // 定時の処理（UTC）。毎朝 6:47（JST）に締切一覧を Discord へ、毎日 3:10（JST）に世代バックアップの間引き。
-  // Discord の Webhook（シークレット DISCORD_WEBHOOK_URL）が未設定の間は、何も送らない
+  // 定時の処理（UTC）。毎朝 6:47（JST）に締切一覧を Discord へ、20:23 と 5:23（JST）に締切のメールを自分宛てに、
+  // 毎日 3:10（JST）に世代バックアップの間引き。Discord の Webhook や Gmail の設定が未設定の間は、何も送らない
   "triggers": {
-    "crons": ["47 21 * * *", "10 18 * * *"]
+    "crons": ["47 21 * * *", "23 11 * * *", "23 20 * * *", "10 18 * * *"]
   },
   "assets": {
     "directory": "web",
