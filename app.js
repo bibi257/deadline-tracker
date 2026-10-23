@@ -924,7 +924,7 @@ function autoSyncIfConfigured(){
    Public と承知済みのリポジトリは従来どおり送る（手動の同期と同じ判定） */
 var _autoSyncPublicShown=false;
 function autoSyncWith(cfg){
-  if(ackedPublicRepo(cfg.owner,cfg.repo)) return runAutoSync(cfg);
+  if(cfg.kind==="cf" || ackedPublicRepo(cfg.owner,cfg.repo)) return runAutoSync(cfg); // Cloudflare は非公開のデータベース（公開設定の確認は要らない）
   checkRepoVisibility(cfg).then(function(isPublic){
     if(isPublic===false) return runAutoSync(cfg);
     if(_autoSyncPublicShown) return;
@@ -936,9 +936,11 @@ function autoSyncWith(cfg){
 }
 function runAutoSync(cfg){
   var pushedAt=db.updatedAt; // 送信中に別の編集が入っても、送った時点の値を記録するため捕捉しておく
-  var content=utf8ToBase64(JSON.stringify(syncPayload(),null,2));
+  var payload=syncPayload();
+  var content=cfg.kind==="cf" ? "" : utf8ToBase64(JSON.stringify(payload,null,2));
 
   function put(sha){
+    if(cfg.kind==="cf") return cfPut(cfg,payload,sha);
     var body={message:"締切データを自動同期（"+new Date().toLocaleString("ja-JP")+"）",content:content,branch:cfg.branch};
     if(sha) body.sha=sha;
     return fetch(cfg.api,{method:"PUT",
@@ -951,7 +953,7 @@ function runAutoSync(cfg){
       if(remoteHasUnknownChanges(r)){
         if(!_autoSyncBlockedShown){
           _autoSyncBlockedShown=true;
-          toast("GitHubに他の端末の更新があるため、自動同期を止めました。設定（右上の歯車）で読み込むか同期するかを選んでください");
+          toast(RN()+"に他の端末の更新があるため、自動同期を止めました。設定（右上の歯車）で読み込むか同期するかを選んでください");
         }
         return null;
       }
@@ -966,7 +968,7 @@ function runAutoSync(cfg){
         markPulled(); // 送った内容＝この端末の最新状態としてよい
         store.set("gh-known-updatedAt", pushedAt); // GitHubともこの時点で一致した
         _autoSyncBlockedShown=false;
-        toast("GitHubに自動同期しました");
+        toast(RN()+"に自動同期しました");
       }
     })
     .catch(function(){ /* 自動処理なので失敗しても通知しない */ });
@@ -988,6 +990,7 @@ function syncPayload(){
 }
 /* GitHub上のdata.jsonの版(sha)と更新時刻を取得する。まだ無ければ sha:null */
 function fetchRemoteState(cfg){
+  if(cfg.kind==="cf") return cfFetchState(cfg);
   return fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(),{headers:cfg.headers, cache:"no-store"})
     .then(function(res){
       if(res.status===404) return {sha:null, updatedAt:null, itemCount:0};
@@ -2197,8 +2200,19 @@ function renderSettings(){
   s4.querySelector(".row").append(bOut,bIn,bIcs,file);
   main.appendChild(s4);
 
-  // 端末間の同期（GitHub）
-  var s5=h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+
+  // 端末間の同期（Cloudflare の Worker / GitHub）。どちらかは、このアプリがどこから配信されているかで決まる
+  if(CF===null) cfDetect().then(function(){ if(view==="set") render(); }); // 保存先の判定が終わったら描き直す
+  var s5=CF===true ? h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+
+    '<p>締切データをCloudflareに保存し、端末間で受け渡します。<b>同期する</b>でこの端末の内容を送り、<b>読み込む</b>で他の端末から送られた内容を取り込みます。毎朝のDiscord送信とメールも同じデータを見ています。</p>'+
+    '<p style="font-size:12px;color:var(--ink-3)">アクセスキーを保存している端末では、この端末に未同期の変更が無いときに限り、Cloudflare上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
+    '<label class="field"><span>アクセスキー</span><input type="password" id="ghToken" placeholder="Cloudflare に登録したアクセスキー（APP_KEY）" autocomplete="off"></label>'+
+    '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
+    '<input type="checkbox" id="ghRemember" style="width:auto">この端末にアクセスキーを保存して次回から入力を省く</label>'+
+    '<p style="font-size:11.5px;color:var(--ink-3);margin:-6px 0 12px">保存すると、アクセスキーは暗号化してこのブラウザの中に残ります。共用の端末では保存しないでください。</p>'+
+    '<p id="ghSecretNote" style="font-size:12.5px;color:var(--red);margin:-4px 0 12px"></p>'+
+    '<div class="row"></div><p id="ghStatus" style="margin-top:8px"></p></div>')
+  : CF===null ? h('<div class="sec"><h3>端末間の同期とDiscord通知</h3><p style="color:var(--ink-3)">保存先を確認しています…</p></div>')
+  : h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+
     '<p>締切データ（data.json）をPrivateリポジトリに置き、端末間で受け渡します。<b>同期する</b>でこの端末の内容を送り、<b>読み込む</b>で他の端末から送られた内容を取り込みます。毎朝のDiscord送信も同じデータを見ています。</p>'+
     '<p style="font-size:12px;color:var(--ink-3)">トークンを保存している端末では、この端末に未同期の変更が無いときに限り、GitHub上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
     '<div class="two"><label class="field"><span>GitHubユーザー名 / Organization</span><input type="text" id="ghOwner" placeholder="例：yamada-taro"></label>'+
@@ -2213,6 +2227,13 @@ function renderSettings(){
   var g=function(id){ return s5.querySelector("#"+id); };
   var saved=JSON.parse(store.get("gh-sync")||"{}");
   var guess=guessRepoFromURL();
+  if(CF===true){
+    g("ghRemember").checked=!!store.get("cf-key");
+    secretGet("cf-key").then(function(t){ // 暗号化して保存してあるので、復号できてから入れる（入力し始めていたら上書きしない）
+      if(t && !g("ghToken").value) g("ghToken").value=t;
+      if(!t && !store.get("cf-key")) g("ghRemember").checked=false;
+    });
+  } else if(CF===false){
   g("ghOwner").value=saved.owner||guess.owner||"";
   g("ghRepo").value=saved.repo||guess.repo||"";
   g("ghBranch").value=saved.branch||"main";
@@ -2222,8 +2243,9 @@ function renderSettings(){
     if(!t && !store.get("gh-token")) g("ghRemember").checked=false; // 鍵を取れなかっただけで値が残っているなら、チェックは外さない
   });
   if(!saved.owner&&guess.owner) s5.querySelector("#ghStatus").textContent="保存先の候補として "+guess.owner+"/"+guess.repo+" を入れました。実際のPrivateリポジトリ名に合わせて直してください。";
+  }
   // このリポジトリが以前「Publicと承知の上」で確認済みなら、開くたびに気づけるよう常に出す
-  if(saved.owner && saved.repo && ackedPublicRepo(saved.owner, saved.repo)){
+  if(CF===false && saved.owner && saved.repo && ackedPublicRepo(saved.owner, saved.repo)){
     s5.insertBefore(
       h('<p style="font-size:12.5px;color:var(--red);margin:0 0 10px">⚠️ 同期先「'+escHtml(saved.owner)+'/'+escHtml(saved.repo)+'」はPublicリポジトリです。締切の内容が誰でも見られます。</p>'),
       s5.querySelector(".two")
@@ -2235,20 +2257,22 @@ function renderSettings(){
     (ls?('最終'+escHtml(ls.kind)+'：<b>'+escHtml(ls.rel)+'</b>　<span style="color:var(--ink-3)">'+escHtml(ls.text)+'</span>'
          +(ls.stale?'<br>しばらく同期されていません。登録した内容が毎朝の連絡に反映されていない可能性があります。':''))
         :'まだ一度も同期していません。')+'</p>');
-  s5.insertBefore(lsEl, s5.querySelector(".two"));
+  s5.insertBefore(lsEl, s5.querySelector(".two")||s5.querySelector(".field")||s5.querySelector("p:last-child"));
   // この端末の締切が0件なら、先にすることは読み込み（別の端末で初めて設定したときの上書き事故を防ぐ）
   var emptyHere=!db.items.length;
-  var bSync=h('<button class="btn'+(emptyHere?'':' fill')+'">GitHubに同期する</button>');
+  var bSync=h('<button class="btn'+(emptyHere?'':' fill')+'">'+RN()+'に同期する</button>');
   bSync.onclick=function(){ syncToGitHub(g,s5); };
-  var bPull=h('<button class="btn'+(emptyHere?' fill':'')+'">GitHubから読み込む</button>');
+  var bPull=h('<button class="btn'+(emptyHere?' fill':'')+'">'+RN()+'から読み込む</button>');
   bPull.onclick=function(){ pullFromGitHub(g,s5); };
-  s5.querySelector(".row").append(bSync,bPull);
+  if(s5.querySelector(".row")) s5.querySelector(".row").append(bSync,bPull);
   main.appendChild(s5);
 
   // Discordへ今すぐ送る
   var s6=h('<div class="sec"><h3>Discordへ今すぐ送る</h3>'+
-    '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。通知先は上の同期設定を使って、Privateリポジトリの送信スクリプトから自動で読み取ります（別の宛先へ送りたいときだけ、下に直接入力してください）。</p>'+
-    '<label class="field"><span>Discord Webhook URL（空欄でGitHubから自動取得）</span><input type="password" id="dcHook" placeholder="通常は空欄のままで大丈夫です"></label>'+
+    (CF===true
+      ? '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。通知先は、Cloudflare に登録したWebhookです（空欄のまま送信すると、Cloudflare から送ります。別の宛先へ送りたいときだけ、下に直接入力してください）。</p>'
+      : '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。通知先は上の同期設定を使って、Privateリポジトリの送信スクリプトから自動で読み取ります（別の宛先へ送りたいときだけ、下に直接入力してください）。</p>')+
+    '<label class="field"><span>Discord Webhook URL（空欄で'+(CF===true?'Cloudflareから送信':'GitHubから自動取得')+'）</span><input type="password" id="dcHook" placeholder="通常は空欄のままで大丈夫です"></label>'+
     '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
     '<input type="checkbox" id="dcRemember" style="width:auto">この端末に保存して次回から取得を省く</label>'+
     '<p style="font-size:11.5px;color:var(--ink-3);margin:-6px 0 12px">保存すると、Webhook URLは暗号化してこのブラウザの中に残ります。URLを知っている人は誰でもDiscordへ投稿できるので、共用の端末では保存しないでください。</p>'+
@@ -2268,7 +2292,7 @@ function renderSettings(){
   // 登録時の自動処理
   var s7=h('<div class="sec"><h3>登録したときの自動処理</h3>'+
     '<p>締切を登録・編集したときに、以下を自動で行います。上の設定が済んでいない場合は何も起きません。Discordへの自動通知は、上の欄でWebhook URLを「この端末に保存」している場合だけ送られます（保存していないときは、その旨を表示します）。</p></div>');
-  [["autoSync","GitHubへ自動で同期する","同期ボタンを押し忘れても、翌朝のDiscord通知に反映されます"],
+  [["autoSync",RN()+"へ自動で同期する","同期ボタンを押し忘れても、翌朝のDiscord通知に反映されます"],
    ["autoNotify","Discordへ自動で通知する","登録するたびにチャンネルへ送信されます（頻繁だと煩わしい場合があります）"]
   ].forEach(function(p){
     var wrap=h('<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:10px">'+
@@ -2301,10 +2325,70 @@ function guessRepoFromURL(){
   return {owner:m[1], repo:DATA_REPO_NAME};
 }
 
-/* 同期・読み込みで共通の入力チェック。問題なければ設定を返す */
-/* 設定画面を開いていなくても使える、保存済みのGitHub設定の読み取り。
-   トークンを保存していない端末では自動受け入れ機能自体が動かない（安全側） */
+/* ========== 保存先の判定（Cloudflare の Worker / GitHub） ==========
+   このアプリが Worker から配信されているとき（同じ場所に /api/health がある）は、締切データを Worker に保存する。
+   GitHub Pages など、ほかの場所から開いたときは、従来どおり GitHub に同期する。
+   判定は起動時に1回。通信できなかったときは、前回の判定を使う（オフラインでも保存先が変わらないように） */
+var CF=store.get("sync-backend")==="cf" ? true : null, _cfProbe=null, _cfKeyHinted=false;
+function cfDetect(){
+  if(_cfProbe) return _cfProbe;
+  if(location.protocol==="file:"){ CF=false; return (_cfProbe=Promise.resolve(false)); }
+  _cfProbe=fetch(location.origin+"/api/health",{cache:"no-store"})
+    .then(function(res){ return res.ok ? res.json() : null; })
+    .then(function(j){
+      CF=!!(j&&j.ok===true);
+      store.set("sync-backend", CF?"cf":"");
+      if(CF && !_cfKeyHinted){
+        _cfKeyHinted=true;
+        secretGet("cf-key").then(function(k){ if(!k) toast("設定（右上の歯車）でアクセスキーを入れると、データを読み込めます"); });
+      }
+      return CF;
+    })
+    .catch(function(){ _cfProbe=null; return CF===true; }); // 通信できないときは決めつけず、前回の判定のまま
+  return _cfProbe;
+}
+/* 保存先の名前（画面の文言用） */
+function RN(){ return CF===true?"Cloudflare":"GitHub"; }
+
+function cfConfigFor(key){
+  return {kind:"cf", api:location.origin+"/api/data", headers:{"Authorization":"Bearer "+key}};
+}
+function getStoredCfConfig(){
+  return secretGet("cf-key").then(function(key){ return key ? cfConfigFor(key) : null; });
+}
+/* Worker の /api/data を読む。{rev, data}。データがまだ無ければ rev 0・data null */
+function cfFetchData(cfg){
+  return fetch(cfg.api+"?_="+Date.now(),{headers:cfg.headers, cache:"no-store"})
+    .then(function(res){
+      if(!res.ok) return res.json().catch(function(){ return {}; }).then(function(e){ throw new Error(e.error||e.message||("HTTP "+res.status)); });
+      return res.json();
+    });
+}
+/* 保存先の版（sha の代わりに rev）と更新時刻。まだ無ければ sha:null */
+function cfFetchState(cfg){
+  return cfFetchData(cfg).then(function(j){
+    var d=j.data;
+    return {sha:j.rev>0?String(j.rev):null, updatedAt:(d&&d.updatedAt)||null, itemCount:(d&&Array.isArray(d.items))?d.items.length:0};
+  });
+}
+/* 保存する。If-Match に読んだときの版を付け、違っていれば 409。上書き前の内容を必ず残したいときは backup=1 */
+function cfPut(cfg,payload,sha){
+  var q=cfg.backup?"?backup=1":"";
+  cfg.backup=false;
+  return fetch(cfg.api+q,{method:"PUT",
+    headers:Object.assign({"Content-Type":"application/json","If-Match":sha||"0"},cfg.headers),
+    body:JSON.stringify(payload)});
+}
+
+/* 設定画面を開いていなくても使える、保存済みの同期設定の読み取り。保存先は Cloudflare か GitHub のどちらか。
+   アクセスキー（トークン）を保存していない端末では自動受け入れ機能自体が動かない（安全側） */
 function getStoredGhConfig(){
+  return cfDetect().then(function(cf){ return cf ? getStoredCfConfig() : getStoredGitHubConfig(); });
+}
+
+/* GitHub の保存済み設定の読み取り。
+   トークンを保存していない端末では自動受け入れ機能自体が動かない（安全側） */
+function getStoredGitHubConfig(){
   var saved=JSON.parse(store.get("gh-sync")||"{}");
   if(!saved.owner||!saved.repo) return Promise.resolve(null);
   return secretGet("gh-token").then(function(token){
@@ -2327,11 +2411,12 @@ function autoPullIfStale(){
 }
 function autoPullWith(cfg){
   var rawHeaders=Object.assign({}, cfg.headers, {"Accept":"application/vnd.github.raw"});
-  return fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(), {headers:rawHeaders, cache:"no-store"})
-    .then(function(res){
-      if(!res.ok) return null; // 404やネットワーク不調などは静かに諦める(自動処理のため)
-      return res.text();
-    })
+  // 404やネットワーク不調などは静かに諦める(自動処理のため)
+  var getText=cfg.kind==="cf"
+    ? cfFetchData(cfg).then(function(j){ return j.data ? JSON.stringify(j.data) : null; }).catch(function(){ return null; })
+    : fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(), {headers:rawHeaders, cache:"no-store"})
+        .then(function(res){ return res.ok ? res.text() : null; });
+  return getText
     .then(function(text){
       if(!text) return;
       var d;
@@ -2371,7 +2456,7 @@ function autoPullWith(cfg){
       } else if(!_staleNoticeShown){
         // 双方が前回同期後に変更されている(競合) → 自動上書きはしない。一度だけ知らせる
         _staleNoticeShown=true;
-        toast("GitHubに新しい内容がありますが、この端末の未同期の変更を守るため自動反映していません");
+        toast(RN()+"に新しい内容がありますが、この端末の未同期の変更を守るため自動反映していません");
       }
     })
     .catch(function(){});
@@ -2400,7 +2485,7 @@ function ackPublicRepo(owner,repo){
 /* 同期・読み込みの前にPublic確認を挟む。安全なら/確認済みなら resolve、
    ユーザーが中止すればrejectする */
 function guardPublicRepo(cfg){
-  if(ackedPublicRepo(cfg.owner,cfg.repo)) return Promise.resolve();
+  if(cfg.kind==="cf" || ackedPublicRepo(cfg.owner,cfg.repo)) return Promise.resolve();
   return checkRepoVisibility(cfg).then(function(isPublic){
     if(isPublic===false) return; // Private なら先へ進む
     // Public、または判定できなかった（null）ときは確認する。判定できないまま黙って進めない
@@ -2416,7 +2501,20 @@ function guardPublicRepo(cfg){
   });
 }
 
+/* Cloudflare 向けの設定（アクセスキーだけ）。画面から読み取り、保存する指定ならこの端末に暗号化して残す */
+function cfConfigFromUI(g,statusEl){
+  var key=g("ghToken").value.trim();
+  if(!key){ statusEl.textContent="アクセスキーを入力してください。"; return null; }
+  if(g("ghRemember").checked){
+    secretSet("cf-key", key).then(function(ok){
+      g("ghSecretNote").textContent=ok?"":"この端末では暗号化して保存できないため、アクセスキーは保存しませんでした（今回の操作だけに使います）。";
+    });
+  } else { secretDel("cf-key"); g("ghSecretNote").textContent=""; }
+  return cfConfigFor(key);
+}
+
 function ghConfig(g,statusEl){
+  if(CF===true) return cfConfigFromUI(g,statusEl);
   var owner=g("ghOwner").value.trim(), repo=g("ghRepo").value.trim(),
       branch=g("ghBranch").value.trim()||"main", token=g("ghToken").value.trim();
   if(!owner||!repo||!token){ statusEl.textContent="ユーザー名・リポジトリ名・トークンをすべて入力してください。"; return null; }
@@ -2436,6 +2534,9 @@ function ghConfig(g,statusEl){
 
 /* エラー内容から、次にどうすればよいかを添える */
 function ghHint(m){
+  if(/アクセスキー/.test(m)) return "設定のアクセスキーが正しいか確認してください。";
+  if(/しばらく使えません/.test(m)) return "10分ほど待ってから、もう一度お試しください。";
+  if(/他の端末の更新があります/.test(m)) return "「読み込む」で他の端末の内容を取り込んでから、同期してください。";
   if(/does not match|conflict/i.test(m)) return "別の端末から同期された可能性があります。もう一度押してください。";
   if(/Bad credentials|401/i.test(m)) return "トークンが正しくないか、期限切れです。";
   if(/Not Found|404/i.test(m)) return "リポジトリ名か、トークンのRepository accessの設定を確認してください。";
@@ -2594,9 +2695,25 @@ function sendToDiscord(s6,s5){
     return;
   }
 
+  var g=function(id){ return s5.querySelector("#"+id); };
+  // 未入力で保存先が Cloudflare のとき：Worker が登録済みの Webhook へ、今の締切一覧を送る
+  if(CF===true){
+    var cfg=ghConfig(g,statusEl);
+    if(!cfg) return;
+    statusEl.textContent="Cloudflareから送信しています…";
+    fetch(location.origin+"/api/digest",{method:"POST", headers:cfg.headers})
+      .then(function(res){
+        return res.json().catch(function(){ return {}; }).then(function(j){
+          if(res.ok && j.ok){ statusEl.textContent="送信しました（"+j.sent+"通）。"; toast("Discordへ送信しました"); return; }
+          var m=j.error||("HTTP "+res.status), hint=ghHint(m);
+          statusEl.textContent="送信に失敗しました："+m+(hint?"　→ "+hint:"");
+        });
+      })
+      .catch(function(){ statusEl.textContent="送信に失敗しました。通信状況を確認してください。"; });
+    return;
+  }
   // 未入力：上のGitHub設定を使ってスクリプトからURLを取り出す
   statusEl.textContent="GitHubから通知先を取得しています…";
-  var g=function(id){ return s5.querySelector("#"+id); };
   fetchWebhookFromRepo(g,statusEl)
     .then(function(url){
       // 保存はしない。この端末に保存するかは「この端末に保存」の選択に任せる（URLはGitHubのスクリプトが持つ）
@@ -2637,17 +2754,28 @@ function pullFromGitHub(g,s5){
   });
 }
 
-function proceedPull(cfg,statusEl){
-  statusEl.textContent="読み込んでいます…";
+/* 保存先のデータ本文（JSONの文字列）を読む。まだ無ければ理由つきのエラー */
+function getRemoteText(cfg){
+  if(cfg.kind==="cf"){
+    return cfFetchData(cfg).then(function(j){
+      if(!j.data) throw new Error("Cloudflare にデータがまだありません。先に移行（取り込み）を済ませるか、別の端末で「同期する」を実行してください。");
+      return JSON.stringify(j.data);
+    });
+  }
   // Acceptを後から上書きしてファイル本文を直接受け取る（順序を逆にすると効かない）
   var rawHeaders=Object.assign({}, cfg.headers, {"Accept":"application/vnd.github.raw"});
-  fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(),
+  return fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(),
         {headers:rawHeaders, cache:"no-store"})
     .then(function(res){
       if(res.status===404) throw new Error("data.json がまだありません。先にPCなどで「GitHubに同期する」を実行してください。");
       if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
       return res.text();
-    })
+    });
+}
+
+function proceedPull(cfg,statusEl){
+  statusEl.textContent="読み込んでいます…";
+  getRemoteText(cfg)
     .then(function(text){
       var d=JSON.parse(text);
       // rawが効かずAPIのJSONが返った場合は、base64の中身を取り出す
@@ -2657,7 +2785,7 @@ function proceedPull(cfg,statusEl){
       if(!d||!Array.isArray(d.items)) throw new Error("データの形式が読み取れません。");
       var check=sanitizeIncomingItems(d.items);
       var n=check.kept.length;
-      if(db.items.length && !confirm("この端末の締切"+db.items.length+"件を、GitHub上の"+n+"件で置き換えます。よろしいですか？")){
+      if(db.items.length && !confirm("この端末の締切"+db.items.length+"件を、"+RN()+"上の"+n+"件で置き換えます。よろしいですか？")){
         statusEl.textContent="読み込みを中止しました。";
         return;
       }
@@ -2677,9 +2805,9 @@ function proceedPull(cfg,statusEl){
       saveRaw(); render();
       markSynced("読み込み");
       markPulled();
-      store.set("gh-known-updatedAt", db.updatedAt); // GitHub側もこの時刻の内容と一致した
+      store.set("gh-known-updatedAt", db.updatedAt); // 保存先もこの時刻の内容と一致した
       statusEl.textContent="読み込みました（"+n+"件）。"+(check.quarantined.length?(" "+check.quarantined.length+"件は形式が不正のため隔離しました（設定で確認できます）。"):"");
-      toast("GitHubから"+n+"件を読み込みました"+(check.quarantined.length?"（"+check.quarantined.length+"件は隔離）":""));
+      toast(RN()+"から"+n+"件を読み込みました"+(check.quarantined.length?"（"+check.quarantined.length+"件は隔離）":""));
     })
     .catch(function(err){
       var m=err.message||"";
@@ -2752,6 +2880,8 @@ function proceedSyncChecked(cfg,statusEl){
 
 /* 上書きされてしまう前に、GitHub上の現在の内容を別ファイルとして保存しておく */
 function backupRemoteBeforeOverwrite(cfg){
+  // Cloudflare は、保存するたびに上書き前の内容を世代バックアップに残す（次の保存で必ず残すよう印を付ける）
+  if(cfg.kind==="cf"){ cfg.backup=true; return Promise.resolve(); }
   return fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(),
                {headers:Object.assign({},cfg.headers,{"Accept":"application/vnd.github.raw"}), cache:"no-store"})
     .then(function(res){ return res.ok ? res.text() : null; })
@@ -2783,9 +2913,10 @@ function doSync(cfg,statusEl,backedUp){
   if(!db.updatedAt) db.updatedAt=new Date().toISOString();
   var pushedAt=db.updatedAt; // 送信中の編集に影響されないよう、送った時点の値を捕捉
   var payload=syncPayload(); // 自動同期と同じ内容を送る（以前は catReminders が抜けていた）
-  var content=utf8ToBase64(JSON.stringify(payload,null,2));
+  var content=cfg.kind==="cf" ? "" : utf8ToBase64(JSON.stringify(payload,null,2));
 
   function put(sha){
+    if(cfg.kind==="cf") return cfPut(cfg,payload,sha);
     var body={ message:"締切データを同期（"+new Date().toLocaleString("ja-JP")+"）",
                content:content, branch:branch };
     if(sha) body.sha=sha;
@@ -2800,10 +2931,10 @@ function doSync(cfg,statusEl,backedUp){
     .then(function(r){
       if(backedUp || !remoteHasUnknownChanges(r)) return r.sha;
       var ok=confirm(
-        "GitHub上に、この端末がまだ読み込んでいない新しい内容があります（他の端末で同期された可能性があります）。\n\n"+
+        RN()+"上に、この端末がまだ読み込んでいない新しい内容があります（他の端末で同期された可能性があります）。\n\n"+
         "このまま同期すると、その内容はこの端末の内容で上書きされます。\n"+
-        "上書き前の内容は backups/ に保存します。続けますか？\n\n"+
-        "（先に他の端末の内容を取り込みたい場合は「キャンセル」→「GitHubから読み込む」）"
+        "上書き前の内容は"+(cfg.kind==="cf"?"世代バックアップ":"backups/ ")+"に保存します。続けますか？\n\n"+
+        "（先に他の端末の内容を取り込みたい場合は「キャンセル」→「"+RN()+"から読み込む」）"
       );
       if(!ok) throw new Error("__sync_cancelled__");
       return backupRemoteBeforeOverwrite(cfg).then(function(){ return r.sha; });
@@ -2819,16 +2950,16 @@ function doSync(cfg,statusEl,backedUp){
       return res;
     })
     .then(function(res){
-      if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||("HTTP "+res.status)); });
+      if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||e.error||("HTTP "+res.status)); });
       markSynced("同期");
       markPulled(); // 自分が今アップロードした内容＝この端末の最新状態、として扱う
       store.set("gh-known-updatedAt", pushedAt); // GitHub側もこの時刻の内容と一致した
       statusEl.textContent="同期しました。次の朝のダイジェストから反映されます。";
-      toast("GitHubに同期しました");
+      toast(RN()+"に同期しました");
     })
     .catch(function(err){
       var m=err.message||"";
-      if(m==="__sync_cancelled__"){ statusEl.textContent="同期を中止しました。「GitHubから読み込む」で他の端末の内容を取り込めます。"; return; }
+      if(m==="__sync_cancelled__"){ statusEl.textContent="同期を中止しました。「"+RN()+"から読み込む」で他の端末の内容を取り込めます。"; return; }
       var hint=ghHint(m);
       statusEl.textContent="同期に失敗しました："+m+(hint?"　→ "+hint:"");
     });

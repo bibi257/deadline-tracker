@@ -25,3 +25,9 @@ test('プライバシーポリシー: 使う権限・目的・第三者に渡さ
   assert.match(html, /github\.com\/bibi257\/deadline-tracker\/issues/);
   assert.doesNotMatch(html, /[\w.+-]+@[\w-]+\.[\w.]+/, 'メールアドレスは書かない');
 });
+
+test('サービスワーカー: /api/ と /ics/ は横取りしない（データをキャッシュに残さない）', () => {
+  const sw = read('service-worker.js');
+  assert.match(sw, /startsWith\(["']\/api\/["']\)/);
+  assert.match(sw, /startsWith\(["']\/ics\/["']\)/);
+});

@@ -1,7 +1,7 @@
 // 締切データの保管 API（Cloudflare Worker + D1）。利用者は自分1人。
 //   GET  /api/health            動作確認（認証なし）
 //   GET  /api/data              締切データと版（rev）の取得
-//   PUT  /api/data              締切データの保存。If-Match: <rev> が今の版と違えば 409（?force=1 で上書き）
+//   PUT  /api/data              締切データの保存。If-Match: <rev> が今の版と違えば 409（?force=1 で上書き、?backup=1 で上書き前を必ずバックアップ）
 //   GET  /api/snapshots         世代バックアップの一覧
 //   GET  /api/snapshots/:id     世代バックアップ1件の中身
 //   GET  /api/feed              未完了の締切の一覧（feed）。?days=14（確認用）
@@ -172,6 +172,7 @@ async function getData(env) {
 
 async function putData(env, request, url) {
   const force = url.searchParams.get('force') === '1';
+  const backup = url.searchParams.get('backup') === '1'; // 上書き前の内容を、間隔に関わらず必ず世代バックアップに残す
   const ifMatch = request.headers.get('If-Match');
   if (!force && ifMatch === null) throw new HttpError(428, 'If-Match（読み込んだときの rev）を付けてください');
   const base = Number(ifMatch);
@@ -198,7 +199,7 @@ async function putData(env, request, url) {
   // 上書きされる前の内容を、一定の間隔で世代バックアップに残す（?force=1 のときは必ず残す）
   const last = await env.DB.prepare('SELECT MAX(at) AS at FROM snapshots').first('at');
   const stmts = [];
-  if (force || last === null || t - last >= SNAPSHOT_INTERVAL) {
+  if (force || backup || last === null || t - last >= SNAPSHOT_INTERVAL) {
     stmts.push(env.DB.prepare('INSERT INTO snapshots (at, rev, json) VALUES (?, ?, ?)').bind(t, cur.rev, cur.json));
   }
   // 版番号は DB 側で +1 する。条件に rev を入れて、同時に送られた別の保存と衝突したら 409 にする
