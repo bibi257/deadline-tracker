@@ -26,6 +26,9 @@ export function fromJst(y, mo, d, h = 0, mi = 0, s = 0, msec = 0) {
   return Date.UTC(y, mo - 1, d, h, mi, s, msec) - JST_OFFSET;
 }
 
+/** JST の曜日（0=日曜 … 6=土曜） */
+export const jstDow = (ms) => new Date(ms + JST_OFFSET).getUTCDay();
+
 export const daysInMonth = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 
 /** JST の日付 "YYYY-MM-DD" */

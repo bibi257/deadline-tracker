@@ -20,14 +20,27 @@ GitHub Pages + 非公開リポジトリ（`deadline-data`）の構成から、Cl
 2. 既存の `data.json` を D1 に取り込んで照合
 3. ダイジェスト・メール・`.ics` を移植し、旧 Actions と出力を比べる
    - 3a: 繰り返しの計算・feed・`.ics`（購読 URL `/ics/<トークン>.ics` を含む）— Python 版の出力と1文字まで一致することをテストで確認
-   - 3b: Discord の締切一覧と Cron
+   - 3b: Discord の締切一覧と Cron（毎朝 6:47 の送信・毎日 3:10 の世代バックアップの間引き）。`send_digest.sh` の出力と1文字まで一致することをテストで確認。Webhook（`DISCORD_WEBHOOK_URL`）が未設定の間は何も送らないので、旧環境（ルーティンの投稿）と二重にならない
    - 3c: Gmail API で自分宛てにメール送信
 4. アプリの保存先を Worker に切り替え（本番化）。Cron を有効にして旧 Actions を止める
 5. 後片付け（Pages 停止、GitHub 同期コードの削除、`deadline-data` のアーカイブ）
+
+## 動作確認用の API（アクセスキーが要る）
+
+| 呼び方 | 内容 |
+| --- | --- |
+| `GET /api/digest` | 締切一覧の文面を作って返す（送らない）。設定の有無（`config`）も返す |
+| `POST /api/digest` | 締切一覧を今すぐ Discord に送る |
+| `GET /api/feed`、`GET /api/ics` | feed と `.ics` |
 
 ## Cloudflare 側の設定（手作業）
 
 - Worker `deadline-tracker` を GitHub 連携（Workers Builds）で作成し、このリポジトリの `main` につなぐ
 - シークレット `APP_KEY`（24文字以上のランダムな値）を Worker の設定に登録する
+- Discord の送信（段階4で登録する。登録するまで朝の Cron は何も送らない）
+  - シークレット `DISCORD_WEBHOOK_URL`: Discord の Webhook の URL
+  - シークレット `DISCORD_USER_ID`: 毎朝メンションするユーザーの ID（任意。空ならメンションなし）
+  - 変数 `APP_URL`: 締切一覧のリンクに入れるアプリの URL（例: `https://<Worker名>.<サブドメイン>.workers.dev/`）
+  - 変数 `DONE_LINKS`: `0` にすると「✅完了」リンクを付けない（任意）
 - シークレット `FEED_TOKEN`（購読用 `.ics` の URL に入れる、24文字以上のランダムな値。`APP_KEY` とは別の値）。未設定の間、`/ics/…` は 404 を返す
 - D1：本番 `deadline-tracker`、プレビュー `deadline-tracker-preview`（ID は `wrangler.jsonc`）
