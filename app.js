@@ -120,7 +120,7 @@ function load(){
   }catch(e){
     // 読めなかった元のデータは、次に保存して上書きされる前に退避する（writeDb を参照）
     _unreadableRaw=raw;
-    toast("保存されていたデータを読めませんでした。次に保存するとき、元のデータを「"+KEY+"-unreadable」に残します");
+    toast("保存されていたデータを読めませんでした。次に保存するとき、元のデータを別の場所に残します");
   }
   // 以前この端末だけに持っていた経験値(settings.exp)は、同期される記録へ移す
   if(db.settings.exp){ db.expCarry=(db.expCarry||0)+db.settings.exp; delete db.settings.exp; }
@@ -135,7 +135,10 @@ function save(){ db.updatedAt=new Date().toISOString(); writeDb(); }
 /* 保存データを書く。読めなかった元のデータがあれば、上書きする前に別のキーへ退避する */
 function writeDb(){
   if(_unreadableRaw!==null){
-    try{ store.set(KEY+"-unreadable", _unreadableRaw); }catch(e){}
+    // 前に退避したものが残っていれば上書きしない（2回目以降は別のキーに残す）
+    var bk=KEY+"-unreadable";
+    if(store.get(bk)!==null) bk=KEY+"-unreadable-"+Date.now();
+    try{ store.set(bk, _unreadableRaw); }catch(e){}
     _unreadableRaw=null;
   }
   store.set(KEY,JSON.stringify(db));
@@ -809,7 +812,8 @@ function colorPicker(opts){
     if(!v){ toast("カラーコードは #RRGGBB の形で入力してください（例：#2A7E69）"); hexIn.focus(); return; }
     set(v);
   };
-  hexIn.onkeydown=function(e){ if(e.key==="Enter"){ e.preventDefault(); el.querySelector(".cp-apply").click(); } };
+  // 日本語変換を確定する Enter は除く（Safari は isComposing が false で keyCode 229 のまま届くことがある）
+  hexIn.onkeydown=function(e){ if(e.key==="Enter" && !e.isComposing && e.keyCode!==229){ e.preventDefault(); el.querySelector(".cp-apply").click(); } };
   el.querySelector(".cp-auto").onclick=function(){ set(null); };
   el.refresh=paint;
   el.setValue=function(v){ value=normHex(v)||null; paint(); };
@@ -928,7 +932,7 @@ function autoSyncWith(cfg){
     toast(isPublic===true
       ? "同期先がPublicのため、自動同期を止めました。手動の同期で確認できます"
       : "同期先の公開設定を確認できないため、自動同期を止めました。手動の同期で確認できます");
-  });
+  }).catch(function(){}); // 自動処理なので、ここで失敗しても知らせない（同期の失敗は runAutoSync 内で扱う）
 }
 function runAutoSync(cfg){
   var pushedAt=db.updatedAt; // 送信中に別の編集が入っても、送った時点の値を記録するため捕捉しておく
@@ -1158,6 +1162,9 @@ function undoDelete(){
 }
 /* 期限を過ぎた締切を「明日の同じ時刻」へ延ばす。期間つきは開始日も同じだけずらす */
 function postpone(it){
+  // 同期で一覧が差し替わっていると、渡された項目は古いことがある。いまの項目で延期する
+  it=db.items.find(function(x){ return x.id===it.id; });
+  if(!it){ render(); return; }
   var due=parseItemDate(it), t=new Date();
   var nd=new Date(t.getFullYear(),t.getMonth(),t.getDate()+1,due.getHours(),due.getMinutes());
   var before={due:it.due, start:it.start};
