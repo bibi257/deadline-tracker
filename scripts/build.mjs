@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const out = `${root}web/`;
-const files = ['index.html', 'app.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest'];
+const files = ['index.html', 'privacy.html', 'app.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest'];
 
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
