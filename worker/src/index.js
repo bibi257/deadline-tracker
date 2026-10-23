@@ -1,0 +1,240 @@
+// 締切データの保管 API（Cloudflare Worker + D1）。利用者は自分1人。
+//   GET  /api/health            動作確認（認証なし）
+//   GET  /api/data              締切データと版（rev）の取得
+//   PUT  /api/data              締切データの保存。If-Match: <rev> が今の版と違えば 409（?force=1 で上書き）
+//   GET  /api/snapshots         世代バックアップの一覧
+//   GET  /api/snapshots/:id     世代バックアップ1件の中身
+//
+// 認証は Authorization: Bearer <アクセスキー>。キーは Worker のシークレット APP_KEY（24文字以上のランダムな値）。
+// キーが長いランダム値なので、パスワードのような重いハッシュは使わず（無料プランの CPU 時間 10ms に収める）、定数時間で比べる。
+// 認証の失敗が続いたら、IP ごとに一時的に止める。
+
+const MIN_KEY_LENGTH = 24;
+const MAX_DATA_CHARS = 1_000_000;
+const SNAPSHOT_INTERVAL = 30 * 60; // 世代バックアップを残す間隔（秒）。自動同期の連続保存で増えすぎないようにする
+const SNAPSHOT_LIST_LIMIT = 200;
+const AUTH_MISS_MAX = 10; // 認証の失敗を許す回数（IP ごと）
+const AUTH_MISS_WINDOW = 10 * 60;
+
+const SCHEMA = [
+  'CREATE TABLE IF NOT EXISTS docs (id TEXT PRIMARY KEY, json TEXT NOT NULL, rev INTEGER NOT NULL, updated_at TEXT, saved_at INTEGER NOT NULL)',
+  'CREATE TABLE IF NOT EXISTS snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, rev INTEGER NOT NULL, json TEXT NOT NULL)',
+  'CREATE TABLE IF NOT EXISTS limits (k TEXT PRIMARY KEY, n INTEGER NOT NULL, until INTEGER NOT NULL)',
+];
+
+const DOC_ID = 'main';
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, If-Match',
+  'Access-Control-Max-Age': '86400',
+};
+
+class HttpError extends Error {
+  constructor(status, message, extra = {}) {
+    super(message);
+    this.status = status;
+    this.extra = extra;
+  }
+}
+
+const now = (env) => (env.NOW ? env.NOW() : Math.floor(Date.now() / 1000));
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...CORS },
+  });
+}
+
+// ---- 認証 ----
+
+const enc = new TextEncoder();
+const toHex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+async function sha256Hex(text) {
+  return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(text))));
+}
+
+function safeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+const clientIp = (request) => request.headers.get('CF-Connecting-IP') || 'local';
+
+async function isLimited(env, key, max) {
+  const row = await env.DB.prepare('SELECT n, until FROM limits WHERE k = ?').bind(key).first();
+  return !!row && row.until > now(env) && row.n >= max;
+}
+
+async function countHit(env, key, windowSec) {
+  const t = now(env);
+  const row = await env.DB.prepare('SELECT n, until FROM limits WHERE k = ?').bind(key).first();
+  if (!row || row.until <= t) {
+    await env.DB.prepare('INSERT OR REPLACE INTO limits (k, n, until) VALUES (?, 1, ?)').bind(key, t + windowSec).run();
+  } else {
+    await env.DB.prepare('UPDATE limits SET n = n + 1 WHERE k = ?').bind(key).run();
+  }
+}
+
+async function authorize(env, request) {
+  if (typeof env.APP_KEY !== 'string' || env.APP_KEY.length < MIN_KEY_LENGTH) {
+    throw new HttpError(503, `アクセスキー（APP_KEY）が未設定か短すぎます（${MIN_KEY_LENGTH}文字以上）`);
+  }
+  const ipKey = `auth:${await sha256Hex(clientIp(request))}`;
+  if (await isLimited(env, ipKey, AUTH_MISS_MAX)) {
+    throw new HttpError(429, '認証の失敗が続いたため、しばらく使えません。10分ほど待ってください');
+  }
+  const m = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '');
+  // 長さの違いから中身が推測されないよう、ハッシュにそろえてから比べる
+  const ok = !!m && safeEqual(await sha256Hex(m[1]), await sha256Hex(env.APP_KEY));
+  if (!ok) {
+    await countHit(env, ipKey, AUTH_MISS_WINDOW);
+    throw new HttpError(401, 'アクセスキーが違います');
+  }
+}
+
+// ---- データの検証 ----
+
+const ARRAY_KEYS = ['items', 'templates', 'trash', 'categories', 'completions'];
+const OBJECT_KEYS = ['catReminders', 'catColors'];
+
+/** 保存するデータの形を確かめる。値の細かい検査はアプリ側（読み込み時）に任せ、ここでは壊れた形だけを弾く */
+function checkData(data) {
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isObj(data)) throw new HttpError(400, '締切データの形式が正しくありません');
+  if (!Array.isArray(data.items)) throw new HttpError(400, 'items（締切の配列）がありません');
+  for (const k of ARRAY_KEYS) {
+    if (data[k] !== undefined && !Array.isArray(data[k])) throw new HttpError(400, `${k} は配列にしてください`);
+  }
+  for (const k of OBJECT_KEYS) {
+    if (data[k] !== undefined && !isObj(data[k])) throw new HttpError(400, `${k} はオブジェクトにしてください`);
+  }
+  if (data.updatedAt !== undefined && typeof data.updatedAt !== 'string') throw new HttpError(400, 'updatedAt は文字列にしてください');
+  const ids = new Set();
+  for (const it of data.items) {
+    if (!isObj(it) || typeof it.id !== 'string' || !it.id) throw new HttpError(400, 'id のない締切があります');
+    if (ids.has(it.id)) throw new HttpError(400, `id が重複している締切があります（${it.id.slice(0, 20)}）`);
+    ids.add(it.id);
+  }
+}
+
+async function readJson(request, maxChars) {
+  const text = await request.text();
+  if (text.length > maxChars) throw new HttpError(413, 'データが大きすぎます');
+  try {
+    return JSON.parse(text || '{}');
+  } catch {
+    throw new HttpError(400, '送られたデータの形式が正しくありません');
+  }
+}
+
+// ---- ハンドラ ----
+
+async function getData(env) {
+  const row = await env.DB.prepare('SELECT json, rev, updated_at, saved_at FROM docs WHERE id = ?').bind(DOC_ID).first();
+  if (!row) return json({ ok: true, rev: 0, data: null, updatedAt: null, savedAt: null });
+  return json({ ok: true, rev: row.rev, data: JSON.parse(row.json), updatedAt: row.updated_at, savedAt: row.saved_at });
+}
+
+async function putData(env, request, url) {
+  const force = url.searchParams.get('force') === '1';
+  const ifMatch = request.headers.get('If-Match');
+  if (!force && ifMatch === null) throw new HttpError(428, 'If-Match（読み込んだときの rev）を付けてください');
+  const base = Number(ifMatch);
+  if (!force && !Number.isInteger(base)) throw new HttpError(400, 'If-Match は整数にしてください');
+
+  const data = await readJson(request, MAX_DATA_CHARS + 1000);
+  checkData(data);
+  const text = JSON.stringify(data);
+  if (text.length > MAX_DATA_CHARS) throw new HttpError(413, '締切データが大きすぎます');
+
+  const t = now(env);
+  const cur = await env.DB.prepare('SELECT json, rev FROM docs WHERE id = ?').bind(DOC_ID).first();
+  if (!force && (cur ? cur.rev : 0) !== base) {
+    throw new HttpError(409, '他の端末の更新があります。読み込んでからやり直してください', { rev: cur ? cur.rev : 0 });
+  }
+
+  if (!cur) {
+    const r = await env.DB.prepare('INSERT OR IGNORE INTO docs (id, json, rev, updated_at, saved_at) VALUES (?, ?, 1, ?, ?)')
+      .bind(DOC_ID, text, data.updatedAt ?? null, t).run();
+    if (r.meta.changes !== 1) throw new HttpError(409, '他の端末の更新があります。読み込んでからやり直してください', { rev: 1 });
+    return json({ ok: true, rev: 1, savedAt: t }, 201);
+  }
+
+  // 上書きされる前の内容を、一定の間隔で世代バックアップに残す（?force=1 のときは必ず残す）
+  const last = await env.DB.prepare('SELECT MAX(at) AS at FROM snapshots').first('at');
+  const stmts = [];
+  if (force || last === null || t - last >= SNAPSHOT_INTERVAL) {
+    stmts.push(env.DB.prepare('INSERT INTO snapshots (at, rev, json) VALUES (?, ?, ?)').bind(t, cur.rev, cur.json));
+  }
+  // 版番号は DB 側で +1 する。条件に rev を入れて、同時に送られた別の保存と衝突したら 409 にする
+  const cond = force ? '' : ' AND rev = ?';
+  const upd = env.DB.prepare(`UPDATE docs SET json = ?, rev = rev + 1, updated_at = ?, saved_at = ? WHERE id = ?${cond}`)
+    .bind(text, data.updatedAt ?? null, t, DOC_ID, ...(force ? [] : [base]));
+  const results = await env.DB.batch([...stmts, upd]);
+  if (results[results.length - 1].meta.changes !== 1) {
+    // 世代バックアップだけ残って更新が空振りした場合も、バックアップは無害（次の保存で間引かれる）
+    const now2 = await env.DB.prepare('SELECT rev FROM docs WHERE id = ?').bind(DOC_ID).first('rev');
+    throw new HttpError(409, '他の端末の更新があります。読み込んでからやり直してください', { rev: now2 });
+  }
+  const rev = await env.DB.prepare('SELECT rev FROM docs WHERE id = ?').bind(DOC_ID).first('rev');
+  return json({ ok: true, rev, savedAt: t });
+}
+
+async function listSnapshots(env) {
+  const { results } = await env.DB.prepare('SELECT id, at, rev, LENGTH(json) AS size FROM snapshots ORDER BY id DESC LIMIT ?')
+    .bind(SNAPSHOT_LIST_LIMIT).all();
+  return json({ ok: true, snapshots: results });
+}
+
+async function getSnapshot(env, id) {
+  const row = await env.DB.prepare('SELECT id, at, rev, json FROM snapshots WHERE id = ?').bind(id).first();
+  if (!row) throw new HttpError(404, '見つかりません');
+  return json({ ok: true, id: row.id, at: row.at, rev: row.rev, data: JSON.parse(row.json) });
+}
+
+async function route(env, request) {
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/\/+$/, '') || '/';
+  const method = request.method;
+  if (path === '/api/health' && method === 'GET') return json({ ok: true });
+
+  await authorize(env, request);
+  if (path === '/api/data' && method === 'GET') return getData(env);
+  if (path === '/api/data' && method === 'PUT') return putData(env, request, url);
+  if (path === '/api/snapshots' && method === 'GET') return listSnapshots(env);
+  const m = /^\/api\/snapshots\/(\d+)$/.exec(path);
+  if (m && method === 'GET') return getSnapshot(env, Number(m[1]));
+  throw new HttpError(404, '見つかりません');
+}
+
+const ready = new WeakSet();
+
+async function initDb(db) {
+  if (ready.has(db)) return;
+  await db.batch(SCHEMA.map((sql) => db.prepare(sql)));
+  ready.add(db);
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (!url.pathname.startsWith('/api/')) {
+      return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 });
+    }
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+    try {
+      await initDb(env.DB);
+      return await route(env, request);
+    } catch (e) {
+      if (e instanceof HttpError) return json({ ok: false, error: e.message, ...e.extra }, e.status);
+      console.error(e);
+      return json({ ok: false, error: 'サーバーでエラーが発生しました' }, 500);
+    }
+  },
+};

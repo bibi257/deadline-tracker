@@ -1,0 +1,11 @@
+{
+  "name": "deadline-tracker",
+  "version": "1.0.0",
+  "description": "締切トラッカー（個人用の締切管理 Web アプリと、データ保管用の Cloudflare Worker）",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test \"test/unit/*.test.js\""
+  }
+}

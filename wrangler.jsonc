@@ -1,0 +1,33 @@
+{
+  // 締切データの保管 API（Cloudflare Worker + D1）と、画面の配信。
+  // Cloudflare の「Workers Builds」（GitHub 連携）が、リポジトリのルートでこの設定を読んでビルド・デプロイする。ログイン情報やキーはここに書かない
+  "name": "deadline-tracker",
+  "main": "worker/src/index.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  // 画面のファイル（index.html など）を web/ にそろえる。web/ は生成物でコミットしない
+  "build": {
+    "command": "node scripts/build.mjs"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "deadline-tracker",
+      "database_id": "d8c5575c-2b9c-46e2-9c95-f6e060feda67"
+    }
+  ],
+  // PR ブランチのプレビュー（wrangler preview）は、本番とは別のデータベースを使う
+  "previews": {
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_id": "6445ae60-213c-41f1-b74e-b76148cbff10"
+      }
+    ]
+  },
+  "assets": {
+    "directory": "web",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  }
+}
