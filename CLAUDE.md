@@ -33,5 +33,5 @@ test/support/ テスト用の D1 互換シム（node:sqlite）
 
 ## 4. Git・PR
 
-- 作業ブランチで開発し、`main` へは PR でマージする。
+- 作業ブランチで開発し、`main` へは PR でマージする。PR は下書き（Draft）ではなく、通常の PR として作る
 - コミットメッセージは `種別: 要約`（`feat:` `fix:` `docs:` `test:` `build:` `ci:`）
