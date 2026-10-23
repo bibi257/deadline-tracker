@@ -7,12 +7,17 @@
 //   GET  /api/feed              未完了の締切の一覧（feed）。?days=14（確認用）
 //   GET  /api/ics               .ics（メモあり。?memo=0 でメモなし）
 //   GET  /ics/<FEED_TOKEN>.ics  購読用の .ics（メモなし）。認証は URL の中の長いトークン（シークレット FEED_TOKEN）
+//   GET  /api/digest            Discord に送る締切一覧の文面を作る（送らない。確認用）
+//   POST /api/digest            締切一覧を今すぐ Discord に送る（手動）
 //
+// 定時の処理（scheduled）: 毎朝 6:47 に締切一覧を Discord へ、毎日 3:10 に世代バックアップの間引きと掃除。
+
 // 認証は Authorization: Bearer <アクセスキー>。キーは Worker のシークレット APP_KEY（24文字以上のランダムな値）。
 // キーが長いランダム値なので、パスワードのような重いハッシュは使わず（無料プランの CPU 時間 10ms に収める）、定数時間で比べる。
 // 認証の失敗が続いたら、IP ごとに一時的に止める。
 import { buildFeed } from './feed.js';
 import { buildIcs } from './ics.js';
+import { previewDigest, runScheduled, sendDigest } from './jobs.js';
 
 const MIN_KEY_LENGTH = 24;
 const MAX_DATA_CHARS = 1_000_000;
@@ -31,7 +36,7 @@ const DOC_ID = 'main';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type, If-Match',
   'Access-Control-Max-Age': '86400',
 };
@@ -253,6 +258,28 @@ async function serveIcs(env, request, token) {
   return text(ics ?? EMPTY_CALENDAR, ICS_TYPE, 200, { 'Content-Disposition': 'inline; filename="deadlines.ics"' });
 }
 
+async function getDigest(env) {
+  const { cfg, warnings, bodies } = await previewDigest(env, now(env) * 1000);
+  return json({
+    ok: true,
+    chunks: bodies.map((b) => b.content),
+    warnings,
+    // 設定の有無だけを返す（URL やユーザー ID の値は返さない）
+    config: { webhook: cfg.webhook ? 'ok' : cfg.webhookSet ? 'invalid' : 'unset', appUrl: !!cfg.appUrl, mention: !!cfg.mentionUserId },
+  });
+}
+
+async function postDigest(env) {
+  let sent;
+  try {
+    sent = await sendDigest(env, now(env) * 1000);
+  } catch (e) {
+    throw new HttpError(502, e.message);
+  }
+  if (sent === null) throw new HttpError(400, 'DISCORD_WEBHOOK_URL が未設定か、Discord の URL の形ではありません');
+  return json({ ok: true, sent });
+}
+
 async function route(env, request) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
@@ -260,6 +287,8 @@ async function route(env, request) {
   if (path === '/api/health' && method === 'GET') return json({ ok: true });
 
   await authorize(env, request);
+  if (path === '/api/digest' && method === 'GET') return getDigest(env);
+  if (path === '/api/digest' && method === 'POST') return postDigest(env);
   if (path === '/api/feed' && method === 'GET') return getFeed(env, url);
   if (path === '/api/ics' && method === 'GET') return getIcs(env, url);
   if (path === '/api/data' && method === 'GET') return getData(env);
@@ -279,6 +308,12 @@ async function initDb(db) {
 }
 
 export default {
+  /** Cron Triggers。失敗したら例外のまま返す（ダッシュボードの Cron の履歴に失敗として残る） */
+  async scheduled(event, env) {
+    await initDb(env.DB);
+    await runScheduled(event.cron, env, now(env));
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     const ics = /^\/ics\/([^/]+)\.ics$/.exec(url.pathname);
