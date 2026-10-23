@@ -44,6 +44,14 @@ test('キーなし・違うキーは 401、正しいキーは通る', async () =
   assert.equal((await call('GET', '/api/data')).status, 200);
 });
 
+test('シークレットの前後に空白や改行があっても、キー本体で通る', async () => {
+  const { call } = setup({ APP_KEY: `  ${KEY}\n` });
+  assert.equal((await call('GET', '/api/data')).status, 200);
+  assert.equal((await call('GET', '/api/data', { key: 'x'.repeat(32) })).status, 401);
+  const blank = setup({ APP_KEY: `${' '.repeat(30)}\n` });
+  assert.equal((await blank.call('GET', '/api/data')).status, 503, '空白だけは未設定として扱う');
+});
+
 test('認証の失敗が続くと 429、別の IP と時間経過で戻る', async () => {
   const { call, clock } = setup();
   for (let i = 0; i < 10; i++) assert.equal((await call('GET', '/api/data', { key: 'x'.repeat(32) })).status, 401);
