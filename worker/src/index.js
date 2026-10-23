@@ -4,10 +4,15 @@
 //   PUT  /api/data              締切データの保存。If-Match: <rev> が今の版と違えば 409（?force=1 で上書き）
 //   GET  /api/snapshots         世代バックアップの一覧
 //   GET  /api/snapshots/:id     世代バックアップ1件の中身
+//   GET  /api/feed              未完了の締切の一覧（feed）。?days=14（確認用）
+//   GET  /api/ics               .ics（メモあり。?memo=0 でメモなし）
+//   GET  /ics/<FEED_TOKEN>.ics  購読用の .ics（メモなし）。認証は URL の中の長いトークン（シークレット FEED_TOKEN）
 //
 // 認証は Authorization: Bearer <アクセスキー>。キーは Worker のシークレット APP_KEY（24文字以上のランダムな値）。
 // キーが長いランダム値なので、パスワードのような重いハッシュは使わず（無料プランの CPU 時間 10ms に収める）、定数時間で比べる。
 // 認証の失敗が続いたら、IP ごとに一時的に止める。
+import { buildFeed } from './feed.js';
+import { buildIcs } from './ics.js';
 
 const MIN_KEY_LENGTH = 24;
 const MAX_DATA_CHARS = 1_000_000;
@@ -48,6 +53,10 @@ function json(data, status = 200) {
   });
 }
 
+function text(body, contentType, status = 200, extra = {}) {
+  return new Response(body, { status, headers: { 'Content-Type': contentType, 'Cache-Control': 'no-store', ...extra } });
+}
+
 // ---- 認証 ----
 
 const enc = new TextEncoder();
@@ -81,10 +90,21 @@ async function countHit(env, key, windowSec) {
   }
 }
 
+/** 前後の空白を除いたシークレットを返す。未設定・短すぎるときは空文字 */
+function secret(env, name) {
+  const v = typeof env[name] === 'string' ? env[name].trim() : '';
+  return v.length >= MIN_KEY_LENGTH ? v : '';
+}
+
+/** 送られた値がシークレットと同じか。長さの違いから中身が推測されないよう、ハッシュにそろえてから比べる */
+async function sameSecret(given, expected) {
+  return safeEqual(await sha256Hex(given), await sha256Hex(expected));
+}
+
 async function authorize(env, request) {
   // ダッシュボードに貼ったキーの前後に空白や改行が混ざっても通るようにする
-  const appKey = typeof env.APP_KEY === 'string' ? env.APP_KEY.trim() : '';
-  if (appKey.length < MIN_KEY_LENGTH) {
+  const appKey = secret(env, 'APP_KEY');
+  if (!appKey) {
     throw new HttpError(503, `アクセスキー（APP_KEY）が未設定か短すぎます（${MIN_KEY_LENGTH}文字以上）`);
   }
   const ipKey = `auth:${await sha256Hex(clientIp(request))}`;
@@ -92,9 +112,7 @@ async function authorize(env, request) {
     throw new HttpError(429, '認証の失敗が続いたため、しばらく使えません。10分ほど待ってください');
   }
   const m = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '');
-  // 長さの違いから中身が推測されないよう、ハッシュにそろえてから比べる
-  const ok = !!m && safeEqual(await sha256Hex(m[1]), await sha256Hex(appKey));
-  if (!ok) {
+  if (!m || !(await sameSecret(m[1], appKey))) {
     await countHit(env, ipKey, AUTH_MISS_WINDOW);
     throw new HttpError(401, 'アクセスキーが違います');
   }
@@ -200,6 +218,41 @@ async function getSnapshot(env, id) {
   return json({ ok: true, id: row.id, at: row.at, rev: row.rev, data: JSON.parse(row.json) });
 }
 
+async function loadData(env) {
+  const row = await env.DB.prepare('SELECT json FROM docs WHERE id = ?').bind(DOC_ID).first();
+  return row ? JSON.parse(row.json) : { items: [] };
+}
+
+const EMPTY_CALENDAR = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//deadline-tracker//JP\r\nEND:VCALENDAR\r\n';
+const ICS_TYPE = 'text/calendar; charset=utf-8';
+
+async function getFeed(env, url) {
+  const days = Number(url.searchParams.get('days') ?? 14);
+  if (!Number.isInteger(days) || days < 0 || days > 400) throw new HttpError(400, 'days は 0〜400 の整数にしてください');
+  const { feed, warnings } = buildFeed(await loadData(env), { now: now(env) * 1000, days });
+  return json({ ok: true, feed, warnings });
+}
+
+async function getIcs(env, url) {
+  const { ics } = buildIcs(await loadData(env), { now: now(env) * 1000, dayHour: 9, noMemo: url.searchParams.get('memo') === '0' });
+  return text(ics ?? EMPTY_CALENDAR, ICS_TYPE, 200, { 'Content-Disposition': 'inline; filename="deadlines.ics"' });
+}
+
+/** 購読用の .ics。URL の中のトークンで守る（メモは書き出さない）。違うトークンは「無い」として扱い、失敗が続けば IP ごとに止める */
+async function serveIcs(env, request, token) {
+  const feedToken = secret(env, 'FEED_TOKEN');
+  const notFound = () => text('Not found', 'text/plain; charset=utf-8', 404);
+  if (!feedToken) return notFound();
+  const ipKey = `ics:${await sha256Hex(clientIp(request))}`;
+  if (await isLimited(env, ipKey, AUTH_MISS_MAX)) return text('Too many requests', 'text/plain; charset=utf-8', 429);
+  if (!(await sameSecret(token, feedToken))) {
+    await countHit(env, ipKey, AUTH_MISS_WINDOW);
+    return notFound();
+  }
+  const { ics } = buildIcs(await loadData(env), { now: now(env) * 1000, dayHour: 9, noMemo: true });
+  return text(ics ?? EMPTY_CALENDAR, ICS_TYPE, 200, { 'Content-Disposition': 'inline; filename="deadlines.ics"' });
+}
+
 async function route(env, request) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
@@ -207,6 +260,8 @@ async function route(env, request) {
   if (path === '/api/health' && method === 'GET') return json({ ok: true });
 
   await authorize(env, request);
+  if (path === '/api/feed' && method === 'GET') return getFeed(env, url);
+  if (path === '/api/ics' && method === 'GET') return getIcs(env, url);
   if (path === '/api/data' && method === 'GET') return getData(env);
   if (path === '/api/data' && method === 'PUT') return putData(env, request, url);
   if (path === '/api/snapshots' && method === 'GET') return listSnapshots(env);
@@ -226,6 +281,16 @@ async function initDb(db) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const ics = /^\/ics\/([^/]+)\.ics$/.exec(url.pathname);
+    if (ics && request.method === 'GET') {
+      try {
+        await initDb(env.DB);
+        return await serveIcs(env, request, ics[1]);
+      } catch (e) {
+        console.error(e);
+        return text('Server error', 'text/plain; charset=utf-8', 500);
+      }
+    }
     if (!url.pathname.startsWith('/api/')) {
       return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 });
     }

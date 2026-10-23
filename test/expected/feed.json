@@ -1,0 +1,96 @@
+{
+  "description": "締切トラッカーの未完了の締切一覧（日付はJST）。due_date が今日のものが『今日が締切』、今日より前のものは期限切れ。start_date がある項目は期間つきの予定（start_date〜due_date）。",
+  "timezone": "Asia/Tokyo",
+  "generated_on": "2026-01-30",
+  "range_end": "2026-02-13",
+  "source_updated_at": "2026-01-29T22:00:00.000Z",
+  "items": [
+    {
+      "title": "レポート下書き",
+      "due_date": "2026-01-20",
+      "due_time": null,
+      "category": "課題",
+      "recurring": false
+    },
+    {
+      "title": "定例会",
+      "due_date": "2026-01-23",
+      "due_time": "19:00",
+      "category": "サークルA",
+      "recurring": true,
+      "repeat": "毎週"
+    },
+    {
+      "title": "資料提出",
+      "due_date": "2026-01-29",
+      "due_time": "18:00",
+      "category": "委員会A",
+      "recurring": false
+    },
+    {
+      "title": "シフト提出",
+      "due_date": "2026-01-30",
+      "due_time": "17:00",
+      "category": "バイト",
+      "recurring": false
+    },
+    {
+      "title": "記事投稿",
+      "due_date": "2026-01-30",
+      "due_time": null,
+      "category": "サークルA",
+      "recurring": true,
+      "repeat": "隔週"
+    },
+    {
+      "title": "動画サブスク",
+      "due_date": "2026-01-31",
+      "due_time": null,
+      "category": "サブスクなど",
+      "recurring": true,
+      "repeat": "毎月",
+      "memo": "更新\n¥1,980"
+    },
+    {
+      "title": "部誌原稿",
+      "due_date": "2026-02-02",
+      "due_time": "12:00",
+      "category": "部活A",
+      "recurring": false
+    },
+    {
+      "title": "期末考査",
+      "due_date": "2026-02-03",
+      "due_time": null,
+      "category": "考査",
+      "recurring": false,
+      "start_date": "2026-01-30",
+      "start_time": null,
+      "memo": "範囲はノート参照"
+    },
+    {
+      "title": "定例会",
+      "due_date": "2026-02-06",
+      "due_time": "19:00",
+      "category": "サークルA",
+      "recurring": true,
+      "repeat": "毎週"
+    },
+    {
+      "title": "定例会",
+      "due_date": "2026-02-13",
+      "due_time": "19:00",
+      "category": "サークルA",
+      "recurring": true,
+      "repeat": "毎週"
+    },
+    {
+      "title": "記事投稿",
+      "due_date": "2026-02-13",
+      "due_time": null,
+      "category": "サークルA",
+      "recurring": true,
+      "repeat": "隔週"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "items": [
+    {"id": "t01", "title": "レポート下書き", "cat": "課題", "due": "2026-01-20T14:59:00.000Z", "allDay": true, "rep": "none", "memo": "", "done": false, "created": "2026-01-05T00:00:00.000Z", "repCount": 0, "seq": 1},
+    {"id": "t02", "title": "資料提出", "cat": "委員会A", "due": "2026-01-29T09:00:00.000Z", "rep": "none", "memo": "", "done": false, "created": "2026-01-10T00:00:00.000Z", "repCount": 0, "seq": 2},
+    {"id": "t03", "title": "シフト提出", "cat": "バイト", "due": "2026-01-30T08:00:00.000Z", "rep": "none", "memo": "", "done": false, "created": "2026-01-15T00:00:00.000Z", "repCount": 0, "seq": 3},
+    {"id": "t04", "title": "期末考査", "cat": "考査", "start": "2026-01-29T15:00:00.000Z", "due": "2026-02-03T14:59:00.000Z", "allDay": true, "rep": "none", "memo": "範囲はノート参照", "done": false, "created": "2026-01-15T00:00:00.000Z", "repCount": 0, "seq": 4},
+    {"id": "t05", "title": "部誌原稿", "cat": "部活A", "due": "2026-02-02T03:00:00.000Z", "rep": "none", "memo": "", "done": false, "created": "2026-01-20T00:00:00.000Z", "repCount": 0, "seq": 5},
+    {"id": "t06", "title": "合宿申込", "cat": "部活B", "due": "2026-02-19T15:00:00.000Z", "allDay": true, "rep": "none", "memo": "", "done": false, "created": "2026-01-20T00:00:00.000Z", "repCount": 0, "seq": 6},
+    {"id": "t07", "title": "動画サブスク", "cat": "サブスクなど", "due": "2026-01-31T14:59:00.000Z", "allDay": true, "autoComplete": true, "rep": "monthly", "repDay": 31, "memo": "更新\n¥1,980", "done": false, "created": "2025-10-31T00:00:00.000Z", "repCount": 0, "seq": 7},
+    {"id": "t08", "title": "ドメイン更新", "cat": "サブスクなど", "due": "2026-02-28T14:59:00.000Z", "allDay": true, "autoComplete": true, "rep": "yearly", "repDay": 29, "memo": "年額 6000円", "done": false, "created": "2024-02-01T00:00:00.000Z", "repCount": 0, "seq": 8},
+    {"id": "t09", "title": "定例会", "cat": "サークルA", "due": "2026-01-23T10:00:00.000Z", "rep": "weekly", "skip": ["2026-01-30"], "memo": "", "done": false, "created": "2026-01-01T00:00:00.000Z", "repCount": 0, "seq": 9},
+    {"id": "t10", "title": "記事投稿", "cat": "サークルA", "due": "2026-01-16T14:59:00.000Z", "allDay": true, "autoComplete": true, "rep": "biweekly", "memo": "", "done": false, "created": "2026-01-01T00:00:00.000Z", "repCount": 0, "seq": 10},
+    {"id": "t11", "title": "教習", "cat": "その他", "due": "2026-01-09T01:00:00.000Z", "autoComplete": true, "rep": "weekly", "memo": "", "done": false, "created": "2026-01-01T00:00:00.000Z", "repCount": 2, "seq": 11},
+    {"id": "t12", "title": "小テスト", "cat": "課題", "due": "2026-01-29T03:00:00.000Z", "rep": "none", "memo": "", "done": true, "doneAt": "2026-01-27T12:00:00.000Z", "created": "2026-01-20T00:00:00.000Z", "repCount": 0, "seq": 12},
+    {"id": "t13", "title": "古い課題", "cat": "課題", "due": "2026-01-10T03:00:00.000Z", "rep": "none", "memo": "", "done": true, "doneAt": "2026-01-11T03:00:00.000Z", "created": "2026-01-01T00:00:00.000Z", "repCount": 0, "seq": 13}
+  ],
+  "templates": [],
+  "trash": [],
+  "categories": ["課題", "委員会A", "バイト", "考査", "部活A", "部活B", "サブスクなど", "サークルA", "その他"],
+  "catReminders": {"考査": [14, 7, 1, 0], "バイト": [2, 0]},
+  "catColors": {},
+  "completions": [
+    {"id": "c01", "itemId": "t09", "title": "定例会", "cat": "サークルA", "due": "2026-01-09T10:00:00.000Z", "doneAt": "2026-01-09T09:00:00.000Z", "lead": 1, "kind": "ontime", "exp": 10, "src": "manual", "rep": true},
+    {"id": "c02", "itemId": "t09", "title": "定例会", "cat": "サークルA", "due": "2026-01-16T10:00:00.000Z", "doneAt": "2026-01-17T01:00:00.000Z", "lead": -15, "kind": "late", "exp": 5, "src": "manual", "rep": true},
+    {"id": "c03", "itemId": "t10", "title": "記事投稿", "cat": "サークルA", "due": "2026-01-16T14:59:00.000Z", "doneAt": "2026-01-16T14:59:00.000Z", "lead": 0, "kind": "auto", "exp": 0, "src": "auto", "rep": true},
+    {"id": "c04", "itemId": "t12", "title": "小テスト", "cat": "課題", "due": "2026-01-29T03:00:00.000Z", "doneAt": "2026-01-27T12:00:00.000Z", "lead": 39, "kind": "early", "exp": 20, "src": "manual"},
+    {"id": "c05", "itemId": "t09", "title": "定例会", "cat": "サークルA", "due": "2026-01-23T10:00:00.000Z", "doneAt": "2026-01-26T13:00:00.000Z", "lead": -75, "kind": "late", "exp": 5, "src": "manual", "rep": true},
+    {"id": "c06", "itemId": "t03", "title": "シフト提出", "cat": "バイト", "due": "2026-01-23T08:00:00.000Z", "doneAt": "2026-01-29T22:00:00.000Z", "lead": 3, "kind": "ontime", "exp": 10, "src": "manual"},
+    {"id": "c07", "itemId": "", "title": "本日のクエスト全クリア", "cat": "", "due": "2026-01-30T14:59:00.000Z", "doneAt": "2026-01-30T12:00:00.000Z", "lead": 0, "kind": "bonus", "exp": 30, "src": "auto"},
+    {"id": "c08", "itemId": "t10", "title": "記事投稿", "cat": "サークルA", "due": "2026-01-30T14:59:00.000Z", "doneAt": "2026-01-30T14:59:00.000Z", "lead": 0, "kind": "auto", "exp": 0, "src": "auto", "rep": true}
+  ],
+  "expCarry": 120,
+  "updatedAt": "2026-01-29T22:00:00.000Z"
+}
