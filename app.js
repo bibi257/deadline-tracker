@@ -2201,7 +2201,7 @@ function renderSettings(){
   main.appendChild(s4);
 
   // 端末間の同期（Cloudflare の Worker / GitHub）。どちらかは、このアプリがどこから配信されているかで決まる
-  if(CF===null) cfDetect().then(function(){ if(view==="set") render(); }); // 保存先の判定が終わったら描き直す
+  if(CF===null) cfDetect().then(function(){ if(CF!==null && view==="set") render(); }); // 保存先の判定が終わったら描き直す
   var s5=CF===true ? h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+
     '<p>締切データをCloudflareに保存し、端末間で受け渡します。<b>同期する</b>でこの端末の内容を送り、<b>読み込む</b>で他の端末から送られた内容を取り込みます。毎朝のDiscord送信とメールも同じデータを見ています。</p>'+
     '<p style="font-size:12px;color:var(--ink-3)">アクセスキーを保存している端末では、この端末に未同期の変更が無いときに限り、Cloudflare上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
