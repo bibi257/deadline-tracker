@@ -1,5 +1,5 @@
 // 定時の処理（Cron）と、手動で試す API。送信先の Discord は、偽の fetch で受ける（実際には送らない）。
-import { test } from 'node:test';
+import { after, before, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import worker from '../../worker/src/index.js';
@@ -7,6 +7,14 @@ import { CRON_DIGEST, CRON_MAIL_EVENING, CRON_MAIL_MORNING, CRON_MAINTENANCE, re
 import { pruneSnapshots, runMaintenance } from '../../worker/src/maintenance.js';
 import { parseNow, fromJst } from '../../worker/src/time.js';
 import { createD1 } from '../support/d1Shim.js';
+
+// Worker は「未設定のため送りません」などをログに出す。テスト中に出力が混ざると、node --test の結果の受け渡しが
+// まれに壊れる（'Unable to deserialize cloned data' で、ファイルごと失敗する）ので、このファイルでは黙らせる
+before(() => {
+  mock.method(console, 'log', () => {});
+  mock.method(console, 'error', () => {});
+});
+after(() => mock.restoreAll());
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const KEY = 'k'.repeat(32);
