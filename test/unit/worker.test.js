@@ -172,3 +172,69 @@ test('OPTIONS（プリフライト）は認証なしで 204', async () => {
   assert.equal(res.status, 204);
   assert.match(res.headers.get('Access-Control-Allow-Headers'), /If-Match/);
 });
+
+// ---- 締切データから作る出力（feed・.ics） ----
+
+import { readFileSync } from 'node:fs';
+import { parseNow } from '../../worker/src/time.js';
+
+const FEED_TOKEN = 't'.repeat(32);
+const fixture = () => JSON.parse(readFileSync(new URL('../fixtures/data.json', import.meta.url), 'utf8'));
+const expected = (n) => readFileSync(new URL(`../expected/${n}`, import.meta.url), 'utf8');
+
+async function withData(extra = {}) {
+  const s = setup({ FEED_TOKEN, ...extra });
+  s.clock.t = parseNow('2026-01-30 06:47') / 1000;
+  const put = await s.call('PUT', '/api/data', { body: fixture(), headers: { 'If-Match': '0' } });
+  assert.equal(put.status, 201);
+  return s;
+}
+
+const get = (env, path, { ip = '1.1.1.1', key } = {}) => worker.fetch(new Request(`https://x.test${path}`, {
+  headers: { 'CF-Connecting-IP': ip, ...(key ? { Authorization: `Bearer ${key}` } : {}) },
+}), env);
+
+test('/ics/<トークン>.ics は、認証なしでメールなし・メモなしの .ics を返す（Python 版と同じ内容）', async () => {
+  const { env } = await withData();
+  const res = await get(env, `/ics/${FEED_TOKEN}.ics`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('Content-Type'), /^text\/calendar/);
+  assert.equal(await res.text(), expected('deadlines-nomemo.ics'));
+});
+
+test('/ics: 違うトークン・トークン未設定は 404、失敗が続くと 429。正しいトークンも止まる', async () => {
+  const { env } = await withData();
+  for (let i = 0; i < 10; i++) assert.equal((await get(env, `/ics/${'x'.repeat(32)}.ics`)).status, 404);
+  assert.equal((await get(env, `/ics/${'x'.repeat(32)}.ics`)).status, 429);
+  assert.equal((await get(env, `/ics/${FEED_TOKEN}.ics`)).status, 429);
+  assert.equal((await get(env, `/ics/${FEED_TOKEN}.ics`, { ip: '2.2.2.2' })).status, 200);
+  const none = await withData({ FEED_TOKEN: undefined });
+  assert.equal((await get(none.env, `/ics/${FEED_TOKEN}.ics`)).status, 404);
+  const short = await withData({ FEED_TOKEN: 'short' });
+  assert.equal((await get(short.env, '/ics/short.ics')).status, 404);
+});
+
+test('/ics: データが空・未完了が0件でも、空のカレンダーを返す', async () => {
+  const empty = setup({ FEED_TOKEN });
+  const r1 = await get(empty.env, `/ics/${FEED_TOKEN}.ics`);
+  assert.equal(r1.status, 200);
+  assert.match(await r1.text(), /^BEGIN:VCALENDAR\r\n.*END:VCALENDAR\r\n$/s);
+});
+
+test('/ics: トークンの前後の空白は無視する', async () => {
+  const { env } = await withData({ FEED_TOKEN: `\n${FEED_TOKEN} ` });
+  assert.equal((await get(env, `/ics/${FEED_TOKEN}.ics`)).status, 200);
+});
+
+test('/api/ics と /api/feed は認証が要り、Python 版と同じ内容を返す', async () => {
+  const { env, call } = await withData();
+  assert.equal((await get(env, '/api/ics')).status, 401);
+  assert.equal((await get(env, '/api/feed')).status, 401);
+  assert.equal(await (await get(env, '/api/ics', { key: KEY })).text(), expected('deadlines.ics'));
+  assert.equal(await (await get(env, '/api/ics?memo=0', { key: KEY })).text(), expected('deadlines-nomemo.ics'));
+  const f = await call('GET', '/api/feed');
+  assert.equal(`${JSON.stringify(f.body.feed, null, 2)}\n`, expected('feed.json'));
+  assert.deepEqual(f.body.warnings, []);
+  assert.equal((await call('GET', '/api/feed?days=abc')).status, 400);
+  assert.equal((await call('GET', '/api/feed?days=999')).status, 400);
+});
