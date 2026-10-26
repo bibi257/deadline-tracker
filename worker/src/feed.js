@@ -24,7 +24,7 @@ function entry(it, due, start) {
     e.start_date = dateStr(start);
     e.start_time = allDay ? null : timeStr(start);
   }
-  if (it.memo) e.memo = it.memo;
+  if (typeof it.memo === 'string' && it.memo) e.memo = it.memo; // 文字列でないメモは出さない（メール本文の replaceAll が落ちるため）
   return e;
 }
 

@@ -36,7 +36,7 @@ function line(e, today) {
   else if (today && e.due_date > today) extra = `（あと${diffDays(e.due_date, today)}日）`;
   let s = `- ${mark}${e.title} ［${e.category ?? ''}］ ${when}${extra}`;
   if (e.repeat) s += ` ／${e.repeat}`;
-  if (e.memo) s += `\n    メモ: ${e.memo.replaceAll('\n', ' ')}`;
+  if (typeof e.memo === 'string' && e.memo) s += `\n    メモ: ${e.memo.replaceAll('\n', ' ')}`;
   return s;
 }
 

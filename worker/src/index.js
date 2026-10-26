@@ -24,7 +24,9 @@ import { gmailConfig } from './mail.js';
 import { previewDigest, previewMail, runScheduled, sendDigest, sendMail } from './jobs.js';
 
 const MIN_KEY_LENGTH = 24;
-const MAX_DATA_CHARS = 1_000_000;
+// D1 の1行の上限は 2,000,000 バイト。日本語は1文字3バイトなので、文字数ではなくバイト数で測る（余裕を残した値）
+const MAX_DATA_BYTES = 1_900_000;
+const ITEM_STRING_KEYS = ['title', 'due', 'start', 'memo', 'cat', 'rep']; // 項目の中で、あれば文字列でなければならない値
 const SNAPSHOT_INTERVAL = 30 * 60; // 世代バックアップを残す間隔（秒）。自動同期の連続保存で増えすぎないようにする
 const SNAPSHOT_LIST_LIMIT = 200;
 const AUTH_MISS_MAX = 10; // 認証の失敗を許す回数（IP ごと）
@@ -149,12 +151,23 @@ function checkData(data) {
     if (!isObj(it) || typeof it.id !== 'string' || !it.id) throw new HttpError(400, 'id のない締切があります');
     if (ids.has(it.id)) throw new HttpError(400, `id が重複している締切があります（${it.id.slice(0, 20)}）`);
     ids.add(it.id);
+    // 壊れた型（数値・配列など）は、定時ジョブ（Discord・メール・.ics）が読めず落ちる原因になるため保存させない
+    for (const k of ITEM_STRING_KEYS) {
+      if (it[k] !== undefined && it[k] !== null && typeof it[k] !== 'string') {
+        throw new HttpError(400, `締切の ${k} は文字列にしてください（${it.id.slice(0, 20)}）`);
+      }
+    }
   }
+}
+
+/** 文字列の UTF-8 でのバイト数。3倍しても上限以下なら、数えずに済ませる（CPU 時間の節約） */
+function utf8Bytes(text, limit) {
+  return text.length * 3 <= limit ? text.length * 3 : new TextEncoder().encode(text).length;
 }
 
 async function readJson(request, maxChars) {
   const text = await request.text();
-  if (text.length > maxChars) throw new HttpError(413, 'データが大きすぎます');
+  if (text.length > maxChars) throw new HttpError(413, 'データが大きすぎます'); // 文字数はバイト数以下なので、これを超えれば確実に大きすぎる
   try {
     return JSON.parse(text || '{}');
   } catch {
@@ -178,10 +191,10 @@ async function putData(env, request, url) {
   const base = Number(ifMatch);
   if (!force && !Number.isInteger(base)) throw new HttpError(400, 'If-Match は整数にしてください');
 
-  const data = await readJson(request, MAX_DATA_CHARS + 1000);
+  const data = await readJson(request, MAX_DATA_BYTES + 1000);
   checkData(data);
   const text = JSON.stringify(data);
-  if (text.length > MAX_DATA_CHARS) throw new HttpError(413, '締切データが大きすぎます');
+  if (utf8Bytes(text, MAX_DATA_BYTES) > MAX_DATA_BYTES) throw new HttpError(413, '締切データが大きすぎます');
 
   const t = now(env);
   const cur = await env.DB.prepare('SELECT json, rev FROM docs WHERE id = ?').bind(DOC_ID).first();
