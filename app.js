@@ -1024,6 +1024,11 @@ function fitDiscord(text){
   return text.length>1900 ? text.slice(0,1880)+"\n…（件数が多いため省略しました）" : text;
 }
 
+/* Discordへ送る本文。タイトルに @everyone や @here があっても通知が飛ばないよう、メンションは一切許可しない */
+function discordPayload(text){
+  return JSON.stringify({content:text, allowed_mentions:{parse:[], users:[]}});
+}
+
 /* 自動通知は「この端末に保存」したWebhook URLだけを使う。保存されていないときは黙らず知らせる */
 var AUTO_NOTIFY_NEEDS_SAVE="Discordへの自動通知は、Webhook URLを「この端末に保存」したときだけ送られます";
 
@@ -1033,7 +1038,7 @@ function autoNotifyIfConfigured(){
   secretGet("dc-hook").then(function(hook){
     if(!hook){ toast(AUTO_NOTIFY_NEEDS_SAVE); return; }
     return fetch(hook,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({content:fitDiscord(buildDigestText())})});
+      body:discordPayload(fitDiscord(buildDigestText()))});
   }).catch(function(){});
 }
 
@@ -2673,7 +2678,7 @@ function sendToDiscord(s6,s5){
     return fetch(url,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({content:text})
+      body:discordPayload(text)
     })
     .then(function(res){
       if(res.ok||res.status===204){

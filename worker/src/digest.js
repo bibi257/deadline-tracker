@@ -243,11 +243,14 @@ export function splitForDiscord(text, limit = LIMIT) {
       : c));
 }
 
-/** Discord の Webhook に送る本文（メンションは指定ユーザーだけ許可する） */
+/**
+ * Discord の Webhook に送る本文。メンションは指定ユーザーだけ許可する。
+ * ユーザーID が空でも allowed_mentions は必ず付ける（付けないと、タイトルの @everyone・@here が本当に全員へ通知される）
+ */
 export function discordBodies(content, mentionUserId = '') {
   return splitForDiscord(content).map((c) => ({
     content: c,
-    ...(mentionUserId ? { allowed_mentions: { parse: [], users: [mentionUserId] } } : {}),
+    allowed_mentions: { parse: [], users: mentionUserId ? [mentionUserId] : [] },
   }));
 }
 

@@ -103,7 +103,7 @@ send_content(){  # $1=本文 $2=添付ファイルパス(省略可) $3=ファイ
   # Discordの本文上限は2000文字。件数が多い日は超えることがあるため切り詰める
   truncated=$(truncate_for_discord "$1")
   body=$(jq -n --argjson c "$truncated" --arg uid "$MENTION_USER_ID" '
-    {content: $c} + (if $uid == "" then {} else {allowed_mentions: {parse: [], users: [$uid]}} end)')
+    {content: $c, allowed_mentions: {parse: [], users: (if $uid == "" then [] else [$uid] end)}}')
   if [ -n "${2:-}" ]; then
     post_with_file "$body" "$2" "$3" "$4" || post_json "$body"
   else

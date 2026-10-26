@@ -30,10 +30,26 @@ test('長いデータは見出し単位で複数の投稿に分かれ、どれ�
   assert.match(bodies.map((b) => b.content).join('\n'), /件数が多いため省略しました/);
 });
 
-test('メンションは指定したユーザーだけ許可する。ユーザーIDが空なら allowed_mentions を付けない', () => {
+test('メンションは指定したユーザーだけ許可する。ユーザーIDが空でも allowed_mentions は必ず付く（誰にもメンションしない）', () => {
   const { content } = buildDigest({ items: [] }, { now: parseNow('2026-01-30 06:47'), ...cfg });
   for (const b of discordBodies(content, UID)) assert.deepEqual(b.allowed_mentions, { parse: [], users: [UID] });
-  for (const b of discordBodies(content, '')) assert.equal('allowed_mentions' in b, false);
+  for (const b of discordBodies(content, '')) assert.deepEqual(b.allowed_mentions, { parse: [], users: [] });
+});
+
+test('タイトルに @everyone・@here があっても、本文以外（allowed_mentions）では誰にもメンションされない', () => {
+  const items = [{ id: 'e1', title: '@everyone 全員集合 @here', due: '2026-02-01T03:00:00.000Z', cat: '課題' }];
+  const { content } = buildDigest({ items }, { now: parseNow('2026-01-30 06:47'), ...cfg });
+  assert.match(content, /@everyone/, '本文にはそのまま入る（表示は変えない）');
+  // ユーザーID の有無にかかわらず、全体メンション（parse）は空。メンションできるのは指定のユーザーだけ
+  for (const uid of ['', UID]) {
+    const bodies = discordBodies(content, uid);
+    assert.ok(bodies.length > 0);
+    for (const b of bodies) {
+      assert.deepEqual(b.allowed_mentions.parse, [], `uid=${uid}`);
+      assert.deepEqual(b.allowed_mentions.users, uid ? [uid] : []);
+      assert.equal('roles' in b.allowed_mentions, false);
+    }
+  }
 });
 
 test('締切が1件も無い日は「予定はありません」。メンションは付かない（bash 版と同じ）', () => {
