@@ -91,7 +91,8 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
       continue;
     }
     const it = { ...it0 };
-    if (typeof it.start === 'string' && !parsable(it.start)) delete it.start;
+    // start が文字列でない・読めないものは、開始なしとして扱う（壊れた値で ep() が落ちないように）
+    if (it.start != null && !parsable(it.start)) delete it.start;
     items.push(it);
   }
   if (broken.length) warnings.push(`締切日時が読めない項目を除外しました: ${broken.join('、')}`);

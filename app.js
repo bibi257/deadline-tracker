@@ -189,13 +189,16 @@ function sanitizeIncomingItems(rawItems){
     if(typeof it.id!=="string" || !it.id){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"idが無い、または不正", raw:it}); return; }
     if(typeof it.title!=="string" || !it.title.trim()){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"タイトルが無い、または不正", raw:it}); return; }
     var due=new Date(it.due);
-    if(isNaN(due.getTime())){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"締切日(due)が不正な日付：「"+it.due+"」", raw:it}); return; }
+    if(typeof it.due!=="string" || isNaN(due.getTime())){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"締切日(due)が不正な日付：「"+it.due+"」", raw:it}); return; }
     // ここから先は軽微な不正。項目ごと隔離せず、既定値に補正して使う
     var fixed=Object.assign({}, it);
     if(fixed.start){
       var s=new Date(fixed.start);
-      if(isNaN(s.getTime())) delete fixed.start; // 開始日が壊れていれば無かったことにする
+      if(typeof fixed.start!=="string" || isNaN(s.getTime())) delete fixed.start; // 開始日が壊れていれば無かったことにする
     }
+    if(fixed.memo!==undefined && typeof fixed.memo!=="string") delete fixed.memo; // 文字列でないメモ・カテゴリは、Worker（保存・メール・.ics）が読めないため補正する
+    if(fixed.cat!==undefined && typeof fixed.cat!=="string") fixed.cat="その他";
+    if(fixed.rep!==undefined && typeof fixed.rep!=="string") fixed.rep="none";
     if(fixed.rep && ["weekly","biweekly","monthly","yearly"].indexOf(fixed.rep)<0) fixed.rep="none";
     if(fixed.rep && fixed.rep!=="none" && typeof fixed.repCount!=="number") fixed.repCount=0;
     if(fixed.skip && !Array.isArray(fixed.skip)) delete fixed.skip;

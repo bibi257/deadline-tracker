@@ -12,7 +12,10 @@ const REMINDER_DEFAULT = [7, 1, 0];
 
 /** RFC5545 のテキスト用エスケープ */
 const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,')
-  .replace(/\r\n/g, '\\n').replace(/\n/g, '\\n');
+  .replace(/\r\n|\r|\n/g, '\\n'); // 単独の \r も改行として扱う（行の途中で切れて別の行を作れないように）
+
+/** UID に使える形にする。制御文字（改行など）を除く */
+const uidOf = (id) => `${String(id ?? 'x').replace(/[\u0000-\u001f\u007f]/g, '') || 'x'}@deadline-tracker`;
 
 /** コードポイントの UTF-8 でのバイト数（TextEncoder を文字ごとに呼ぶと、無料プランの CPU 時間を食うため計算で出す） */
 const utf8Len = (cp) => (cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4);
@@ -103,7 +106,7 @@ function vevent(it, dayHour, reminders, { now, noMemo }) {
   const begin = start ?? due - 30 * 60 * 1000;
   const end = due;
 
-  const lines = ['BEGIN:VEVENT', `UID:${it.id ?? 'x'}@deadline-tracker`, `DTSTAMP:${icsUtc(now)}`,
+  const lines = ['BEGIN:VEVENT', `UID:${uidOf(it.id)}`, `DTSTAMP:${icsUtc(now)}`,
     `SEQUENCE:${Number.isFinite(it.seq) ? Math.trunc(it.seq) : 0}`];
   const dueDate = dateStr(due);
   if (allDay) {
