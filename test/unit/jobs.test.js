@@ -297,3 +297,10 @@ test('POST /api/mail: 今すぐ送る。未設定は 400、Google の失敗は 5
   assert.equal(f.status, 502);
   assert.doesNotMatch(JSON.stringify(f.body), /REFRESH-TOKEN|CLIENT-SECRET/);
 });
+
+test('朝の Cron: DISCORD_USER_ID が未設定でも、送る本文すべてに allowed_mentions（誰もメンションしない）を付ける', async () => {
+  const { env, discord } = await setup({ DISCORD_USER_ID: '' });
+  await runScheduled(CRON_DIGEST, env, MORNING);
+  assert.ok(discord.calls.length > 0);
+  for (const c of discord.calls) assert.deepEqual(c.body.allowed_mentions, { parse: [], users: [] });
+});

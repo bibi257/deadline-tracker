@@ -943,7 +943,7 @@ function runAutoSync(cfg){
   var content=cfg.kind==="cf" ? "" : utf8ToBase64(JSON.stringify(payload,null,2));
 
   function put(sha){
-    if(cfg.kind==="cf") return cfPut(cfg,payload,sha);
+    if(cfg.kind==="cf") return cfPut(cfg,payload);
     var body={message:"締切データを自動同期（"+new Date().toLocaleString("ja-JP")+"）",content:content,branch:cfg.branch};
     if(sha) body.sha=sha;
     return fetch(cfg.api,{method:"PUT",
@@ -964,7 +964,19 @@ function runAutoSync(cfg){
     });
   }
   checkedPut()
-    .then(function(res){ if(res && res.status===409) return checkedPut(); return res; })
+    .then(function(res){
+      if(res && res.status===409){
+        if(cfg.kind==="cf"){ // 新しい版で自動的に送り直すと、他の端末の更新を消してしまう。止めて知らせる
+          if(!_autoSyncBlockedShown){
+            _autoSyncBlockedShown=true;
+            toast("Cloudflareに他の端末の更新があるため、自動同期を止めました。設定（右上の歯車）で読み込むか同期するかを選んでください");
+          }
+          return null;
+        }
+        return checkedPut();
+      }
+      return res;
+    })
     .then(function(res){
       if(res && res.ok){
         markSynced("自動同期");
@@ -1014,6 +1026,7 @@ function fetchRemoteState(cfg){
 /* GitHub上に、この端末が前回の同期・読み込み以降に知らない更新があるか */
 function remoteHasUnknownChanges(r){
   if(!r.sha) return false;                      // まだファイルが無い
+  if(r.cf) return cfKnownRev()!==r.sha;         // Cloudflare は版（rev）で比べる。一度も読み込み・同期していない端末は、既存の内容を知らない
   var known=store.get("gh-known-updatedAt");
   if(!known) return true;                       // 一度も同期していない端末は、既存の内容を知らない
   return !!(r.updatedAt && r.updatedAt>known);
@@ -1022,6 +1035,11 @@ function remoteHasUnknownChanges(r){
 /* Discordの本文上限は2000文字。超える分は切り詰める */
 function fitDiscord(text){
   return text.length>1900 ? text.slice(0,1880)+"\n…（件数が多いため省略しました）" : text;
+}
+
+/* Discordへ送る本文。タイトルに @everyone や @here があっても通知が飛ばないよう、メンションは一切許可しない */
+function discordPayload(text){
+  return JSON.stringify({content:text, allowed_mentions:{parse:[], users:[]}});
 }
 
 /* 自動通知は「この端末に保存」したWebhook URLだけを使う。保存されていないときは黙らず知らせる */
@@ -1033,7 +1051,7 @@ function autoNotifyIfConfigured(){
   secretGet("dc-hook").then(function(hook){
     if(!hook){ toast(AUTO_NOTIFY_NEEDS_SAVE); return; }
     return fetch(hook,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({content:fitDiscord(buildDigestText())})});
+      body:discordPayload(fitDiscord(buildDigestText()))});
   }).catch(function(){});
 }
 
@@ -2381,20 +2399,40 @@ function cfFetchData(cfg){
       return res.json();
     });
 }
+/* 最後に確認した保存先の版（rev）。読み込みに成功したとき・送信に成功したときに保存する。
+   「他の端末の更新があるか」は、端末の時計（updatedAt）ではなく、Worker が数える rev で判断する
+   （端末の時計がずれていても、古い状態から上書きしてしまわないため） */
+var CF_REV_KEY="cf-known-rev";
+function cfKnownRev(){ var v=store.get(CF_REV_KEY); return v ? String(v) : null; }
+function cfSaveRev(rev){ if(typeof rev==="number" && rev>=0) store.set(CF_REV_KEY, String(rev)); }
 /* 保存先の版（sha の代わりに rev）と更新時刻。まだ無ければ sha:null */
 function cfFetchState(cfg){
   return cfFetchData(cfg).then(function(j){
     var d=j.data;
-    return {sha:j.rev>0?String(j.rev):null, updatedAt:(d&&d.updatedAt)||null, itemCount:(d&&Array.isArray(d.items))?d.items.length:0};
+    return {cf:true, sha:j.rev>0?String(j.rev):null, updatedAt:(d&&d.updatedAt)||null, itemCount:(d&&Array.isArray(d.items))?d.items.length:0};
   });
 }
-/* 保存する。If-Match に読んだときの版を付け、違っていれば 409。上書き前の内容を必ず残したいときは backup=1 */
-function cfPut(cfg,payload,sha){
+/* 保存する。If-Match には、最後に確認した版（cf-known-rev）を付け、違っていれば 409（自動では再送しない）。
+   承知の上で上書きするときだけ、cfg.ifMatch に確認した版を入れる。上書き前の内容を必ず残したいときは cfg.backup=true（?backup=1）。
+   成功したら、応答の rev を「最後に確認した版」として保存する */
+function cfPut(cfg,payload){
   var q=cfg.backup?"?backup=1":"";
-  cfg.backup=false;
+  var ifMatch=(cfg.ifMatch!==undefined && cfg.ifMatch!==null) ? String(cfg.ifMatch) : (cfKnownRev()||"0");
+  cfg.backup=false; cfg.ifMatch=null;
   return fetch(cfg.api+q,{method:"PUT",
-    headers:Object.assign({"Content-Type":"application/json","If-Match":sha||"0"},cfg.headers),
-    body:JSON.stringify(payload)});
+    headers:Object.assign({"Content-Type":"application/json","If-Match":ifMatch},cfg.headers),
+    body:JSON.stringify(payload)})
+    .then(function(res){
+      if(!res.ok) return res;
+      return res.clone().json().then(function(j){ cfSaveRev(j&&j.rev); return res; }, function(){ return res; });
+    });
+}
+/* Cloudflare に、この端末がまだ読み込んでいない更新があるとき、どうするかを選ばせる。
+   true=バックアップ付きで上書き、false=上書きせず読み込みの手順へ */
+function cfAskOverwrite(){
+  return confirm("Cloudflare上に、この端末がまだ読み込んでいない新しい内容があります（他の端末で同期された可能性があります）。\n\n"+
+    "【OK】この端末の内容で上書きします。上書き前の内容は世代バックアップに保存します。\n"+
+    "【キャンセル】上書きせず、Cloudflareの内容を読み込む手順に進みます（そこでもう一度確認します）。");
 }
 
 /* 設定画面を開いていなくても使える、保存済みの同期設定の読み取り。保存先は Cloudflare か GitHub のどちらか。
@@ -2429,8 +2467,9 @@ function autoPullIfStale(){
 function autoPullWith(cfg){
   var rawHeaders=Object.assign({}, cfg.headers, {"Accept":"application/vnd.github.raw"});
   // 404やネットワーク不調などは静かに諦める(自動処理のため)
+  var cfRev=null; // Cloudflare から読んだ版
   var getText=cfg.kind==="cf"
-    ? cfFetchData(cfg).then(function(j){ return j.data ? JSON.stringify(j.data) : null; }).catch(function(){ return null; })
+    ? cfFetchData(cfg).then(function(j){ cfRev=j.rev; return j.data ? JSON.stringify(j.data) : null; }).catch(function(){ return null; })
     : fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(), {headers:rawHeaders, cache:"no-store"})
         .then(function(res){ return res.ok ? res.text() : null; });
   return getText
@@ -2448,8 +2487,15 @@ function autoPullWith(cfg){
       var localAt=db.updatedAt;
       if(!known || !localAt) return; // 一度も同期していない端末は対象外(必ず手動の一回目を経由させる)
 
-      var remoteChanged=(d.updatedAt>known);   // 前回同期時点からGitHub側が変わったか
-      var localChanged=(localAt!==known);       // 前回同期時点からこの端末で変更したか
+      var remoteChanged;                        // 前回同期時点から保存先が変わったか
+      if(cfg.kind==="cf"){
+        var knownRev=cfKnownRev();              // Cloudflare は版（rev）で比べる（他の端末の時計に左右されない）
+        if(!knownRev) return;                   // 版を一度も確認していない端末は、必ず手動の読み込み・同期を経由させる
+        remoteChanged=(String(cfRev)!==knownRev);
+      } else {
+        remoteChanged=(d.updatedAt>known);
+      }
+      var localChanged=(localAt!==known);       // 前回同期時点からこの端末で変更したか（自分の値同士の比較）
       if(!remoteChanged) return; // GitHub側に新しい内容が無ければ何もしない
 
       if(!localChanged){
@@ -2469,6 +2515,7 @@ function autoPullWith(cfg){
         markPulled();
         markSynced("自動反映");
         store.set("gh-known-updatedAt", d.updatedAt);
+        if(cfg.kind==="cf") cfSaveRev(cfRev);
         toast("他の端末で更新された内容を自動で反映しました"+(check.quarantined.length?"（"+check.quarantined.length+"件は隔離）":""));
       } else if(!_staleNoticeShown){
         // 双方が前回同期後に変更されている(競合) → 自動上書きはしない。一度だけ知らせる
@@ -2673,7 +2720,7 @@ function sendToDiscord(s6,s5){
     return fetch(url,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({content:text})
+      body:discordPayload(text)
     })
     .then(function(res){
       if(res.ok||res.status===204){
@@ -2775,6 +2822,7 @@ function pullFromGitHub(g,s5){
 function getRemoteText(cfg){
   if(cfg.kind==="cf"){
     return cfFetchData(cfg).then(function(j){
+      cfg.rev=j.rev; // 読んだ版。読み込みに成功したら「最後に確認した版」として保存する
       if(!j.data) throw new Error("Cloudflare にデータがまだありません。先に移行（取り込み）を済ませるか、別の端末で「同期する」を実行してください。");
       return JSON.stringify(j.data);
     });
@@ -2823,6 +2871,7 @@ function proceedPull(cfg,statusEl){
       markSynced("読み込み");
       markPulled();
       store.set("gh-known-updatedAt", db.updatedAt); // 保存先もこの時刻の内容と一致した
+      if(cfg.kind==="cf") cfSaveRev(cfg.rev);
       statusEl.textContent="読み込みました（"+n+"件）。"+(check.quarantined.length?(" "+check.quarantined.length+"件は形式が不正のため隔離しました（設定で確認できます）。"):"");
       toast(RN()+"から"+n+"件を読み込みました"+(check.quarantined.length?"（"+check.quarantined.length+"件は隔離）":""));
     })
@@ -2933,7 +2982,7 @@ function doSync(cfg,statusEl,backedUp){
   var content=cfg.kind==="cf" ? "" : utf8ToBase64(JSON.stringify(payload,null,2));
 
   function put(sha){
-    if(cfg.kind==="cf") return cfPut(cfg,payload,sha);
+    if(cfg.kind==="cf") return cfPut(cfg,payload);
     var body={ message:"締切データを同期（"+new Date().toLocaleString("ja-JP")+"）",
                content:content, branch:branch };
     if(sha) body.sha=sha;
@@ -2947,6 +2996,11 @@ function doSync(cfg,statusEl,backedUp){
   fetchRemoteState(cfg)
     .then(function(r){
       if(backedUp || !remoteHasUnknownChanges(r)) return r.sha;
+      if(cfg.kind==="cf"){
+        if(!cfAskOverwrite()) throw new Error("__sync_to_pull__"); // 上書きしない → 読み込みの手順へ
+        cfg.backup=true; cfg.ifMatch=r.sha; // 承知の上で上書きする。対象は、いま確認した版
+        return r.sha;
+      }
       var ok=confirm(
         RN()+"上に、この端末がまだ読み込んでいない新しい内容があります（他の端末で同期された可能性があります）。\n\n"+
         "このまま同期すると、その内容はこの端末の内容で上書きされます。\n"+
@@ -2958,7 +3012,15 @@ function doSync(cfg,statusEl,backedUp){
     })
     .then(put)
     .then(function(res){
-      if(res.status===409){ // 版が競合したら、他端末の更新を確認し直してから1度だけやり直す（自動同期と同じ）
+      if(res.status===409){
+        if(cfg.kind==="cf"){ // Cloudflare は、新しい版で自動的に送り直さない（他の端末の更新を消してしまうため）。利用者に選ばせる
+          return fetchRemoteState(cfg).then(function(r){
+            if(!cfAskOverwrite()) throw new Error("__sync_to_pull__");
+            cfg.backup=true; cfg.ifMatch=r.sha||"0";
+            return put(r.sha);
+          });
+        }
+        // 版が競合したら、他端末の更新を確認し直してから1度だけやり直す（自動同期と同じ）
         return fetchRemoteState(cfg).then(function(r){
           if(remoteHasUnknownChanges(r)) throw new Error("__sync_cancelled__");
           return put(r.sha);
@@ -2977,6 +3039,7 @@ function doSync(cfg,statusEl,backedUp){
     .catch(function(err){
       var m=err.message||"";
       if(m==="__sync_cancelled__"){ statusEl.textContent="同期を中止しました。「"+RN()+"から読み込む」で他の端末の内容を取り込めます。"; return; }
+      if(m==="__sync_to_pull__"){ statusEl.textContent="上書きせず、読み込みに進みます。"; proceedPull(cfg,statusEl); return; }
       var hint=ghHint(m);
       statusEl.textContent="同期に失敗しました："+m+(hint?"　→ "+hint:"");
     });
