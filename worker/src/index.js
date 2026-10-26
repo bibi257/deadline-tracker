@@ -40,6 +40,9 @@ const SCHEMA = [
 
 const DOC_ID = 'main';
 
+// どの応答にも付ける。Content-Type と違う種類として解釈させない（ブラウザの推測を止める）
+const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff' };
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS',
@@ -60,12 +63,12 @@ const now = (env) => (env.NOW ? env.NOW() : Math.floor(Date.now() / 1000));
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...CORS },
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS, ...CORS },
   });
 }
 
 function text(body, contentType, status = 200, extra = {}) {
-  return new Response(body, { status, headers: { 'Content-Type': contentType, 'Cache-Control': 'no-store', ...extra } });
+  return new Response(body, { status, headers: { 'Content-Type': contentType, 'Cache-Control': 'no-store', ...SECURITY_HEADERS, ...extra } });
 }
 
 // ---- 認証 ----
@@ -376,7 +379,7 @@ export default {
     if (!url.pathname.startsWith('/api/')) {
       return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 });
     }
-    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...SECURITY_HEADERS, ...CORS } });
     try {
       await initDb(env.DB);
       return await route(env, request);
