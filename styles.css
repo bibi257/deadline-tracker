@@ -614,6 +614,11 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
   .wrap{max-width:1040px}
   /* 今週・日表示・設定は縦に読む画面なので、これまでの幅のまま */
   body[data-view="week"] #main,body[data-view="day"] #main,body[data-view="set"] #main{max-width:720px}
+  /* 幅を絞った画面は、中央ではなく、上の見出し・タブと同じ左端にそろえる（.wrap の左端 = (100% - 1040px) / 2） */
+  body[data-view="week"] #main,body[data-view="day"] #main,body[data-view="set"] #main,
+  body[data-cols="1"][data-view="list"] #main,body[data-cols="1"][data-view="over"] #main,
+  body[data-cols="1"][data-view="rep"] #main,body[data-cols="1"][data-view="done"] #main{
+    margin-left:max(0px,calc((100% - 1040px) / 2));margin-right:0}
   #listBody,body[data-view="over"] #main,body[data-view="rep"] #main,body[data-view="done"] #main{
     display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:12px;align-items:start}
   #listBody>:not(.card):not(.card-pair),
