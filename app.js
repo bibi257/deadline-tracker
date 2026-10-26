@@ -2266,6 +2266,20 @@ function renderSettings(){
   bPull.onclick=function(){ pullFromGitHub(g,s5); };
   if(s5.querySelector(".row")) s5.querySelector(".row").append(bSync,bPull);
   main.appendChild(s5);
+  // Cloudflare: まだ何も無い端末なら、アクセスキーを入れた時点で自動で読み込む（ボタンを押さなくてよい）。
+  // 締切がある端末や、同期したことがある端末では、取り違えを防ぐため自動では読み込まない（ボタンで確認つきで読み込む）
+  if(CF===true){
+    var _keyPulled="";
+    var autoPullOnKey=function(){
+      var k=g("ghToken").value.trim();
+      if(k.length<24 || k===_keyPulled) return; // 入力の途中や、同じキーでの重複は何もしない
+      if(db.items.length || store.get("gh-known-updatedAt")) return;
+      _keyPulled=k;
+      pullFromGitHub(g,s5);
+    };
+    g("ghToken").addEventListener("change",autoPullOnKey);
+    g("ghToken").addEventListener("paste",function(){ setTimeout(autoPullOnKey,0); });
+  }
 
   // Discordへ今すぐ送る
   var s6=h('<div class="sec"><h3>Discordへ今すぐ送る</h3>'+
