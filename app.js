@@ -1837,6 +1837,16 @@ function renderDone(){
 
 /* 週の負荷の閾値。週次レビューの負荷予報（deadline-data の send_digest.sh）と同じ値にそろえる */
 var LOAD_WARN=6, CAT_WARN=3;
+/* 負荷の集計：日ごとの「締切」の一覧。完了済みと、自動完了の予定（締切を過ぎると自動で完了になる予定）は数えない */
+function buildLoadByDay(items){
+  var loadByDay={};
+  items.forEach(function(i){
+    if(i.done || i.autoComplete) return;
+    var dk=toLocalISO(new Date(i.due));
+    (loadByDay[dk]=loadByDay[dk]||[]).push(i);
+  });
+  return loadByDay;
+}
 /* カレンダー右端の「週」の列：その週の未完了の件数。多い週は ⚠ を付け、内訳を title に出す */
 function weekCell(n, cats){
   var names=Object.keys(cats).sort(function(a,b){ return cats[b]-cats[a]; });
@@ -1899,14 +1909,9 @@ function renderCal(){
     });
   }
 
-  // 負荷：その日が締切の未完了の件数（定期予定の回も含む。帯の表示設定には左右されない）。
+  // 負荷：その日が締切の未完了の件数（定期予定の回も含む。自動完了の予定は数えない。帯の表示設定には左右されない）。
   // 週の合計と1カテゴリの件数は、週次レビューの負荷予報（send_digest.sh の LOAD_WARN / CAT_WARN）と同じ閾値で ⚠ を付ける
-  var loadByDay={};
-  items.forEach(function(i){
-    if(i.done) return;
-    var dk=toLocalISO(new Date(i.due));
-    (loadByDay[dk]=loadByDay[dk]||[]).push(i);
-  });
+  var loadByDay=buildLoadByDay(items);
   var wkN=0, wkCats=Object.create(null);
 
   for(var k=0;k<42;k++){
@@ -1936,7 +1941,7 @@ function renderCal(){
   }
   cm.appendChild(grid);
   cm.appendChild(h('<p class="cal-legend"><span class="lg-sw load1"></span><span class="lg-sw load2"></span><span class="lg-sw load3"></span>'+
-    'マスの濃さはその日の未完了の締切の数（1・2・3件以上）。右端は週の件数で、'+LOAD_WARN+'件以上か1カテゴリ'+CAT_WARN+'件以上の週に ⚠</p>'));
+    'マスの濃さはその日の未完了の締切の数（1・2・3件以上。自動完了の予定は数えません）。右端は週の件数で、'+LOAD_WARN+'件以上か1カテゴリ'+CAT_WARN+'件以上の週に ⚠</p>'));
 
   if(selDay){
     var sel=hitsOn(selDay).sort(sortByDue);
