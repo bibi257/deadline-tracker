@@ -98,8 +98,10 @@ export function buildMailBody(feed, target) {
 
   const out = [`${jp(target)}の締切（締切トラッカーより自動送信）`, ''];
   out.push(...prioritySection(items, target));
+  // 件数には、自動完了の予定（締切を過ぎると自動で完了になる）を数えない。あれば「＋自動完了N件」と分けて書く
   const section = (title, rows) => {
-    out.push(`■ ${title}（${rows.length}件）`);
+    const auto = rows.filter((e) => e.auto_complete === true).length;
+    out.push(`■ ${title}（${auto ? `${rows.length - auto}件＋自動完了${auto}件` : `${rows.length}件`}）`);
     if (rows.length) out.push(...rows.map((e) => line(e, target)));
     else out.push('- なし');
     out.push('');
