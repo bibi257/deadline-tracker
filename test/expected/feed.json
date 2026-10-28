@@ -40,7 +40,8 @@
       "due_time": null,
       "category": "サークルA",
       "recurring": true,
-      "repeat": "隔週"
+      "repeat": "隔週",
+      "auto_complete": true
     },
     {
       "title": "動画サブスク",
@@ -49,6 +50,7 @@
       "category": "サブスクなど",
       "recurring": true,
       "repeat": "毎月",
+      "auto_complete": true,
       "memo": "更新\n¥1,980"
     },
     {
@@ -90,7 +92,8 @@
       "due_time": null,
       "category": "サークルA",
       "recurring": true,
-      "repeat": "隔週"
+      "repeat": "隔週",
+      "auto_complete": true
     }
   ]
 }

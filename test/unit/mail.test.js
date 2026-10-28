@@ -12,7 +12,7 @@ const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const feed = JSON.parse(read('expected/feed.json'));
 const CFG = { clientId: 'cid-123', clientSecret: 'CLIENT-SECRET-xyz', refreshToken: 'REFRESH-TOKEN-abc', to: 'me@example.com', from: 'me@example.com' };
 
-test('メール本文が Python 版と1文字まで同じ', () => {
+test('メール本文が Python 版と同じ（見出しの件数だけ、自動完了を数えない形に変えてある）', () => {
   const target = '2026-01-30';
   assert.equal(`件名: ${subjectFor(target)}\n${buildMailBody(feed, target)}\n`, read('expected/feed-mail.txt'));
 });
@@ -151,4 +151,19 @@ test('ずっと失敗するときは、つながらなかったことだけを�
   const e = await sendGmail(CFG, { subject: 's', body: 'b', nowMs: 0, messageId: 'm' }, { fetchFn: g.fetchFn, ...quick }).catch((x) => x);
   assert.match(e.message, /接続できませんでした/);
   assert.doesNotMatch(e.message, /CLIENT-SECRET/);
+});
+
+test('メール: 自動完了の予定は、見出しの件数に数えない。一覧には出し、「＋自動完了N件」と分けて書く', () => {
+  const e = (title, due, extra = {}) => ({ title, due_date: due, due_time: null, category: '課題', recurring: false, ...extra });
+  const body = buildMailBody({ items: [
+    e('今日の課題', '2026-02-02'),
+    e('英語演習', '2026-02-02', { auto_complete: true }),
+    e('大学休み', '2026-02-05', { auto_complete: true }),
+    e('提出物', '2026-02-04'),
+  ] }, '2026-02-02');
+  assert.match(body, /■ 今日が締切（1件＋自動完了1件）/);
+  assert.match(body, /■ 今後7日間の締切（1件＋自動完了1件）/);
+  assert.match(body, /■ 期限切れ（0件）/);
+  assert.match(body, /英語演習/);
+  assert.match(body, /大学休み/);
 });

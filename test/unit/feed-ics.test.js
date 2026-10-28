@@ -12,7 +12,7 @@ const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const data = JSON.parse(read('fixtures/data.json'));
 const MORNING = parseNow('2026-01-30 06:47');
 
-test('feed.json が Python 版と1文字まで同じ', () => {
+test('feed.json が Python 版と同じ（自動完了の予定にだけ auto_complete: true を足してある）', () => {
   const { feed } = buildFeed(data, { now: MORNING });
   assert.equal(feedJson(feed), read('expected/feed.json'));
 });

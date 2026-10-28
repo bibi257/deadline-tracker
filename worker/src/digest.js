@@ -18,6 +18,8 @@ const LATER_MAX = 10;
 
 /** jq の「a // b」（null・false のときだけ代わりの値） */
 const alt = (v, d) => (v === null || v === undefined || v === false ? d : v);
+/** 見出しの件数。自動完了の予定（締切を過ぎると自動で完了になる）は件数に数えず、あれば「＋自動完了N件」と分けて書く */
+const count = (total, auto) => (auto ? `${total - auto}件＋自動完了${auto}件` : `${total}件`);
 /** 1行1件で扱うため、改行と区切り文字を空白にする */
 const clean = (v) => String(v).replace(/[\n\r\u001f]/g, ' ');
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -108,6 +110,7 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
     start: typeof r.it.start === 'string' ? r.it.start : '',
     allDay: alt(r.it.allDay, false) === true,
     id: clean(alt(r.it.id, '')),
+    auto: alt(r.it.autoComplete, false) === true, // 自動完了の予定は、見出しの件数に数えない（一覧には出す）
   });
 
   // 未完了かつ「期限切れ」または「N日以内」。繰り返しは「定期予定」で扱うが、自動完了でなく締切が過ぎていれば「期限切れ」にも入れる
@@ -152,7 +155,7 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
   });
   let laterSection = '';
   if (laterLines) {
-    laterSection = `\n## 🗓️ それ以降の予定（${laterRows.length}件）\n${laterLines}`;
+    laterSection = `\n## 🗓️ それ以降の予定（${count(laterRows.length, laterRows.filter((r) => r.auto).length)}）\n${laterLines}`;
     if (laterRows.length > LATER_MAX) laterSection += `-# ほか ${laterRows.length - LATER_MAX} 件\n`;
   }
 
@@ -177,6 +180,9 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
   let stale = 0;
   let todayCount = 0;
   let soon = 0;
+  let overdueAuto = 0;
+  let todayAuto = 0;
+  let soonAuto = 0;
   for (const r of main) {
     let jdate = fmtWhen(Date.parse(r.due), r.allDay);
     if (r.start) {
@@ -192,9 +198,10 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
     if (r.epoch < nowS) {
       overLines += entry;
       overdue++;
-      // 7日以上放置されているものは別途警告する
+      if (r.auto) overdueAuto++;
+      // 7日以上放置されているものは別途警告する（自動完了の予定は、放置ではないので警告しない）
       const elapsed = -daysFromToday(r.epoch);
-      if (elapsed >= 7) {
+      if (elapsed >= 7 && !r.auto) {
         stale++;
         if (stale <= 3) staleLines += `- ${mark}**${r.title}**　\`${r.cat}\`\n  ${fmtWhen(Date.parse(r.due), r.allDay)} 締切 ── ${elapsed}日経過\n`;
       }
@@ -202,9 +209,11 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
       // 「今日が締切」は締切日で判断する（期間つきで今日始まり・後日締切のものは入れない）
       todayLines += entry;
       todayCount++;
+      if (r.auto) todayAuto++;
     } else {
       soonLines += entry;
       soon++;
+      if (r.auto) soonAuto++;
     }
   }
 
@@ -215,10 +224,10 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
     if (stale > 3) content += `-# ほか ${stale - 3} 件\n`;
     content += '-# 完了か削除をおすすめします\n';
   }
-  if (overdue > 0) content += `\n## 🔴 期限切れ（${overdue}件）\n${overLines}`;
-  if (todayCount > 0) content += `\n## ⚡ 今日が締切（${todayCount}件）\n${todayLines}`;
+  if (overdue > 0) content += `\n## 🔴 期限切れ（${count(overdue, overdueAuto)}）\n${overLines}`;
+  if (todayCount > 0) content += `\n## ⚡ 今日が締切（${count(todayCount, todayAuto)}）\n${todayLines}`;
   content += `\n## ⏳ ${windowDays}日以内の締切`;
-  content += soon > 0 ? `（${soon}件）\n${soonLines}` : '\n-# 予定はありません\n';
+  content += soon > 0 ? `（${count(soon, soonAuto)}）\n${soonLines}` : '\n-# 予定はありません\n';
   content += `${repSection}${laterSection}${linkSection}`;
   return { content, warnings };
 }

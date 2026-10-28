@@ -137,3 +137,40 @@ test('postDiscord: エラー文に Webhook の URL（トークン）を含めな
   assert.ok(e instanceof Error);
   assert.doesNotMatch(e.message, /SECRET-TOKEN|webhooks/);
 });
+
+// ---- 自動完了の予定は、見出しの件数に数えない ----
+const AUTO_NOW = parseNow('2026-01-30 06:47'); // 2026-01-29T21:47Z
+const mk = (id, due, extra = {}) => ({ id, title: `予定${id}`, due, cat: '課題', ...extra });
+const digestOf = (items) => buildDigest({ items }, { now: AUTO_NOW, ...cfg }).content;
+
+test('自動完了の予定は、今日が締切・7日以内・それ以降の件数に数えない。一覧には出し、「＋自動完了N件」と分けて書く', () => {
+  const content = digestOf([
+    mk('t1', '2026-01-30T03:00:00.000Z'),
+    mk('t2', '2026-01-30T05:00:00.000Z', { autoComplete: true }),
+    mk('s1', '2026-02-02T03:00:00.000Z'),
+    mk('s2', '2026-02-03T03:00:00.000Z', { autoComplete: true }),
+    mk('s3', '2026-02-04T03:00:00.000Z', { autoComplete: true }),
+    mk('l1', '2026-03-01T03:00:00.000Z', { autoComplete: true }),
+    mk('l2', '2026-03-02T03:00:00.000Z'),
+  ]);
+  assert.match(content, /## ⚡ 今日が締切（1件＋自動完了1件）/);
+  assert.match(content, /## ⏳ 7日以内の締切（1件＋自動完了2件）/);
+  assert.match(content, /## 🗓️ それ以降の予定（1件＋自動完了1件）/);
+  for (const t of ['予定t2', '予定s2', '予定l1']) assert.match(content, new RegExp(t), '一覧には出る');
+});
+
+test('自動完了が無ければ、従来どおりの「N件」。自動完了だけなら「0件＋自動完了N件」', () => {
+  assert.match(digestOf([mk('s1', '2026-02-02T03:00:00.000Z')]), /## ⏳ 7日以内の締切（1件）/);
+  assert.match(digestOf([mk('s1', '2026-02-02T03:00:00.000Z', { autoComplete: true })]), /## ⏳ 7日以内の締切（0件＋自動完了1件）/);
+});
+
+test('期限切れ: 自動完了の予定は件数に数えず、「長く残っています」の警告にも入れない', () => {
+  const content = digestOf([
+    mk('o1', '2026-01-28T03:00:00.000Z'),
+    mk('o2', '2026-01-10T03:00:00.000Z', { autoComplete: true }), // 20日前: 自動完了なので放置ではない
+    mk('o3', '2026-01-09T03:00:00.000Z'), // 21日前: 放置
+  ]);
+  assert.match(content, /## 🔴 期限切れ（2件＋自動完了1件）/);
+  assert.match(content, /## ⚠️ 長く残っています（1件）/);
+  assert.doesNotMatch(content.split('## 🔴')[0], /予定o2/, '警告の欄に自動完了を入れない');
+});

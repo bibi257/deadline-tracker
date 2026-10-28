@@ -24,6 +24,7 @@ function entry(it, due, start) {
     e.start_date = dateStr(start);
     e.start_time = allDay ? null : timeStr(start);
   }
+  if (it.autoComplete === true) e.auto_complete = true; // 自動完了の予定（メールの件数に数えない）
   if (typeof it.memo === 'string' && it.memo) e.memo = it.memo; // 文字列でないメモは出さない（メール本文の replaceAll が落ちるため）
   return e;
 }
