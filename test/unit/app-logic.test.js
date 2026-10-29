@@ -1,0 +1,426 @@
+// app.js の日付・繰り返し・入力解析・完了の計算（残り日数・EXP・.ics）。コードは変えず、境目のケースを表にして確かめる。
+// 画面まわりに依存しない関数だけを test/support/appFns.js で取り出して、「今」を固定した vm の中で動かす。
+// 月末・うるう年・取りやめた回・回数指定は、間違えやすい境目。Worker の .ics（buildIcs）とのずれも、ここで気づけるようにする。
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { buildIcs } from '../../worker/src/ics.js';
+import { parseNow } from '../../worker/src/time.js';
+import { extractFunction, loadAppFunctions } from '../support/appFns.js';
+
+process.env.TZ = 'Asia/Tokyo'; // app.js は端末の時刻（ローカル）で計算する。日本時間に固定する
+
+const FNS = [
+  'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText',
+  'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
+  'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
+  'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
+];
+const VARS = ['DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
+
+/** 「今」を固定した Date（引数なしの new Date() と Date.now() だけが固定される） */
+function fixedDate(nowMs) {
+  return class FixedDate extends Date {
+    constructor(...a) { if (a.length === 0) super(nowMs); else super(...a); }
+    static now() { return nowMs; }
+  };
+}
+
+/** app.js の関数を、今（JST の "YYYY-MM-DD HH:MM"）と db を指定して読み込む */
+function load(now = '2026-01-30 12:00', dbExtra = {}) {
+  const db = {
+    items: [], templates: [], trash: [], completions: [], expCarry: 0, categories: ['仕事', 'バイト', '課題', 'その他'],
+    catReminders: {}, settings: { dayHour: 9, theme: 'auto' }, ...dbExtra,
+  };
+  const app = loadAppFunctions(FNS, { Date: fixedDate(parseNow(now)), db }, VARS);
+  return { app, db, now: new Date(parseNow(now)) };
+}
+/** 端末の時刻（JST）での ISO 文字列。app.js は締切を toISOString() で持つ */
+const iso = (y, m, d, h = 0, mi = 0) => new Date(y, m - 1, d, h, mi).toISOString();
+/** vm の中で作られた値（配列・オブジェクト）を、deepEqual で比べられる形にする */
+const plain = (x) => JSON.parse(JSON.stringify(x));
+const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const keyTime = (d) => `${key(d)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+// ---- 取り出しの仕組み ----
+
+test('取り出しの仕組み: 1行で書かれた関数も、そこで終わる（後ろの関数まで巻き込まない）。見つからなければ失敗する', () => {
+  const code = extractFunction('esc');
+  assert.match(code, /^function esc\(s\)\{.*\}$/s);
+  assert.equal(code.split('\n').length, 1, '1行');
+  assert.throws(() => extractFunction('noSuchFunction'), /見つかりません/);
+  // 取り出した範囲は、読み込むとちょうどその関数が1つ定義される
+  const { app } = load();
+  for (const n of FNS) assert.equal(typeof app[n], 'function', n);
+});
+
+// ---- 繰り返しの次の回 ----
+
+test('nextOccurrence: 週・隔週は日数どおり。月・年は基準日を保ち、その月に無い日は月末に丸める（1/31 の翌月が 3/3 にならない）', () => {
+  const { app } = load();
+  const t = (d, rep, anchor) => keyTime(app.nextOccurrence(d, rep, anchor));
+  const d = (y, m, day, h = 17, mi = 30) => new Date(y, m - 1, day, h, mi);
+  const table = [
+    // [起点, 繰り返し, 基準日, 期待]
+    [d(2026, 1, 30), 'weekly', undefined, '2026-02-06 17:30'],
+    [d(2026, 1, 30), 'biweekly', undefined, '2026-02-13 17:30'],
+    [d(2026, 12, 28), 'weekly', undefined, '2027-01-04 17:30'], // 年またぎ
+    [d(2026, 1, 31), 'monthly', 31, '2026-02-28 17:30'],       // 2月は月末
+    [d(2026, 2, 28), 'monthly', 31, '2026-03-31 17:30'],       // 基準日 31 に戻る
+    [d(2026, 3, 31), 'monthly', 31, '2026-04-30 17:30'],
+    [d(2028, 1, 31), 'monthly', 31, '2028-02-29 17:30'],       // うるう年の2月
+    [d(2026, 1, 30), 'monthly', 30, '2026-02-28 17:30'],
+    [d(2026, 1, 31), 'monthly', undefined, '2026-02-28 17:30'], // 基準日が無ければ起点の日
+    [d(2026, 12, 31), 'monthly', 31, '2027-01-31 17:30'],      // 年またぎ
+    [d(2028, 2, 29), 'yearly', 29, '2029-02-28 17:30'],        // うるう日の翌年は 2/28
+    [d(2029, 2, 28), 'yearly', 29, '2030-02-28 17:30'],
+    [d(2031, 2, 28), 'yearly', 29, '2032-02-29 17:30'],        // 次のうるう年は 2/29 に戻る
+    [d(2026, 5, 15, 0, 0), 'yearly', undefined, '2027-05-15 00:00'],
+  ];
+  for (const [from, rep, anchor, want] of table) assert.equal(t(from, rep, anchor), want, `${keyTime(from)} ${rep} 基準${anchor}`);
+  assert.equal(keyTime(app.nextOccurrence(d(2026, 1, 30), 'none')), '2026-01-30 17:30', '繰り返しでなければ動かさない');
+});
+
+test('anchorDayOf: 基準日（repDay）があればそれ、無ければ締切の日', () => {
+  const { app } = load();
+  assert.equal(app.anchorDayOf({ due: iso(2026, 2, 28, 10), repDay: 31 }), 31);
+  assert.equal(app.anchorDayOf({ due: iso(2026, 2, 28, 10) }), 28);
+});
+
+test('advanceRepeating: 1回分進める。月末の丸めのあとも基準日（repDay）で元の日に戻れる。seq が1つ増える', () => {
+  const { app } = load();
+  const it = { id: 'm', rep: 'monthly', due: iso(2026, 1, 31, 17, 0), seq: 0 };
+  assert.equal(app.advanceRepeating(it), true);
+  assert.equal(keyTime(new Date(it.due)), '2026-02-28 17:00');
+  assert.equal(it.repDay, 31, '基準日を覚える');
+  assert.equal(it.seq, 1);
+  app.advanceRepeating(it);
+  assert.equal(keyTime(new Date(it.due)), '2026-03-31 17:00', '基準日 31 に戻る');
+  assert.equal(it.seq, 2);
+  // 週次は基準日を持たない
+  const w = { id: 'w', rep: 'weekly', due: iso(2026, 1, 30, 9, 0) };
+  app.advanceRepeating(w);
+  assert.equal(w.repDay, undefined);
+  assert.equal(keyTime(new Date(w.due)), '2026-02-06 09:00');
+});
+
+test('advanceRepeating: 取りやめた回（skip）は飛ばす。続けて取りやめていれば、その先まで進む', () => {
+  const { app } = load();
+  const it = { id: 'w', rep: 'weekly', due: iso(2026, 1, 30, 9, 0), skip: ['2026-02-06', '2026-02-13'] };
+  app.advanceRepeating(it);
+  assert.equal(keyTime(new Date(it.due)), '2026-02-20 09:00');
+  assert.equal(it.seq, 1, '飛ばしても seq は1回分だけ増える');
+});
+
+test('advanceRepeating: 回数指定（repCount は今の回を含む残り回数）。最終回は false を返し、何も変えない。取りやめた回も回数を使う', () => {
+  const { app } = load();
+  const it = { id: 'c', rep: 'weekly', due: iso(2026, 1, 30, 9, 0), repCount: 3 };
+  assert.equal(app.advanceRepeating(it), true);
+  assert.equal(it.repCount, 2);
+  assert.equal(app.advanceRepeating(it), true);
+  assert.equal(it.repCount, 1);
+  const before = plain(it);
+  assert.equal(app.advanceRepeating(it), false, '残り1回＝今の回が最終回');
+  assert.deepEqual(plain(it), before, '最終回では何も変えない');
+  // 取りやめた回も1回分として数える
+  const s = { id: 's', rep: 'weekly', due: iso(2026, 1, 30, 9, 0), repCount: 3, skip: ['2026-02-06'] };
+  assert.equal(app.advanceRepeating(s), true);
+  assert.equal(keyTime(new Date(s.due)), '2026-02-13 09:00');
+  assert.equal(s.repCount, 1, '2回分進んだので、残りは3 → 1');
+  // 取りやめで回数を使い切るなら、進めない
+  const e = { id: 'e', rep: 'weekly', due: iso(2026, 1, 30, 9, 0), repCount: 2, skip: ['2026-02-06'] };
+  assert.equal(app.advanceRepeating(e), false);
+});
+
+test('advanceRepeating: 期間つき（start）は、開始と締切の間隔を保って進む', () => {
+  const { app } = load();
+  const it = { id: 'p', rep: 'weekly', start: iso(2026, 1, 30, 9, 0), due: iso(2026, 1, 30, 17, 0) };
+  app.advanceRepeating(it);
+  assert.equal(keyTime(new Date(it.start)), '2026-02-06 09:00');
+  assert.equal(keyTime(new Date(it.due)), '2026-02-06 17:00');
+});
+
+// ---- 展開（カレンダー表示用） ----
+
+test('expandOccurrences: 繰り返しでなければそのまま。週次は範囲内の回だけ、複製には isExpanded が付く（元は変えない）', () => {
+  const { app, now } = load();
+  const once = { id: 'o', due: iso(2026, 2, 1, 10) };
+  assert.deepEqual(plain(app.expandOccurrences(once, now, new Date(2026, 5, 1))), [once]);
+  const it = { id: 'w', rep: 'weekly', due: iso(2026, 1, 30, 17, 0), title: 't' };
+  const out = app.expandOccurrences(it, new Date(2026, 1, 1), new Date(2026, 1, 28, 23, 59));
+  assert.deepEqual(Array.from(out, (o) => keyTime(new Date(o.due))), ['2026-02-06 17:00', '2026-02-13 17:00', '2026-02-20 17:00', '2026-02-27 17:00']);
+  assert.ok(out.every((o) => o.isExpanded === true && o.title === 't'));
+  assert.equal(it.due, iso(2026, 1, 30, 17, 0), '元のデータは変えない');
+  assert.equal(it.isExpanded, undefined);
+});
+
+test('expandOccurrences: 古い締切の無期限の繰り返しも、範囲の手前まで送って数える（60回分が過去で尽きない）', () => {
+  const { app } = load();
+  const it = { id: 'old', rep: 'weekly', due: iso(2020, 1, 3, 9, 0) }; // 6年前から放置
+  const out = app.expandOccurrences(it, new Date(2026, 1, 1), new Date(2026, 1, 28, 23, 59));
+  assert.deepEqual(Array.from(out, (o) => key(new Date(o.due))), ['2026-02-06', '2026-02-13', '2026-02-20', '2026-02-27']);
+});
+
+test('expandOccurrences: 回数指定の上限。無期限でも60回で打ち切る。取りやめた回は出ない。月末の丸め・期間つきの start も保つ', () => {
+  const { app } = load();
+  const far = new Date(2040, 0, 1);
+  const counted = { id: 'c', rep: 'weekly', due: iso(2026, 1, 30, 9, 0), repCount: 3 };
+  assert.equal(app.expandOccurrences(counted, new Date(2026, 0, 1), far).length, 3);
+  const endless = { id: 'e', rep: 'weekly', due: iso(2026, 1, 30, 9, 0) };
+  assert.equal(app.expandOccurrences(endless, new Date(2026, 0, 1), far).length, 60);
+  const skipped = { id: 's', rep: 'weekly', due: iso(2026, 1, 30, 9, 0), skip: ['2026-02-06'] };
+  assert.deepEqual(Array.from(app.expandOccurrences(skipped, new Date(2026, 0, 1), new Date(2026, 1, 20, 23, 59)), (o) => key(new Date(o.due))),
+    ['2026-01-30', '2026-02-13', '2026-02-20']);
+  const monthly = { id: 'm', rep: 'monthly', due: iso(2026, 1, 31, 23, 59) };
+  assert.deepEqual(Array.from(app.expandOccurrences(monthly, new Date(2026, 0, 1), new Date(2026, 4, 31, 23, 59)), (o) => key(new Date(o.due))),
+    ['2026-01-31', '2026-02-28', '2026-03-31', '2026-04-30', '2026-05-31']);
+  const period = { id: 'p', rep: 'weekly', start: iso(2026, 1, 30, 9, 0), due: iso(2026, 1, 30, 17, 0) };
+  const [a, b] = app.expandOccurrences(period, new Date(2026, 0, 1), new Date(2026, 1, 8));
+  assert.equal(keyTime(new Date(b.start)), '2026-02-06 09:00');
+  assert.equal(keyTime(new Date(b.due)), '2026-02-06 17:00');
+  assert.equal(a.occurrence, undefined);
+  assert.equal(b.occurrence, 1, '2回目以降は occurrence が付き、未完了として扱う');
+  assert.equal(b.done, false);
+});
+
+test('upcomingDue: 完了し忘れて過ぎた繰り返しは「今より先の最初の回」を返す。元は変えない。回数を使い切っていれば null', () => {
+  const { app } = load('2026-01-30 12:00');
+  const it = { id: 'w', rep: 'weekly', due: iso(2026, 1, 9, 9, 0) };
+  assert.equal(keyTime(app.upcomingDue(it)), '2026-02-06 09:00');
+  assert.equal(it.due, iso(2026, 1, 9, 9, 0), '元のデータは変えない');
+  const future = { id: 'f', rep: 'weekly', due: iso(2026, 2, 3, 9, 0) };
+  assert.equal(keyTime(app.upcomingDue(future)), '2026-02-03 09:00', 'まだ先ならそのまま');
+  assert.equal(app.upcomingDue({ id: 'x', rep: 'weekly', due: iso(2026, 1, 9, 9, 0), repCount: 1 }), null);
+});
+
+// ---- 完了と EXP ----
+
+test('logCompletion: 前倒し（1日以上前）・期限内・遅れ・自動の EXP と種類。前倒しは 10＋5×日数（最大 +40）', () => {
+  const H = 3600000;
+  const table = [
+    // [締切までの時間, 種類, EXP]
+    [-0.1, 'late', 5],
+    [-100, 'late', 5],
+    [0, 'ontime', 10],        // ちょうど今は遅れではない
+    [23.9, 'ontime', 10],
+    [24, 'early', 15],        // 24時間前から前倒し（10 + 5×1）
+    [47.9, 'early', 15],
+    [48, 'early', 20],
+    [24 * 8, 'early', 50],    // 上限（10 + 40）
+    [24 * 30, 'early', 50],
+  ];
+  for (const [hours, kind, exp] of table) {
+    const { app, db, now } = load();
+    const it = { id: 'i', title: 'T', due: new Date(now.getTime() + hours * H).toISOString(), cat: '課題' };
+    const c = app.logCompletion(it, 'manual');
+    assert.deepEqual([c.kind, c.exp], [kind, exp], `${hours}時間前`);
+    assert.equal(c.lead, Math.round(hours * 10) / 10);
+    assert.equal(c.itemId, 'i');
+    assert.equal(c.src, 'manual');
+    assert.equal(db.completions.length, 1);
+  }
+  const { app, now } = load();
+  const auto = app.logCompletion({ id: 'a', title: 'A', due: new Date(now.getTime() - 5 * H).toISOString() }, 'auto');
+  assert.deepEqual([auto.kind, auto.exp, auto.cat], ['auto', 0, 'その他'], '自動完了は記録だけで EXP は付けない。カテゴリが無ければ「その他」');
+  const rep = app.logCompletion({ id: 'r', title: 'R', rep: 'weekly', due: new Date(now.getTime() + 2 * H).toISOString() }, 'manual');
+  assert.equal(rep.rep, true, '繰り返しの記録には rep が付く');
+});
+
+test('logCompletion: 記録が上限（500件）を超えたら、古いものから EXP を繰越に移して消す', () => {
+  const { app, db, now } = load('2026-01-30 12:00', { completions: Array.from({ length: 500 }, (_, i) => ({ id: `c${i}`, exp: 10 })), expCarry: 7 });
+  app.logCompletion({ id: 'n', title: 'N', due: new Date(now.getTime() + 3600000).toISOString() }, 'manual');
+  assert.equal(db.completions.length, 500);
+  assert.equal(db.completions[0].id, 'c1', '最も古い1件が消える');
+  assert.equal(db.expCarry, 17, '消した分の EXP（10）が繰越に入る');
+});
+
+test('applyCompletionCore: 通常は完了に。繰り返しは完了にせず次の回へ進む。最終回は完了になる', () => {
+  const { app, now } = load('2026-01-30 12:00');
+  const once = { id: 'o', due: iso(2026, 2, 1, 10, 0) };
+  assert.deepEqual(plain(app.applyCompletionCore(once)), { repeating: false });
+  assert.equal(once.done, true);
+  assert.equal(once.doneAt, now.toISOString());
+
+  const w = { id: 'w', rep: 'weekly', due: iso(2026, 1, 30, 17, 0) };
+  const r = app.applyCompletionCore(w);
+  assert.equal(r.repeating, true);
+  assert.equal(keyTime(r.next), '2026-02-06 17:00');
+  assert.equal(w.done, false, '繰り返しは完了のままにしない');
+  assert.equal(w.doneAt, undefined);
+
+  const last = { id: 'l', rep: 'weekly', due: iso(2026, 1, 30, 17, 0), repCount: 1 };
+  assert.deepEqual(plain(app.applyCompletionCore(last)), { repeating: true, final: true });
+  assert.equal(last.done, true, '最終回は完了になる');
+});
+
+test('applyCompletionCore: 自動完了の繰り返しは、しばらく開かなかった間の回も含めて「今より先の回」まで一度に進む', () => {
+  const { app } = load('2026-01-30 12:00');
+  const it = { id: 'a', rep: 'weekly', autoComplete: true, due: iso(2026, 1, 2, 9, 0), seq: 0 };
+  const r = app.applyCompletionCore(it);
+  assert.equal(keyTime(r.next), '2026-02-06 09:00');
+  assert.equal(it.seq, 5, '1/9・1/16・1/23・1/30・2/6 と5回進む');
+  // 自動完了でなければ、1回分だけ（過ぎたままの回が残る）
+  const manual = { id: 'm', rep: 'weekly', due: iso(2026, 1, 2, 9, 0) };
+  app.applyCompletionCore(manual);
+  assert.equal(keyTime(new Date(manual.due)), '2026-01-09 09:00');
+});
+
+test('levelOf・rewardOf: 100 EXP ごとにレベルが1上がる。上がったか・ゲージの位置も返す', () => {
+  const { app } = load();
+  const lv = (e) => app.levelOf(e);
+  assert.deepEqual([lv(0), lv(99), lv(100), lv(199), lv(200), lv(undefined), lv(250)], [1, 1, 2, 2, 3, 1, 3]);
+  assert.deepEqual(plain(app.rewardOf({ exp: 10, kind: 'early' }, 95)),
+    { gain: 10, bonus: '前倒しボーナス', level: 2, levelUp: true, into: 5, fromInto: 95 });
+  assert.deepEqual(plain(app.rewardOf({ exp: 5, kind: 'late' }, 10)),
+    { gain: 5, bonus: '遅れてもクリア', level: 1, levelUp: false, into: 15, fromInto: 10 });
+  assert.equal(app.rewardOf({ exp: 0, kind: 'auto' }, 0).bonus, '自動完了');
+  assert.equal(app.rewardOf({ exp: 0, kind: 'other' }, 0).bonus, '', '知らない種類は空');
+});
+
+// ---- 残り日数・状態 ----
+
+test('remainText・statusOf: 今日・明日・期間の途中・期限切れ（今日の過ぎた時刻・何日超過）の表示と状態', () => {
+  const { app } = load('2026-01-30 12:00'); // 金曜の昼
+  const R = (it) => plain(app.remainText(it));
+  const S = (it) => app.statusOf(it);
+  const t = (d, h = 0, mi = 0) => iso(2026, 1, d, h, mi);
+  const table = [
+    // [項目, 残り日数の表示, 状態]
+    [{ due: t(30, 9) }, { n: '—', u: '期限切れ' }, 'over'],                 // 今日の過ぎた時刻
+    [{ due: t(27, 9) }, { n: 3, u: '日 超過' }, 'over'],
+    [{ due: t(30, 17), allDay: false }, { n: 5, u: '時間後・今日' }, 'today'],
+    [{ due: t(30, 12, 30) }, { n: 0, u: '時間後・今日' }, 'today'],           // 1時間未満は 0
+    [{ due: t(30, 23, 59), allDay: true }, { n: '今日', u: '締切' }, 'today'],
+    [{ due: t(30, 23, 59), allDay: true, start: t(30, 0) }, { n: '今日', u: '開始' }, 'today'],
+    [{ due: t(31, 9) }, { n: 1, u: '日後' }, 'soon'],
+    [{ due: iso(2026, 2, 2, 9) }, { n: 3, u: '日後' }, 'soon'],                  // 2/2 = あと3日
+    [{ due: iso(2026, 2, 3, 9) }, { n: 4, u: '日後' }, 'near'],
+    [{ due: iso(2026, 2, 6, 9) }, { n: 7, u: '日後' }, 'near'],
+    [{ due: iso(2026, 2, 7, 9) }, { n: 8, u: '日後' }, 'far'],
+    [{ due: iso(2026, 2, 10, 9), start: iso(2026, 2, 3, 9) }, { n: 4, u: '日後に開始' }, 'near'], // 期間つきは開始日まで
+    [{ due: iso(2026, 2, 5, 9), start: t(29, 9) }, { n: '—', u: '進行中' }, 'today'],           // 期間の途中
+  ];
+  for (const [it, remain, status] of table) {
+    assert.deepEqual(R(it), remain, JSON.stringify(it));
+    assert.equal(S(it), status, JSON.stringify(it));
+  }
+});
+
+// ---- クイック入力 ----
+
+test('toHalfWidth: 全角の数字・英字・記号と全角スペースを半角にする', () => {
+  const { app } = load();
+  assert.equal(app.toHalfWidth('１７：３０　Ａｂ／＃'), '17:30 Ab/#');
+  assert.equal(app.toHalfWidth('明日 17時'), '明日 17時');
+});
+
+test('parseQuick: 日付・時刻・繰り返し・カテゴリ・テンプレートを1行から読み取る（README・入力欄の書き方の例）', () => {
+  const { app, now } = load('2026-01-30 12:00', { templates: [{ id: 'tp1', name: '週報' }] }); // 金曜の昼
+  const P = (text) => {
+    const r = app.parseQuick(text, now);
+    return { title: r.title, date: r.date ? key(r.date) : null, time: r.time, allDay: r.allDay, rep: r.rep, cat: r.cat, tpl: r.tpl ? r.tpl.name : null };
+  };
+  const base = { title: '', date: null, time: null, allDay: false, rep: 'none', cat: null, tpl: null };
+  const table = [
+    ['明日 17時 レポート提出', { title: 'レポート提出', date: '2026-01-31', time: '17:00' }],
+    ['毎週水曜 17:00 バイト #バイト', { title: 'バイト', date: '2026-02-04', time: '17:00', rep: 'weekly', cat: 'バイト' }],
+    ['10/20 レポート提出', { title: 'レポート提出', date: '2026-10-20', allDay: true }],
+    ['10月15日 提出', { title: '提出', date: '2026-10-15', allDay: true }],
+    ['2027/1/5 提出', { title: '提出', date: '2027-01-05', allDay: true }],
+    ['2027年1月5日 提出', { title: '提出', date: '2027-01-05', allDay: true }],
+    ['1/5 提出', { title: '提出', date: '2027-01-05', allDay: true }],         // 過ぎた日付は来年
+    ['1/30 提出', { title: '提出', date: '2026-01-30', allDay: true }],        // 今日はそのまま
+    ['今日 提出', { title: '提出', date: '2026-01-30', allDay: true }],
+    ['きょう 提出', { title: '提出', date: '2026-01-30', allDay: true }],
+    ['明後日 提出', { title: '提出', date: '2026-02-01', allDay: true }],
+    ['あさって 提出', { title: '提出', date: '2026-02-01', allDay: true }],
+    ['あした 提出', { title: '提出', date: '2026-01-31', allDay: true }],
+    ['3日後 提出', { title: '提出', date: '2026-02-02', allDay: true }],
+    ['金曜 提出', { title: '提出', date: '2026-01-30', allDay: true }],        // 曜日だけなら今日を含めて次のその曜日
+    ['月曜 提出', { title: '提出', date: '2026-02-02', allDay: true }],
+    ['来週水曜 提出', { title: '提出', date: '2026-02-04', allDay: true }],     // 週は月曜はじまり
+    ['再来週月曜 提出', { title: '提出', date: '2026-02-09', allDay: true }],
+    ['今週日曜 提出', { title: '提出', date: '2026-02-01', allDay: true }],
+    ['明日 17時半 会議', { title: '会議', date: '2026-01-31', time: '17:30' }],
+    ['明日 17:30 会議', { title: '会議', date: '2026-01-31', time: '17:30' }],
+    ['明日 午後5時 会議', { title: '会議', date: '2026-01-31', time: '17:00' }],
+    ['明日 午前12時 会議', { title: '会議', date: '2026-01-31', time: '00:00' }],
+    ['明日 午前9時15分 会議', { title: '会議', date: '2026-01-31', time: '09:15' }],
+    ['明日 正午 会議', { title: '会議', date: '2026-01-31', time: '12:00' }],
+    ['明日 24:00 会議', { title: '会議', date: '2026-01-31', time: '23:59' }],
+    ['明日 １７：３０ 会議', { title: '会議', date: '2026-01-31', time: '17:30' }], // 全角
+    ['明日 終日 出張', { title: '出張', date: '2026-01-31', allDay: true }],
+    ['毎月 15日 支払い', { title: '15日 支払い', rep: 'monthly' }],             // 「15日」は日付として読まない
+    ['毎年 3/1 記念日', { title: '記念日', date: '2026-03-01', allDay: true, rep: 'yearly' }],
+    ['17時 会議', { title: '会議', date: '2026-01-30', time: '17:00' }],        // 時刻だけ: まだ来ていなければ今日
+    ['9時 会議', { title: '会議', date: '2026-01-31', time: '09:00' }],         // 過ぎていれば明日
+    ['明日 週報', { title: '週報', date: '2026-01-31', tpl: '週報' }],           // テンプレート名だけなら、テンプレートの設定を使う（終日にしない）
+    ['週報', { title: '週報', tpl: '週報' }],
+    ['2/30 提出', { title: '2/30 提出' }],                                       // 無い日付は読まない
+    ['明日 25時 会議', { title: '25時 会議', date: '2026-01-31', allDay: true }], // 無い時刻は読まない
+    ['#未登録 提出', { title: '#未登録 提出' }],                                 // 登録していないカテゴリは読まない
+    ['明日までにレポート', { title: 'レポート', date: '2026-01-31', allDay: true }],
+    ['', {}],
+  ];
+  for (const [text, want] of table) assert.deepEqual(P(text), { ...base, ...want }, JSON.stringify(text));
+});
+
+// ---- .ics ----
+
+const ICS_ITEMS = [
+  { id: 'i1', title: 'レポート提出', due: iso(2026, 2, 3, 17, 0), cat: '課題', memo: '範囲;1章,2章\n3章\\終わり', seq: 3 },
+  { id: 'i2', title: '終日の締切', due: iso(2026, 2, 10, 23, 59), allDay: true, cat: 'その他' },
+  { id: 'i3', title: '合宿', start: iso(2026, 2, 12, 9, 0), due: iso(2026, 2, 14, 17, 0), cat: '仕事' },
+  { id: 'i4', title: '週次の定例', rep: 'weekly', due: iso(2026, 2, 4, 18, 0), skip: ['2026-02-11', '2026-02-18'], seq: 2, cat: '仕事' },
+  { id: 'i5', title: '月末の支払い', rep: 'monthly', repDay: 31, due: iso(2026, 1, 31, 23, 59), allDay: true, cat: '課題' },
+  { id: 'i6', title: 'うるう日の更新', rep: 'yearly', due: iso(2028, 2, 29, 23, 59), allDay: true, cat: 'その他' },
+  { id: 'i7', title: '隔週・5回まで', rep: 'biweekly', repCount: 5, due: iso(2026, 2, 6, 9, 30), cat: '課題' },
+  { id: 'i8', title: 'とても長い日本語のタイトルの予定で、一行が75オクテットを超えるので折り返される必要があります', due: iso(2026, 3, 1, 8, 0), cat: '仕事', memo: 'メモ' },
+  { id: 'i9', title: '期間つきの週次', rep: 'weekly', start: iso(2026, 2, 5, 9, 0), due: iso(2026, 2, 5, 17, 0), skip: ['2026-02-12'], cat: '課題' },
+  { id: 'i10', title: '終日の期間つき', start: iso(2026, 3, 3, 0, 0), due: iso(2026, 3, 5, 23, 59), allDay: true, cat: 'その他' },
+];
+const CAT_REMINDERS = { 課題: [3, 1, 0], 仕事: [14, 3, 0] };
+
+test('buildICS: UID・RRULE・EXDATE・VALARM の行が、予定の種類ごとに期待どおり（月末の丸め・取りやめた回・通知の相対/絶対）', () => {
+  const { app } = load('2026-01-30 12:00', { catReminders: CAT_REMINDERS });
+  const ics = app.buildICS(ICS_ITEMS);
+  const lines = ics.replace(/\r\n /g, '').split('\r\n');
+  const events = [];
+  for (const l of lines) { if (l === 'BEGIN:VEVENT') events.push([]); else if (events.length && l !== 'END:VEVENT') events[events.length - 1].push(l); }
+  assert.equal(events.length, ICS_ITEMS.length);
+  const ev = (id) => events.find((e) => e.includes(`UID:${id}@deadline-tracker`));
+  // 日本時間 17:00 = UTC 08:00
+  assert.ok(ev('i1').includes('SEQUENCE:3'));
+  assert.ok(ev('i1').includes('DTSTART:20260203T073000Z'), '17:00 の締切は 30 分前（UTC 07:30）から');
+  assert.ok(ev('i1').includes('DTEND:20260203T080000Z'));
+  assert.ok(ev('i1').includes('DESCRIPTION:範囲\\;1章\\,2章\\n3章\\\\終わり'), 'メモは ; , 改行 \\ をエスケープする');
+  assert.equal(ev('i1').filter((l) => l.startsWith('TRIGGER')).length, 3, '課題は 3日前・前日・当日');
+  assert.ok(ev('i1').includes('TRIGGER;VALUE=DATE-TIME:20260131T080000Z'), '3日前は締切と同じ時刻（絶対時刻）');
+  assert.ok(ev('i1').includes('TRIGGER;VALUE=DATE-TIME:20260203T000000Z'), '当日は 9:00（UTC 0:00）');
+  // 終日
+  assert.ok(ev('i2').includes('DTSTART;VALUE=DATE:20260210') && ev('i2').includes('DTEND;VALUE=DATE:20260211'), '終日の DTEND は翌日');
+  // 月末の丸め（毎月・基準日31）
+  assert.ok(ev('i5').includes('RRULE:FREQ=MONTHLY;BYMONTHDAY=31,-1;BYSETPOS=1'));
+  assert.ok(ev('i6').includes('RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29,-1;BYSETPOS=1'));
+  assert.ok(ev('i7').includes('RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=5'));
+  // 終日の繰り返しの通知: 終了（DTEND）は翌日 0 時なので、締切（23:59）との差 1 分を足して、繰り返しでない予定と同じ時刻に鳴らす
+  assert.ok(ev('i5').includes('TRIGGER;RELATED=END:-PT4321M'), '3日前: 3×1440 + 1');
+  assert.ok(ev('i5').includes('TRIGGER;RELATED=END:-PT900M'), '当日 9:00: 14時間59分 + 1');
+  // 取りやめた回は EXDATE（開始時刻に合わせる。17:30〜18:00 の定例は 17:30 開始 = UTC 09:00 ではなく 08:30）
+  assert.deepEqual(ev('i4').filter((l) => l.startsWith('EXDATE')), ['EXDATE:20260211T083000Z', 'EXDATE:20260218T083000Z']);
+  assert.ok(ev('i4').includes('RRULE:FREQ=WEEKLY'));
+  assert.ok(ev('i4').every((l) => !l.startsWith('TRIGGER;VALUE=DATE-TIME')), '繰り返しの通知は相対時間（毎回鳴る）');
+  assert.ok(ev('i4').includes('TRIGGER;RELATED=END:-PT20160M'), '14日前（= 20160 分）');
+  // 折り返し: どの行も 75 オクテット以内
+  for (const l of ics.split('\r\n')) assert.ok(Buffer.byteLength(l) <= 75, `${Buffer.byteLength(l)} バイト: ${l.slice(0, 30)}`);
+  assert.ok(ics.includes('\r\n '), '長い行は折り返す');
+  assert.ok(ics.endsWith('END:VCALENDAR\r\n'));
+});
+
+test('buildICS: アプリの .ics と Worker（購読用）の .ics が、同じデータで1文字まで同じ。ずれたら二重実装（項目8）が崩れている', () => {
+  const { app } = load('2026-01-30 12:00', { catReminders: CAT_REMINDERS });
+  // Worker はアプリと同じ並び順（期間つきは開始日、同じなら締切の早い順）で書き出す
+  const sorted = [...ICS_ITEMS].sort((a, b) => (new Date(a.start || a.due) - new Date(b.start || b.due)) || (new Date(a.due) - new Date(b.due)));
+  const fromApp = app.buildICS(sorted);
+  const { ics: fromWorker } = buildIcs({ items: ICS_ITEMS, catReminders: CAT_REMINDERS }, { now: parseNow('2026-01-30 12:00'), dayHour: 9 });
+  assert.equal(fromApp, fromWorker);
+});
