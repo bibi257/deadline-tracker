@@ -52,6 +52,25 @@ test('シークレットの前後に空白や改行があっても、キー本�
   assert.equal((await blank.call('GET', '/api/data')).status, 503, '空白だけは未設定として扱う');
 });
 
+test('正しいキーで入れると、その IP の失敗の記録が消える（古いキーの端末が数えた分で、正しい端末が止まらない）', async () => {
+  const { call } = setup();
+  const bad = { key: 'x'.repeat(32) };
+  for (let i = 0; i < 9; i++) assert.equal((await call('GET', '/api/data', bad)).status, 401);
+  assert.equal((await call('GET', '/api/data')).status, 200, '9回失敗のあとでも正しいキーは通る');
+  for (let i = 0; i < 9; i++) assert.equal((await call('GET', '/api/data', bad)).status, 401, '記録が消えたので、さらに9回までは 429 にならない');
+  assert.equal((await call('GET', '/api/data')).status, 200);
+});
+
+test('失敗の記録が無いときは、認証に成功しても D1 に書き込まない', async () => {
+  const { env, call } = setup();
+  await call('GET', '/api/data'); // 初期化（表の作成）を済ませる
+  const writes = [];
+  const prepare = env.DB.prepare.bind(env.DB);
+  env.DB.prepare = (sql) => { if (/^\s*(INSERT|UPDATE|DELETE)/i.test(sql)) writes.push(sql); return prepare(sql); };
+  assert.equal((await call('GET', '/api/data')).status, 200);
+  assert.deepEqual(writes, []);
+});
+
 test('認証の失敗が続くと 429、別の IP と時間経過で戻る', async () => {
   const { call, clock } = setup();
   for (let i = 0; i < 10; i++) assert.equal((await call('GET', '/api/data', { key: 'x'.repeat(32) })).status, 401);

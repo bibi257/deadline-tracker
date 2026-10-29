@@ -122,7 +122,8 @@ async function authorize(env, request) {
     throw new HttpError(503, `アクセスキー（APP_KEY）が未設定か短すぎます（${MIN_KEY_LENGTH}文字以上）`);
   }
   const ipKey = `auth:${await sha256Hex(clientIp(request))}`;
-  if (await isLimited(env, ipKey, AUTH_MISS_MAX)) {
+  const row = await env.DB.prepare('SELECT n, until FROM limits WHERE k = ?').bind(ipKey).first();
+  if (row && row.until > now(env) && row.n >= AUTH_MISS_MAX) {
     throw new HttpError(429, '認証の失敗が続いたため、しばらく使えません。10分ほど待ってください');
   }
   const m = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '');
@@ -130,6 +131,8 @@ async function authorize(env, request) {
     await countHit(env, ipKey, AUTH_MISS_WINDOW);
     throw new HttpError(401, 'アクセスキーが違います');
   }
+  // 正しいキーで入れたら、この回線の失敗の記録を消す（同じ回線の古いキーの端末が数えた分で、正しい端末が止まらないように）。記録があるときだけ書く
+  if (row) await env.DB.prepare('DELETE FROM limits WHERE k = ?').bind(ipKey).run();
 }
 
 // ---- データの検証 ----
