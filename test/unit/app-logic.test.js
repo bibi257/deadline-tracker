@@ -13,7 +13,7 @@ const FNS = [
   'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText',
   'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
   'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
-  'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
+  'headerCount', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
 ];
 const VARS = ['DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
 
@@ -423,4 +423,37 @@ test('buildICS: アプリの .ics と Worker（購読用）の .ics が、同じ
   const fromApp = app.buildICS(sorted);
   const { ics: fromWorker } = buildIcs({ items: ICS_ITEMS, catReminders: CAT_REMINDERS }, { now: parseNow('2026-01-30 12:00'), dayHour: 9 });
   assert.equal(fromApp, fromWorker);
+});
+
+// ---- ヘッダーの件数（D1: 「7日以内 0」なのに一覧に定期予定が並んで、食い違って見えないように） ----
+
+test('headerCount: 7日以内は繰り返さない締切だけを数え、定期予定は「＋定期 N」と添える。数え方は変えない', () => {
+  const { app, now } = load('2026-01-30 12:00');
+  const it = (id, due, extra = {}) => ({ id, title: id, due: iso(...due), rep: 'none', ...extra });
+  const items = [
+    it('once-soon', [2026, 2, 3, 9]),                          // 締切: 数える
+    it('once-far', [2026, 3, 1, 9]),                           // 8日より先: 数えない
+    it('rep-soon', [2026, 2, 2, 9], { rep: 'weekly' }),        // 定期: 数字には入れず、補足に
+    it('rep-soon2', [2026, 2, 4, 9], { rep: 'monthly' }),
+    it('rep-far', [2026, 3, 5, 9], { rep: 'weekly' }),         // 7日より先の定期: 補足にも入れない
+  ];
+  assert.deepEqual(plain(app.headerCount(items, now, 'list')), { num: 1, label: '締切 7日以内', sub: '＋定期 2' });
+  // 定期が無ければ補足は空（「＋定期 0」とは出さない）
+  assert.deepEqual(plain(app.headerCount(items.filter((i) => i.rep === 'none'), now, 'list')), { num: 1, label: '締切 7日以内', sub: '' });
+  // 何も無い日: 0 と、補足なし
+  assert.deepEqual(plain(app.headerCount([], now, 'list')), { num: 0, label: '締切 7日以内', sub: '' });
+});
+
+test('headerCount: 期限切れがあれば期限切れの数を出す。超過・定期予定の画面は、それぞれの数のまま', () => {
+  const { app, now } = load('2026-01-30 12:00');
+  const it = (id, due, extra = {}) => ({ id, title: id, due: iso(...due), rep: 'none', ...extra });
+  const items = [
+    it('late', [2026, 1, 29, 9]),                              // 期限切れ（完了にし忘れた定期も含める）
+    it('late-rep', [2026, 1, 28, 9], { rep: 'weekly' }),
+    it('soon', [2026, 2, 1, 9]),
+    it('rep', [2026, 2, 2, 9], { rep: 'weekly' }),
+  ];
+  assert.deepEqual(plain(app.headerCount(items, now, 'list')), { num: 2, label: '期限切れ', sub: '' });
+  assert.deepEqual(plain(app.headerCount(items, now, 'over')), { num: 2, label: '超過', sub: '' });
+  assert.deepEqual(plain(app.headerCount(items, now, 'rep')), { num: 2, label: '定期予定', sub: '' });
 });
