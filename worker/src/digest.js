@@ -17,17 +17,17 @@ const LIMIT = 1850; // Discord の本文上限(2000)に、余裕を持たせた�
 const LATER_MAX = 10;
 
 /** jq の「a // b」（null・false のときだけ代わりの値） */
-const alt = (v, d) => (v === null || v === undefined || v === false ? d : v);
+export const alt = (v, d) => (v === null || v === undefined || v === false ? d : v);
 /** 見出しの件数。自動完了の予定（締切を過ぎると自動で完了になる）は件数に数えず、あれば「＋自動完了N件」と分けて書く */
-const count = (total, auto) => (auto ? `${total - auto}件＋自動完了${auto}件` : `${total}件`);
+export const count = (total, auto) => (auto ? `${total - auto}件＋自動完了${auto}件` : `${total}件`);
 /** 1行1件で扱うため、改行と区切り文字を空白にする */
-const clean = (v) => String(v).replace(/[\n\r\u001f]/g, ' ');
+export const clean = (v) => String(v).replace(/[\n\r\u001f]/g, ' ');
 const pad2 = (n) => String(n).padStart(2, '0');
 
 /** 締切日時として読めるか（jq の fromdateiso8601 と同じく、末尾 Z の形だけ） */
-const parsable = (s) => typeof s === 'string' && ISO.test(s) && !Number.isNaN(Date.parse(s));
+export const parsable = (s) => typeof s === 'string' && ISO.test(s) && !Number.isNaN(Date.parse(s));
 /** ISO8601 を epoch 秒に（ミリ秒は捨てる） */
-const ep = (s) => Math.floor(Date.parse(s.replace(/\.\d+Z$/, 'Z')) / 1000);
+export const ep = (s) => Math.floor(Date.parse(s.replace(/\.\d+Z$/, 'Z')) / 1000);
 
 /** 繰り返しを n 回分進める（epoch 秒）。weekly / biweekly / monthly / yearly 以外は動かさない（jq の add_rep と同じ） */
 function addRepSec(sec, rep, n, anchor) {
@@ -37,7 +37,7 @@ function addRepSec(sec, rep, n, anchor) {
 }
 
 /** 基準時刻 t 以降で最初の回。取りやめた回(skip)は飛ばす。無ければ null（send_digest.sh の next_occ） */
-function nextOcc(it, t) {
+export function nextOcc(it, t) {
   const base = ep(it.due);
   const rep = alt(it.rep, 'none');
   const skip = Array.isArray(it.skip) ? it.skip : [];
@@ -54,7 +54,7 @@ function nextOcc(it, t) {
 }
 
 /** jq の @uri と同じ（英数字と -_.~ 以外をパーセント表記にする） */
-const uriEncode = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+export const uriEncode = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 
 /**
  * 締切一覧の本文を作る。now はミリ秒。

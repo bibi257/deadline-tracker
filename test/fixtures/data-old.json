@@ -1,0 +1,8 @@
+{
+  "items": [
+    {"id": "o1", "title": "古い課題", "due": "2026-01-20T14:59:00.000Z", "cat": "課題", "rep": "none", "done": false, "allDay": true},
+    {"id": "o2", "title": "終わった課題", "due": "2026-01-28T03:00:00.000Z", "cat": "課題", "rep": "none", "done": true, "doneAt": "2026-01-28T02:00:00.000Z"},
+    {"id": "o3", "title": "来週の予定", "due": "2026-02-04T06:00:00.000Z", "cat": "その他", "rep": "none", "done": false},
+    {"id": "o4", "title": "毎月の支払い", "due": "2026-02-27T14:59:00.000Z", "cat": "サブスクなど", "rep": "monthly", "done": false, "allDay": true, "memo": "プラン料金は未定"}
+  ]
+}
