@@ -15,15 +15,16 @@ after(() => mock.restoreAll());
 const FNS = [
   'cfKnownRev', 'cfSaveRev', 'cfFetchData', 'cfFetchState', 'cfPut', 'cfAskOverwrite', 'remoteHasUnknownChanges', 'fetchRemoteState',
   'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'ghHint',
-  'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems',
+  'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems', 'cfAutoBlocked', 'cfNoteAuthFailure',
 ];
 
 /** 共有の Worker（1つの D1）と、複数の端末 */
 function world() {
   const env = { DB: createD1(), APP_KEY: KEY, NOW: () => 1_700_000_000 };
-  const log = { puts: [] };
+  const log = { puts: [], calls: 0 };
   const fetchToWorker = (url, opts = {}) => {
     const u = new URL(url);
+    log.calls += 1;
     if ((opts.method || 'GET') === 'PUT') log.puts.push({ search: u.search, ifMatch: opts.headers['If-Match'] });
     return worker.fetch(new Request(url, { method: opts.method, headers: { 'CF-Connecting-IP': '1.1.1.1', ...opts.headers }, body: opts.body }), env);
   };
@@ -51,7 +52,7 @@ function world() {
       _autoSyncBlockedShown: false, _staleNoticeShown: false, CF_REV_KEY: 'cf-known-rev',
       utf8ToBase64: () => '', hoursSincePulled: () => null,
       // 起動時の「取り込み → 自動完了」用（本物の applyCompletion / save は画面まわりに依存するので、同じ効果だけ再現する）
-      _refreshing: null, autoPullIfStale: () => d.ctx.autoPullWith(d.cfg),
+      _cfAuthStopped: false, _cfLimitShown: false, _refreshing: null, autoPullIfStale: () => d.ctx.autoPullWith(d.cfg),
       parseItemDate: (it) => new Date(it.due), applyCompletion: (it) => { it.done = true; },
       save: () => { d.db.updatedAt = clock(); }, scheduleAutoSync() {},
     };
@@ -277,4 +278,37 @@ test('起動時: 取り込む内容が無い端末でも、期限切れの自動
   A.db.items = [{ id: 'i1', title: '期限切れ', due: '2020-01-01T00:00:00.000Z', autoComplete: true }];
   await A.start(); // 同期の記録が無い端末（取り込みは何もしない）
   assert.equal(A.db.items[0].done, true);
+});
+
+test('アクセスキーが違う端末: 401 を受けたら自動の通信を止め、一度だけ知らせる（同じ回線の端末を締め出さない）', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.cfg.headers = { Authorization: `Bearer ${'x'.repeat(32)}` }; // 古い・違うキー
+  A.edit('手元');
+  await A.autoPull();
+  assert.equal(w.log.calls, 1);
+  assert.equal(A.toasts.filter((m) => m.includes('アクセスキーが違う')).length, 1);
+  await A.autoPull();
+  await A.auto(); // 自動同期
+  await A.autoPull();
+  assert.equal(w.log.calls, 1, '止めたあとは fetch しない');
+  assert.equal(A.toasts.filter((m) => m.includes('アクセスキーが違う')).length, 1, '知らせるのは一度だけ');
+  // 正しいキーを入れ直した（cfConfigFromUI が止めた印を戻す）あとは、また通信する
+  A.ctx._cfAuthStopped = false;
+  A.cfg.headers = { Authorization: `Bearer ${KEY}` };
+  await A.autoPull();
+  assert.ok(w.log.calls > 1);
+});
+
+test('429（すでに止められている）のときは、理由を一度だけ知らせる。自動の通信は止めない（10分で戻るため）', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.cfg.headers = { Authorization: `Bearer ${'x'.repeat(32)}` };
+  for (let i = 0; i < 10; i++) { A.ctx._cfAuthStopped = false; await A.autoPull(); } // 同じ IP で失敗を10回重ねる
+  A.toasts.length = 0;
+  A.ctx._cfAuthStopped = false;
+  await A.autoPull(); // 429
+  await A.autoPull();
+  assert.equal(A.toasts.filter((m) => m.includes('しばらく使えません')).length, 1);
+  assert.equal(A.ctx._cfAuthStopped, false, '429 では止めない');
 });

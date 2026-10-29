@@ -938,6 +938,7 @@ function autoSyncWith(cfg){
   }).catch(function(){}); // 自動処理なので、ここで失敗しても知らせない（同期の失敗は runAutoSync 内で扱う）
 }
 function runAutoSync(cfg){
+  if(cfAutoBlocked(cfg)) return;
   var pushedAt=db.updatedAt; // 送信中に別の編集が入っても、送った時点の値を記録するため捕捉しておく
   var payload=syncPayload();
   var content=cfg.kind==="cf" ? "" : utf8ToBase64(JSON.stringify(payload,null,2));
@@ -978,6 +979,7 @@ function runAutoSync(cfg){
       return res;
     })
     .then(function(res){
+      if(res && cfg.kind==="cf" && (res.status===401 || res.status===429)) cfNoteAuthFailure({status:res.status});
       if(res && res.ok){
         markSynced("自動同期");
         markPulled(); // 送った内容＝この端末の最新状態としてよい
@@ -986,7 +988,7 @@ function runAutoSync(cfg){
         toast(RN()+"に自動同期しました");
       }
     })
-    .catch(function(){ /* 自動処理なので失敗しても通知しない */ });
+    .catch(function(e){ if(cfg.kind==="cf") cfNoteAuthFailure(e); /* 自動処理なので、ほかの失敗は通知しない */ });
 }
 /* 完了・削除などの操作は続けて行うことが多いので、少し待ってからまとめて1回だけ自動同期する。
    画面を閉じる(アプリを切り替える)ときは待たずにすぐ送る */
@@ -2400,9 +2402,29 @@ function getStoredCfConfig(){
 function cfFetchData(cfg){
   return fetch(cfg.api+"?_="+Date.now(),{headers:cfg.headers, cache:"no-store"})
     .then(function(res){
-      if(!res.ok) return res.json().catch(function(){ return {}; }).then(function(e){ throw new Error(e.error||e.message||("HTTP "+res.status)); });
+      if(!res.ok) return res.json().catch(function(){ return {}; }).then(function(e){
+        var err=new Error(e.error||e.message||("HTTP "+res.status));
+        err.status=res.status; // 401・429 を自動処理が見分けるため
+        throw err;
+      });
       return res.json();
     });
+}
+/* 認証の失敗(401)を受けたら、ページを開き直すか、設定でアクセスキーを入れ直すまで、自動の通信をしない。
+   古いキーの端末が自動通信で失敗を重ねると、同じ回線の正しい端末まで Worker に止められる(10分に10回)ため。
+   429(すでに止められている)のときは、理由を一度だけ知らせる */
+var _cfAuthStopped=false, _cfLimitShown=false;
+function cfAutoBlocked(cfg){ return cfg.kind==="cf" && _cfAuthStopped; }
+function cfNoteAuthFailure(err){
+  var st=err && err.status;
+  if(st===401){
+    if(_cfAuthStopped) return;
+    _cfAuthStopped=true;
+    toast("アクセスキーが違うため、自動の読み込み・同期を止めました。設定（右上の歯車）で入れ直してください");
+  } else if(st===429 && !_cfLimitShown){
+    _cfLimitShown=true;
+    toast("認証の失敗が続いたため、しばらく使えません。10分ほど待ってください");
+  }
 }
 /* 最後に確認した保存先の版（rev）。読み込みに成功したとき・送信に成功したときに保存する。
    「他の端末の更新があるか」は、端末の時計（updatedAt）ではなく、Worker が数える rev で判断する
@@ -2470,11 +2492,12 @@ function autoPullIfStale(){
   return getStoredGhConfig().then(function(cfg){ return cfg ? autoPullWith(cfg) : undefined; }).catch(function(){});
 }
 function autoPullWith(cfg){
+  if(cfAutoBlocked(cfg)) return Promise.resolve();
   var rawHeaders=Object.assign({}, cfg.headers, {"Accept":"application/vnd.github.raw"});
   // 404やネットワーク不調などは静かに諦める(自動処理のため)
   var cfRev=null; // Cloudflare から読んだ版
   var getText=cfg.kind==="cf"
-    ? cfFetchData(cfg).then(function(j){ cfRev=j.rev; return j.data ? JSON.stringify(j.data) : null; }).catch(function(){ return null; })
+    ? cfFetchData(cfg).then(function(j){ cfRev=j.rev; return j.data ? JSON.stringify(j.data) : null; }).catch(function(e){ cfNoteAuthFailure(e); return null; })
     : fetch(cfg.api+"?ref="+encodeURIComponent(cfg.branch)+"&_="+Date.now(), {headers:rawHeaders, cache:"no-store"})
         .then(function(res){ return res.ok ? res.text() : null; });
   return getText
@@ -2574,6 +2597,7 @@ function guardPublicRepo(cfg){
 function cfConfigFromUI(g,statusEl){
   var key=g("ghToken").value.trim();
   if(!key){ statusEl.textContent="アクセスキーを入力してください。"; return null; }
+  _cfAuthStopped=false; _cfLimitShown=false; // キーを入れ直したので、自動の通信を再開する
   if(g("ghRemember").checked){
     secretSet("cf-key", key).then(function(ok){
       g("ghSecretNote").textContent=ok?"":"この端末では暗号化して保存できないため、アクセスキーは保存しませんでした（今回の操作だけに使います）。";
