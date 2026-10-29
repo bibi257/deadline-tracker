@@ -596,6 +596,20 @@ function sortByDue(a,b){
 function h(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstElementChild; }
 function escHtml(s){ return String(s).replace(/[&<>"]/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
 
+/* ヘッダー右上の数字・ラベル・補足。
+   「7日以内」は締切のみを数える（定期予定は常時あるため除く）。数えない定期予定は、補足に「＋定期 N」と添えて、
+   すぐ下の一覧の「今週」に並ぶカードと食い違って見えないようにする。
+   期限切れには、完了にし忘れた定期予定も含める（自動完了のものは期限を過ぎると次回へ進むので入らない） */
+function headerCount(active, now, view){
+  var within7=function(i){ return parseItemDate(i)>=now && daysBetween(now,refDate(i))<=7; };
+  var over=active.filter(function(i){ return parseItemDate(i)<now; });
+  if(view==="rep") return {num:active.filter(isRepeating).length, label:"定期予定", sub:""};
+  if(view==="over") return {num:over.length, label:"超過", sub:""};
+  if(over.length) return {num:over.length, label:"期限切れ", sub:""};
+  var reps=active.filter(function(i){ return isRepeating(i) && within7(i); }).length;
+  return {num:active.filter(function(i){ return !isRepeating(i) && within7(i); }).length, label:"締切 7日以内", sub:reps?"＋定期 "+reps:""};
+}
+
 /* ========== 描画 ========== */
 var _lastTabView=null, _lastPageView=null;
 function render(){
@@ -603,22 +617,11 @@ function render(){
   var now=new Date();
   document.getElementById("todayLabel").textContent =
     now.getFullYear()+"年"+(now.getMonth()+1)+"月"+now.getDate()+"日（"+DOW[now.getDay()]+"）";
-  // ヘッダーの「7日以内」は締切のみを数える（定期予定は常時あるため除く）。
-  // 期限切れには、完了にし忘れた定期予定も含める（自動完了のものは期限を過ぎると次回へ進むので入らない）
-  var onceOnly=activeItems().filter(function(i){ return !isRepeating(i); });
-  var soon=onceOnly.filter(function(i){ var d=refDate(i); return parseItemDate(i)>=now && daysBetween(now,d)<=7; });
   var over=activeItems().filter(function(i){ return parseItemDate(i)<now; });
-  if(view==="rep"){
-    var reps=activeItems().filter(isRepeating);
-    document.getElementById("cntNum").textContent=reps.length;
-    document.getElementById("cntLabel").textContent="定期予定";
-  }
-  else if(view==="over"){
-    document.getElementById("cntNum").textContent=over.length;
-    document.getElementById("cntLabel").textContent="超過";
-  }
-  else if(over.length){ document.getElementById("cntNum").textContent=over.length; document.getElementById("cntLabel").textContent="期限切れ"; }
-  else { document.getElementById("cntNum").textContent=soon.length; document.getElementById("cntLabel").textContent="7日以内"; }
+  var hc=headerCount(activeItems(), now, view);
+  document.getElementById("cntNum").textContent=hc.num;
+  document.getElementById("cntLabel").textContent=hc.label;
+  document.getElementById("cntSub").textContent=hc.sub;
   document.body.setAttribute("data-view", view);
   document.body.setAttribute("data-cols", db.settings.cols==="1"?"1":"2"); // 広い画面のカードの並び（styles.css の 960px 以上で効く）
   renderLevelBar();

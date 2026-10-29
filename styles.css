@@ -69,6 +69,8 @@ header{
 .count{text-align:right;line-height:1;border-left:1px solid var(--rule);padding-left:14px;flex-shrink:0;white-space:nowrap}
 .count b{font-family:var(--num);font-size:34px;font-weight:600;display:block;letter-spacing:-.01em}
 .count span{font-size:11px;color:var(--ink-2);letter-spacing:.12em}
+.count .sub{display:block;margin-top:5px;color:var(--ink-3);letter-spacing:.04em}
+.count .sub:empty{display:none}
 
 /* 見出しタブ：1行で横に流す。選択中は下線 */
 .tabs{display:flex;gap:2px;overflow-x:auto;overflow-y:hidden;touch-action:pan-x;overscroll-behavior-x:contain;scrollbar-width:none;margin:0 -16px;padding:0 16px}
