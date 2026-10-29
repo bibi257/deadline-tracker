@@ -1669,11 +1669,12 @@ function renderWeek(){
     var hol=holidayName(key);
     var dowCls=(d.getDay()===0||hol?" sun":d.getDay()===6?" sat":"");
     var label=(k===0?"今日":k===1?"明日":"");
-    var row=h('<div class="wday'+(k===0?" is-today":"")+'">'+
+    // 予定のない日は細い行に詰める（予定のある日を一画面に収めやすくする）
+    var row=h('<div class="wday'+(k===0?" is-today":"")+(hit.length?"":" wday-empty")+'">'+
       '<div class="wday-head tap'+dowCls+'" title="この日を時間軸で見る"><span class="num">'+(d.getMonth()+1)+'/'+d.getDate()+'</span>'+
       '<span class="wdow">（'+DOW[d.getDay()]+'）</span><span class="wgo">›</span>'+
       (label?'<span class="wtag">'+label+'</span>':'')+
-      (hol?'<span class="wdow" style="width:100%">'+escHtml(hol)+'</span>':'')+'</div>'+
+      (hol?'<span class="wdow"'+(hit.length?' style="width:100%"':'')+'>'+escHtml(hol)+'</span>':'')+'</div>'+
       '<div class="wday-body"></div></div>');
     row.querySelector(".wday-head").onclick=(function(key){ return function(){ openDayView(key); }; })(key);
     var body=row.querySelector(".wday-body");

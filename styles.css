@@ -241,6 +241,13 @@ header{
 .wday-head.sat .num,.wday-head.sat .wdow{color:var(--blue)}
 .wtag{font-size:10.5px;border:1px solid var(--ink-3);color:var(--ink-2);border-radius:var(--radius);padding:0 4px;letter-spacing:.06em;margin-top:2px}
 .wday-body{min-width:0}
+/* 予定のない日：日付・曜日・「予定なし」を1行に詰める */
+.wday.wday-empty{grid-template-columns:auto 1fr;gap:10px;padding:5px 0;align-items:center}
+.wday-empty .wday-head{flex-wrap:nowrap;align-items:center;white-space:nowrap;gap:0 4px}
+.wday-empty .wday-head .num{font-size:14px;font-weight:500;color:var(--ink-2)}
+.wday-empty .wtag{margin-top:0}
+.wday-empty.is-today .wday-head .num{color:var(--card);font-weight:600}
+.wday-empty .wnone{padding:0}
 .wnone{font-size:12px;color:var(--ink-3);padding:3px 0}
 .witem{display:flex;align-items:baseline;gap:7px;padding:3px 4px;border-radius:var(--radius);cursor:pointer;min-width:0}
 .witem:hover{background:var(--card)}
@@ -504,8 +511,12 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
   .tab[aria-selected="true"]{border-top-color:var(--ink)}
   .tab .tab-badge{position:absolute;top:5px;left:calc(50% + 6px)}
   body{padding-bottom:calc(96px + var(--tabbar-h) + env(safe-area-inset-bottom))}
-  .fab{bottom:calc(12px + var(--tabbar-h) + env(safe-area-inset-bottom))}
-  .toast{bottom:calc(76px + var(--tabbar-h) + env(safe-area-inset-bottom))}
+  /* 登録ボタンは右下の小さめの四角に寄せ、中央の内容を空ける。影ではなく罫線と背景色で目立たせる。
+     トーストはその真上に、本文と同じ左右の余白で出す（元に戻すと登録ボタンが重ならない） */
+  .fab{left:auto;right:16px;transform:none;min-height:48px;padding:0 18px;display:inline-flex;align-items:center;
+    border:1px solid var(--ink);box-shadow:none;bottom:calc(12px + var(--tabbar-h) + env(safe-area-inset-bottom))}
+  .fab:active{transform:translateY(1px)}
+  .toast{left:16px;transform:none;bottom:calc(72px + var(--tabbar-h) + env(safe-area-inset-bottom))}
 }
 
 /* ---- 今日のサマリー：集計行1行 ---- */
@@ -551,6 +562,14 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
 .acts .more-btn[aria-expanded="true"]{background:var(--rule-2);color:var(--ink)}
 .more{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 0 -6px;padding-top:8px;border-top:1px dashed var(--rule)}
 .more .act{border:1px solid var(--rule)}
+/* タッチ操作の端末：押せる範囲を 44px 以上に広げる（マウスの見た目は変えない） */
+@media (pointer:coarse){
+  .acts .act,.more .act{min-height:44px;padding:0 12px;display:inline-flex;align-items:center}
+  .acts .act.main{padding:0 16px}
+  .acts .more-btn{min-width:44px;justify-content:center}
+  .more{gap:8px}
+  .more .act.danger{margin-left:16px}
+}
 
 /* ---- 連続日数：直近7日のマス（ラジオ体操カードの判子のように、完了した日を塗る） ---- */
 .lv-streak{display:inline-flex;align-items:center;gap:4px;line-height:1.6;white-space:nowrap}
