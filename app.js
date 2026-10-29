@@ -1349,6 +1349,7 @@ function matchesSearch(it){
 }
 
 function renderList(){
+  if(needsKeyCard(CF, !!store.get("cf-key"), _cfAuthStopped, _cfKeyOk)) main.appendChild(keyCard());
   main.appendChild(quickBar());
   main.appendChild(todaySummary());
   main.appendChild(listFilterRow());
@@ -2488,7 +2489,7 @@ function cfDetect(){
       store.set("sync-backend", CF?"cf":"");
       if(CF && !_cfKeyHinted){
         _cfKeyHinted=true;
-        secretGet("cf-key").then(function(k){ if(!k) toast("設定（右上の歯車）でアクセスキーを入れると、データを読み込めます"); });
+        secretGet("cf-key").then(function(k){ if(!k){ toast("一覧の上の案内から、アクセスキーを入れてください"); softRender(); } });
       }
       return CF;
     })
@@ -2531,6 +2532,41 @@ function cfNoteAuthFailure(err){
     _cfLimitShown=true;
     toast("認証の失敗が続いたため、しばらく使えません。10分ほど待ってください");
   }
+}
+/* 初めての端末（アクセスキー未入力）か、キーが違うと分かった端末では、一覧の先頭に案内のカードを出す。
+   設定画面へ移らずに、その場でキーを入れて読み込めるようにする */
+var _cfKeyOk=false; // このページを開いてから、キーで読み込めたか（暗号化して保存できない端末でも、カードを消すため）
+function needsKeyCard(cf, hasKey, authStopped, keyOk){
+  return cf===true && !keyOk && (!hasKey || authStopped);
+}
+function keyCard(){
+  var wrong=_cfAuthStopped && !!store.get("cf-key");
+  var el=h('<div class="keycard" role="group" aria-labelledby="keycardTitle">'+
+    '<div class="keycard-head"><span class="badge"><i>◇</i> '+(wrong?"キー違い":"未同期")+'</span>'+
+    '<b id="keycardTitle">'+(wrong?"アクセスキーが違うようです":"この端末はまだ同期していません")+'</b></div>'+
+    '<p>'+(wrong?"保存してあるアクセスキーでは読み込めませんでした。正しいキーを入れ直してください。":"アクセスキーを入れると、保存してある締切を読み込みます。")+'</p>'+
+    '<div class="keycard-row quick"><input type="password" id="keycardIn" autocomplete="off" placeholder="アクセスキー（APP_KEY）" aria-label="アクセスキー">'+
+    '<button type="button">読み込む</button></div>'+
+    '<p class="keycard-msg" id="keycardMsg" role="status"></p></div>');
+  var input=el.querySelector("input"), btn=el.querySelector("button"), msg=el.querySelector("#keycardMsg");
+  function go(){
+    var key=input.value.trim();
+    if(!key){ msg.textContent="アクセスキーを入力してください。"; return; }
+    btn.disabled=true; msg.textContent="確認しています…";
+    var cfg=cfConfigFor(key);
+    cfFetchData(cfg).then(function(){
+      // キーが合うと分かってから保存する（間違ったキーを残して、自動の通信を失敗させないため）
+      _cfAuthStopped=false; _cfLimitShown=false; _cfKeyOk=true;
+      return secretSet("cf-key", key).then(function(){ return proceedPull(cfg,msg); }).then(function(){ btn.disabled=false; });
+    }).catch(function(err){
+      var st=err&&err.status;
+      msg.textContent=st===401 ? "アクセスキーが違います。" : st===429 ? "認証の失敗が続いたため、しばらく使えません。10分ほど待ってください。" : "読み込めませんでした："+(err&&err.message||"");
+      btn.disabled=false;
+    });
+  }
+  btn.onclick=go;
+  input.onkeydown=function(e){ if(e.key==="Enter"){ e.preventDefault(); go(); } };
+  return el;
 }
 /* 最後に確認した保存先の版（rev）。読み込みに成功したとき・送信に成功したときに保存する。
    「他の端末の更新があるか」は、端末の時計（updatedAt）ではなく、Worker が数える rev で判断する
@@ -3049,7 +3085,7 @@ function getRemoteText(cfg){
 
 function proceedPull(cfg,statusEl){
   statusEl.textContent="読み込んでいます…";
-  getRemoteText(cfg)
+  return getRemoteText(cfg)
     .then(function(text){
       var d=JSON.parse(text);
       // rawが効かずAPIのJSONが返った場合は、base64の中身を取り出す
