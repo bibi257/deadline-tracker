@@ -284,3 +284,16 @@ test('snapshots の at に索引がある。保存時の MAX(at) は全行を読
   const plan = await env.DB.prepare('EXPLAIN QUERY PLAN SELECT MAX(at) AS at FROM snapshots').all();
   assert.match(plan.results.map((r) => r.detail).join(' '), /snapshots_at/, 'MAX(at) が索引を使う');
 });
+
+test('GET /api/ics?dayHour=: 当日リマインドの時刻を指定できる（アプリの設定は端末ごとなので、アプリが渡す）。範囲外は 400', async () => {
+  const { env } = setup();
+  const data = { items: [{ id: 'd1', title: '当日の通知', due: '2026-02-03T08:00:00.000Z', cat: '課題' }] }; // 17:00 JST
+  await worker.fetch(new Request('https://x.test/api/data', { method: 'PUT', headers: { Authorization: `Bearer ${KEY}`, 'If-Match': '0', 'CF-Connecting-IP': '1.1.1.1' }, body: JSON.stringify(data) }), env);
+  const get = async (q) => worker.fetch(new Request(`https://x.test/api/ics${q}`, { headers: { Authorization: `Bearer ${KEY}`, 'CF-Connecting-IP': '1.1.1.1' } }), env);
+  const nine = await (await get('')).text();
+  const eight = await (await get('?dayHour=8')).text();
+  assert.match(nine, /TRIGGER;VALUE=DATE-TIME:20260203T000000Z/, '既定は 9 時（UTC 0 時）');
+  assert.match(eight, /TRIGGER;VALUE=DATE-TIME:20260202T230000Z/, '8 時（UTC 前日 23 時）');
+  assert.equal(await (await get('?dayHour=9')).text(), nine, '9 を明示しても同じ');
+  for (const bad of ['?dayHour=24', '?dayHour=-1', '?dayHour=x', '?dayHour=', '?dayHour=9.5']) assert.equal((await get(bad)).status, 400, bad);
+});
