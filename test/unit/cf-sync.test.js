@@ -17,6 +17,7 @@ const FNS = [
   'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'ghHint',
   'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems', 'cfAutoBlocked', 'cfNoteAuthFailure',
   'cfSnapUrl', 'cfGetJson', 'cfFetchSnapshots', 'cfReadSnapshot', 'fmtSnapAt', 'cfRestoreSnapshot',
+  'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker',
 ];
 
 /** 共有の Worker（1つの D1）と、複数の端末 */
@@ -39,7 +40,8 @@ function world() {
     const mem = new Map();
     const d = {
       name, toasts: [], confirms: [], answers: [], status: { textContent: '' },
-      db: { items: [], quarantine: [], updatedAt: null },
+      db: { items: [], quarantine: [], updatedAt: null, settings: { dayHour: 9 } },
+      saved: [], local: [], storedCfg: undefined,
       store: { get: (k) => (mem.has(k) ? mem.get(k) : null), set: (k, v) => mem.set(k, String(v)) },
     };
     const g = {
@@ -53,6 +55,10 @@ function world() {
       _autoSyncBlockedShown: false, _staleNoticeShown: false, CF_REV_KEY: 'cf-known-rev',
       utf8ToBase64: () => '', hoursSincePulled: () => null,
       // 起動時の「取り込み → 自動完了」用（本物の applyCompletion / save は画面まわりに依存するので、同じ効果だけ再現する）
+      // .ics の書き出し（Worker 優先）用
+      CF: true, cfDetect: async () => true, activeItems: () => d.db.items.filter((i) => !i.done),
+      getStoredCfConfig: async () => (d.storedCfg === undefined ? d.cfg : d.storedCfg),
+      saveIcsFile: (text, name) => d.saved.push({ text, name }), downloadICS: (list, name) => d.local.push({ list, name }),
       _cfAuthStopped: false, _cfLimitShown: false, _refreshing: null, autoPullIfStale: () => d.ctx.autoPullWith(d.cfg),
       parseItemDate: (it) => new Date(it.due), applyCompletion: (it) => { it.done = true; },
       save: () => { d.db.updatedAt = clock(); }, scheduleAutoSync() {},
@@ -68,9 +74,10 @@ function world() {
     d.autoPull = async () => { d.ctx.autoPullWith(d.cfg); await sleep(150); };
     return d;
   }
-  return { env, api, log, device, server: () => api('GET', '/api/data'), snapshots: () => api('GET', '/api/snapshots') };
+  return { env, api, log, device, fetchToWorker, server: () => api('GET', '/api/data'), snapshots: () => api('GET', '/api/snapshots') };
 }
 
+const fetch_ = (w, path) => w.fetchToWorker(`https://x.test${path}`, { headers: { Authorization: `Bearer ${KEY}` } });
 const titles = (r) => r.data.items.map((i) => i.title);
 const mine = (d) => Array.from(d.db.items, (i) => i.title); // vm の中で作られた配列は、そのままでは deepEqual できない
 
@@ -375,4 +382,51 @@ test('世代バックアップ: 日時は日本時間の「YYYY/M/D HH:MM」', (
   assert.equal(A.ctx.fmtSnapAt(Date.UTC(2026, 0, 1, 14, 59) / 1000), '2026/1/1 23:59');
   assert.equal(A.ctx.cfSnapUrl({ api: 'https://x.test/api/data' }), 'https://x.test/api/snapshots');
   assert.equal(A.ctx.cfSnapUrl({ api: 'https://x.test/api/data' }, 12), 'https://x.test/api/snapshots/12');
+});
+
+test('.ics の書き出し（Cloudflare）: 未完了の全件で、未同期の変更が無ければ Worker の /api/ics から取る。当日リマインドの時刻も渡す', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.edit('v1');
+  await A.sync();
+  A.db.settings.dayHour = 8;
+  await A.ctx.downloadIcsPreferWorker(A.db.items, 'deadlines-all');
+  assert.equal(A.local.length, 0, 'この端末では作らない');
+  assert.equal(A.saved.length, 1);
+  assert.equal(A.saved[0].name, 'deadlines-all');
+  assert.match(A.saved[0].text, /^BEGIN:VCALENDAR\r\n/);
+  assert.match(A.saved[0].text, /SUMMARY:v1/);
+  assert.match(A.saved[0].text, /TRIGGER;VALUE=DATE-TIME:20261130T230000Z/, '当日リマインドは 8 時（端末の設定）。Worker の既定の 9 時ではない');
+  // Worker の購読用 .ics と同じ規則・同じ文面（同じデータ・同じ時刻・同じ当日リマインドの時刻）
+  const direct = await (await fetch_(w, '/api/ics?dayHour=8')).text();
+  assert.equal(A.saved[0].text, direct);
+});
+
+test('.ics の書き出し（Cloudflare）: 条件がそろわないとき・失敗したときは、この端末で作る（オフラインでも書き出せる）', async () => {
+  const w = world();
+  let t = 0;
+  const A = w.device('A', () => new Date(Date.UTC(2026, 9, 26, 10, 0, t++)).toISOString()); // 編集のたびに updatedAt が進む
+  A.edit('v1');
+  await A.sync();
+  const all = () => A.db.items;
+  const check = async (label, fn) => {
+    A.saved.length = 0; A.local.length = 0;
+    await fn();
+    assert.equal(A.saved.length, 0, `${label}: Worker の .ics は使わない`);
+    assert.equal(A.local.length, 1, `${label}: この端末で作る`);
+  };
+  await check('一部だけ（件数が全件と違う）', () => A.ctx.downloadIcsPreferWorker(all().concat([{ id: 'x2', title: 'もう1件', due: '2026-12-01T00:00:00.000Z' }]), 'x'));
+  A.storedCfg = null;
+  await check('アクセスキーが無い', () => A.ctx.downloadIcsPreferWorker(all(), 'x'));
+  A.storedCfg = { ...A.cfg, headers: { Authorization: `Bearer ${'x'.repeat(32)}` } };
+  await check('キーが違う（401）', () => A.ctx.downloadIcsPreferWorker(all(), 'x'));
+  A.storedCfg = undefined;
+  A.ctx.CF = false;
+  await check('Cloudflare から配信されていない', () => A.ctx.downloadIcsPreferWorker(all(), 'x'));
+  A.ctx.CF = true;
+  A.edit('v2'); // 未同期の変更
+  await check('この端末に未同期の変更がある', () => A.ctx.downloadIcsPreferWorker(all(), 'x'));
+  await A.sync();
+  await w.env.DB.prepare('DELETE FROM docs').run(); // Worker のデータが空 → 中身の無いカレンダーが返る
+  await check('Worker の .ics に予定が無い', () => A.ctx.downloadIcsPreferWorker(all(), 'x'));
 });

@@ -535,15 +535,50 @@ function buildICS(items){
   L.push("END:VCALENDAR");
   return L.map(fold).join("\r\n")+"\r\n";
 }
-function downloadICS(items,name){
-  if(!items.length){ toast("書き出す締切がありません"); return; }
-  var blob=new Blob([buildICS(items)],{type:"text/calendar;charset=utf-8"});
+/* .ics の中身をファイルとして保存する */
+function saveIcsFile(text,name){
+  var blob=new Blob([text],{type:"text/calendar;charset=utf-8"});
   var url=URL.createObjectURL(blob);
   var a=document.createElement("a");
   a.href=url; a.download=(name||"deadlines").replace(/[\\/:*?"<>|]/g,"_")+".ics";
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(function(){ URL.revokeObjectURL(url); },1500);
   toast("カレンダーファイルを書き出しました");
+}
+function downloadICS(items,name){
+  if(!items.length){ toast("書き出す締切がありません"); return; }
+  saveIcsFile(buildICS(items),name);
+}
+/* Cloudflare から配信しているときは、未完了の全件の .ics を Worker に作らせる（購読用の .ics と同じ規則・同じ文面にするため。
+   規則を2か所で直さずに済む）。使うのは次の全部がそろったときだけ:
+     - 書き出すのが未完了の全件（list の件数が全件と同じ。絞り込んだ一部は、この端末で作る）
+     - この端末に未同期の変更が無い（Worker の内容がこの端末と同じ）
+     - アクセスキーがある
+   キーが無い・通信できない・失敗したとき、中身が空のときは、この端末で作る（オフラインでも書き出せる） */
+function icsViaWorkerOk(list){
+  if(CF!==true || !list.length || list.length!==activeItems().length) return false;
+  return !(db.updatedAt && store.get("gh-known-updatedAt")!==db.updatedAt);
+}
+function cfFetchIcs(cfg,dayHour){
+  // 当日リマインドの時刻は端末ごとの設定で Worker は知らないので、渡す
+  return fetch(cfg.api.replace(/\/data$/,"/ics")+"?dayHour="+encodeURIComponent(dayHour),{headers:cfg.headers, cache:"no-store"})
+    .then(function(res){
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      return res.text();
+    });
+}
+function downloadIcsPreferWorker(list,name){
+  var local=function(){ downloadICS(list,name); };
+  return (CF===null ? cfDetect() : Promise.resolve()) // 起動直後は、配信元の判定が終わるのを待つ
+    .then(function(){
+      if(!icsViaWorkerOk(list)) return null;
+      return getStoredCfConfig().then(function(cfg){ return cfg ? cfFetchIcs(cfg, db.settings.dayHour) : null; });
+    })
+    .then(function(text){
+      if(text && /^BEGIN:VCALENDAR/.test(text) && text.indexOf("BEGIN:VEVENT")>=0) saveIcsFile(text,name);
+      else local();
+    })
+    .catch(local);
 }
 
 /* ========== 状態 ========== */
@@ -1546,7 +1581,7 @@ function renderListBody(){
     arr.forEach(function(i){ body.appendChild(cardOf(i)); });
   });
   var all=h('<div class="list-foot"><button class="act primary">表示中の締切をまとめてカレンダーへ書き出す</button><button type="button" class="act">定期予定の一覧 ›</button></div>');
-  all.children[0].onclick=function(){ downloadICS(list,"deadlines"); };
+  all.children[0].onclick=function(){ downloadIcsPreferWorker(list,"deadlines"); };
   all.children[1].onclick=function(){ view="rep"; window.scrollTo(0,0); render(); };
   body.appendChild(all);
 }
@@ -2289,7 +2324,7 @@ function renderSettings(){
     fr.readAsText(f);
   };
   var bIcs=h('<button class="btn">全件を.icsで書き出す</button>');
-  bIcs.onclick=function(){ downloadICS(activeItems().sort(sortByDue),"deadlines-all"); };
+  bIcs.onclick=function(){ downloadIcsPreferWorker(activeItems().sort(sortByDue),"deadlines-all"); };
   s4.querySelector(".row").append(bOut,bIn,bIcs,file);
   if(CF===true) s4.appendChild(snapshotSection());
   main.appendChild(s4);
@@ -2378,7 +2413,7 @@ function renderSettings(){
   // Discordへ今すぐ送る
   var s6=h('<div class="sec"><h3>Discordへ今すぐ送る</h3>'+
     (CF===true
-      ? '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。通知先は、Cloudflare に登録したWebhookです（空欄のまま送信すると、Cloudflare から送ります。別の宛先へ送りたいときだけ、下に直接入力してください）。</p>'
+      ? '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。通知先は、Cloudflare に登録したWebhookです（空欄のまま送信すると、Cloudflare から送ります。この端末に保存したURLがそのまま入っているときも同じです。別の宛先へ送りたいときだけ、下に別のURLを入力してください）。</p>'
       : '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。通知先は上の同期設定を使って、Privateリポジトリの送信スクリプトから自動で読み取ります（別の宛先へ送りたいときだけ、下に直接入力してください）。</p>')+
     '<label class="field"><span>Discord Webhook URL（空欄で'+(CF===true?'Cloudflareから送信':'GitHubから自動取得')+'）</span><input type="password" id="dcHook" placeholder="通常は空欄のままで大丈夫です"></label>'+
     '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
@@ -2389,7 +2424,8 @@ function renderSettings(){
   s6.querySelector("#dcRemember").checked=!!store.get("dc-hook");
   secretGet("dc-hook").then(function(u){ // 暗号化して保存してあるので、復号できてから入れる（入力し始めていたら上書きしない）
     var box=s6.querySelector("#dcHook");
-    if(u && !box.value) box.value=u;
+    _dcPrefilled="";
+    if(u && !box.value){ box.value=u; _dcPrefilled=u; }
     if(!u && !store.get("dc-hook")) s6.querySelector("#dcRemember").checked=false;
   });
   var bSend=h('<button class="btn fill">今すぐ送信</button>');
@@ -2865,12 +2901,14 @@ function buildDigestText(){
   return t;
 }
 
+var _dcPrefilled=""; // 設定を開いたとき、入力欄に自動で入れた（この端末に保存済みの）Webhook URL
 /* 入力されたWebhookへ、いまの締切一覧を送信する。
    未入力の場合は、Privateリポジトリのスクリプトから自動で取得する */
 function sendToDiscord(s6,s5){
   var statusEl=s6.querySelector("#dcStatus");
   // コピー時に混ざりやすい空白・引用符・末尾のスラッシュを取り除く
   var hook=s6.querySelector("#dcHook").value.trim().replace(/^["'<]+|[">'\s]+$/g,"").replace(/\/+$/,"");
+  var g=function(id){ return s5.querySelector("#"+id); };
 
   function post(url){
     statusEl.textContent="送信しています…";
@@ -2902,6 +2940,24 @@ function sendToDiscord(s6,s5){
     });
   }
 
+  /* Worker から送る（Worker に登録した Webhook・Worker と同じ文面）。
+     Worker に Webhook が未登録（400）で、この端末に URL があるときだけ、その URL へ直接送る */
+  function postViaWorker(fallbackHook){
+    var cfg=ghConfig(g,statusEl);
+    if(!cfg) return;
+    statusEl.textContent="Cloudflareから送信しています…";
+    fetch(location.origin+"/api/digest",{method:"POST", headers:cfg.headers})
+      .then(function(res){
+        return res.json().catch(function(){ return {}; }).then(function(j){
+          if(res.ok && j.ok){ statusEl.textContent="送信しました（"+j.sent+"通）。"; toast("Discordへ送信しました"); return; }
+          if(res.status===400 && fallbackHook) return post(fallbackHook);
+          var m=j.error||("HTTP "+res.status), hint=ghHint(m);
+          statusEl.textContent="送信に失敗しました："+m+(hint?"　→ "+hint:"");
+        });
+      })
+      .catch(function(){ statusEl.textContent="送信に失敗しました。通信状況を確認してください。"; });
+  }
+
   if(hook){
     if(!isDiscordWebhookUrl(hook)){
       statusEl.textContent="DiscordのWebhook URLの形式ではありません。"; return;
@@ -2913,25 +2969,16 @@ function sendToDiscord(s6,s5){
         note.textContent=ok?"":"この端末では暗号化して保存できないため、Webhook URLは保存しませんでした（今回の送信だけに使います）。";
       });
     } else { secretDel("dc-hook"); note.textContent=""; }
+    // 設定を開いたときに保存済みの URL が入っていて、そのままなら、Worker の文面で送る（毎朝の通知と同じ文面にするため）。
+    // 別の URL を入れたとき（保存するかどうかに関わらず）は、その宛先へこの端末から直接送る
+    if(CF===true && hook===_dcPrefilled){ postViaWorker(hook); return; }
     post(hook);
     return;
   }
 
-  var g=function(id){ return s5.querySelector("#"+id); };
   // 未入力で保存先が Cloudflare のとき：Worker が登録済みの Webhook へ、今の締切一覧を送る
   if(CF===true){
-    var cfg=ghConfig(g,statusEl);
-    if(!cfg) return;
-    statusEl.textContent="Cloudflareから送信しています…";
-    fetch(location.origin+"/api/digest",{method:"POST", headers:cfg.headers})
-      .then(function(res){
-        return res.json().catch(function(){ return {}; }).then(function(j){
-          if(res.ok && j.ok){ statusEl.textContent="送信しました（"+j.sent+"通）。"; toast("Discordへ送信しました"); return; }
-          var m=j.error||("HTTP "+res.status), hint=ghHint(m);
-          statusEl.textContent="送信に失敗しました："+m+(hint?"　→ "+hint:"");
-        });
-      })
-      .catch(function(){ statusEl.textContent="送信に失敗しました。通信状況を確認してください。"; });
+    postViaWorker("");
     return;
   }
   // 未入力：上のGitHub設定を使ってスクリプトからURLを取り出す
@@ -4035,7 +4082,7 @@ function handleExportParam(){
     else if(mode==="once") list=activeItems().filter(function(i){ return !isRepeating(i); }).sort(sortByDue);
     else list=activeItems().sort(sortByDue);
     if(!list.length){ toast("書き出す予定がありません"); return; }
-    downloadICS(list, "deadlines");
+    downloadIcsPreferWorker(list, "deadlines");
     var guide=h('<div class="sec" style="border-color:var(--blue)">'+
       '<h3>カレンダーへの入れ方</h3>'+
       '<p>1. 保存された <b>deadlines.ics</b> を開く（Safariの右上のダウンロードマーク、または「ファイル」アプリの中）<br>'+

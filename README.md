@@ -247,7 +247,7 @@ iPhone では Safari で開いて共有ボタン →「ホーム画面に追加�
 | `GET /api/snapshots` | 世代バックアップの一覧（新しい順に最大200件） |
 | `GET /api/snapshots/<id>` | 世代バックアップ1件の中身 |
 | `GET /api/feed` | 未完了の締切の一覧。`?days=14` |
-| `GET /api/ics` | `.ics`（メモあり。`?memo=0` でメモなし） |
+| `GET /api/ics` | `.ics`（メモあり。`?memo=0` でメモなし。`?dayHour=9` は当日リマインドの時刻で、アプリが端末の設定を渡す） |
 | `GET /ics/<FEED_TOKEN>.ics` | 購読用の `.ics`（メモなし）。認証は URL の中のトークン。URL は `https://<Worker>/ics/<FEED_TOKEN>.ics` で、カレンダーアプリで「照会カレンダー」として追加する |
 | `GET /api/mail` | 締切のメールの件名と本文を作る（送らない）。`?target=today` `tomorrow` `auto` |
 | `POST /api/mail` | 締切のメールを今すぐ自分宛てに送る |

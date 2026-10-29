@@ -28,6 +28,9 @@ GitHub Pages + 非公開リポジトリ（`deadline-data`）の構成から、Cl
      - 自動完了の予定は、夜の見出しの件数と負荷予報に数えない（アプリのカレンダー・朝の一覧と同じ）。旧環境のスクリプトにも同じ規則を入れた
 4. アプリの保存先を Worker に切り替え（本番化）。Cron を有効にして旧 Actions を止める
 5. 後片付け（Pages 停止、GitHub 同期コードの削除、`deadline-data` のアーカイブ）
+   - 段階5で消すアプリ側のコード（項目8。Cloudflare 版では Worker に任せたので、旧環境をやめたら要らない。**今は消さない**）:
+     - Discord を端末から直接送る処理: `buildDigestText`・`fitDiscord`・`discordPayload`・`isDiscordWebhookUrl`・`sendToDiscord` の `post()`（Webhook URL を直接入力する経路）・`autoNotifyIfConfigured`（登録のたびの自動通知）・Webhook URL の端末保存（`dc-hook`、設定の「この端末に保存」）・`fetchWebhookFromRepo`（GitHub のスクリプトから URL を取る処理）
+     - `.ics` の「Worker が使えないとき」の備え（`downloadIcsPreferWorker` の `local()` 側）は、オフラインで書き出すために**残す**。1件ずつの書き出し・定期予定・表示中の一部の書き出しも `buildICS` のまま残す（`test/unit/app-logic.test.js` で、Worker の `buildIcs` と1文字まで一致することを確かめている）
 
 ## Cron Triggers（UTC。無料プランはアカウント全体で5本まで。このWorkerは3本）
 

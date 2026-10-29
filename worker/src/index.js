@@ -5,7 +5,7 @@
 //   GET  /api/snapshots         世代バックアップの一覧
 //   GET  /api/snapshots/:id     世代バックアップ1件の中身
 //   GET  /api/feed              未完了の締切の一覧（feed）。?days=14（確認用）
-//   GET  /api/ics               .ics（メモあり。?memo=0 でメモなし）
+//   GET  /api/ics               .ics（メモあり。?memo=0 でメモなし。?dayHour=9 は当日リマインドの時刻）
 //   GET  /ics/<FEED_TOKEN>.ics  購読用の .ics（メモなし）。認証は URL の中の長いトークン（シークレット FEED_TOKEN）
 //   GET  /api/mail              締切のメールの件名と本文を作る（送らない。確認用）。?target=today|tomorrow|auto
 //   POST /api/mail              締切のメールを今すぐ自分宛てに送る（手動）
@@ -258,7 +258,11 @@ async function getFeed(env, url) {
 }
 
 async function getIcs(env, url) {
-  const { ics } = buildIcs(await loadData(env), { now: now(env) * 1000, dayHour: 9, noMemo: url.searchParams.get('memo') === '0' });
+  // 当日リマインドの時刻（0〜23）。アプリの設定は端末ごとで Worker は知らないので、アプリが渡す。無ければ 9 時
+  const hourText = url.searchParams.get('dayHour');
+  const dayHour = hourText === null ? 9 : Number(hourText);
+  if (hourText !== null && !(/^\d{1,2}$/.test(hourText) && dayHour <= 23)) throw new HttpError(400, 'dayHour は 0〜23 の整数で指定してください');
+  const { ics } = buildIcs(await loadData(env), { now: now(env) * 1000, dayHour, noMemo: url.searchParams.get('memo') === '0' });
   return text(ics ?? EMPTY_CALENDAR, ICS_TYPE, 200, { 'Content-Disposition': 'inline; filename="deadlines.ics"' });
 }
 
