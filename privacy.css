@@ -1,0 +1,4 @@
+body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;line-height:1.8;max-width:42rem;margin:0 auto;padding:1.5rem 1rem 4rem;color:#1f2430;background:#fff}
+@media (prefers-color-scheme:dark){body{color:#e6e8ee;background:#141820}a{color:#8ab4ff}}
+h1{font-size:1.5rem}h2{font-size:1.1rem;margin-top:2rem}
+.en{margin-top:3rem;padding-top:1rem;border-top:1px solid #8884}
