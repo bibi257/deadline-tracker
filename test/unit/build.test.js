@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { hash10, versionIndexHtml, versionServiceWorker } from '../../scripts/build.mjs';
+import { hash10, versionDate, versionIndexHtml, versionServiceWorker } from '../../scripts/build.mjs';
 
 const root = new URL('../../', import.meta.url);
 const read = (p) => readFileSync(new URL(p, root), 'utf8');
@@ -41,13 +41,13 @@ test('サービスワーカー: /api/ と /ics/ は横取りしない（デー�
 
 test('版番号の自動化: app.js・styles.css の内容のハッシュで ?v= を、全体のハッシュで build-stamp とキャッシュ名を書き換える', () => {
   const html = '<!-- 例: <script src="app.js?v=..."> / <link href="styles.css?v=..."> -->\n<meta name="build-stamp" content="2026-10-29 13:00 説明">\n<link rel="stylesheet" href="styles.css?v=20261027-0300">\n<script src="app.js?v=20261029-1300"></script>';
-  const out = versionIndexHtml(html, { app: 'aaaaaaaaaa', css: 'cccccccccc', all: 'ffffffffff' });
-  assert.equal(out, '<!-- 例: <script src="app.js?v=..."> / <link href="styles.css?v=..."> -->\n<meta name="build-stamp" content="2026-10-29 13:00 説明 [ffffffffff]">\n<link rel="stylesheet" href="styles.css?v=cccccccccc">\n<script src="app.js?v=aaaaaaaaaa"></script>');
+  const out = versionIndexHtml(html, { app: 'aaaaaaaaaa', css: 'cccccccccc', all: 'ffffffffff', date: '2026-10-30 09:15' });
+  assert.equal(out, '<!-- 例: <script src="app.js?v=..."> / <link href="styles.css?v=..."> -->\n<meta name="build-stamp" content="2026-10-30 09:15 [ffffffffff] 説明">\n<link rel="stylesheet" href="styles.css?v=cccccccccc">\n<script src="app.js?v=aaaaaaaaaa"></script>');
   assert.equal(versionServiceWorker('const CACHE_NAME = "deadline-tracker-v17";\nx', 'ffffffffff'), 'const CACHE_NAME = "deadline-tracker-ffffffffff";\nx');
 });
 
 test('版番号の自動化: 置き換え対象が見つからなければ失敗する（古い値のまま出さない）', () => {
-  const all = { app: 'a', css: 'c', all: 'f' };
+  const all = { app: 'a', css: 'c', all: 'f', date: '2026-10-30 09:15' };
   const ok = '<meta name="build-stamp" content="x">\n<link rel="stylesheet" href="styles.css?v=1">\n<script src="app.js?v=1"></script>';
   assert.doesNotThrow(() => versionIndexHtml(ok, all));
   assert.throws(() => versionIndexHtml(ok.replace('app.js?v=1', 'app.js'), all), /app\.js\?v=/);
@@ -72,11 +72,17 @@ test('build: web/ の index.html と service-worker.js に、ファイルの内�
   assert.ok(web.includes(`<link rel="stylesheet" href="styles.css?v=${hash10(read('styles.css'))}">`), '実際の link タグ');
   assert.doesNotMatch(web, /(?:app\.js|styles\.css)\?v=\d{8}-\d{4}/, '手書きの日時の版番号が残っていない');
   const all = hash10(rootIndex, read('app.js'), read('styles.css'), rootSw);
-  assert.match(web, new RegExp(`<meta name="build-stamp" content="[^"]* \\[${all}\\]">`));
+  assert.match(web, new RegExp(`<meta name="build-stamp" content="\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} \\[${all}\\] [^"]+">`), '日時・ハッシュ・説明');
   assert.match(read('web/service-worker.js'), new RegExp(`const CACHE_NAME = "deadline-tracker-${all}";`));
   assert.equal(read('index.html'), rootIndex, 'ルートの index.html は書き換えない');
   assert.equal(read('service-worker.js'), rootSw, 'ルートの service-worker.js は書き換えない');
-  // 2回ビルドしても同じ（日時が入らないので、見た目に関係のないデプロイで読み直しが起きない）
+  // 同じコミットなら、何度ビルドしても同じ（見た目に関係のないデプロイで読み直しが起きない）
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root.pathname, stdio: 'pipe' });
   assert.equal(read('web/index.html'), web);
+});
+
+test('版の日時: BUILD_DATE で固定できる。無ければ、画面のファイルを最後に変えたコミットの日時（JST）か、ビルドした時刻', () => {
+  assert.equal(versionDate(root.pathname, { BUILD_DATE: '2026-01-02 03:04' }), '2026-01-02 03:04');
+  assert.match(versionDate(root.pathname, {}), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  assert.match(versionDate('/', {}), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, 'git のリポジトリではない場所でも、ビルドした時刻で動く');
 });
