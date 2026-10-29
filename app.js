@@ -3754,6 +3754,23 @@ function autoCompleteOverdueItems(){
   return affected;
 }
 
+/* 保存先の新しい内容の取り込みを先に済ませてから、期限切れの自動完了を行う。
+   順序が逆だと、自動完了の保存で「この端末に未同期の変更がある」と判断され、
+   他の端末の更新を取り込めず、次の同期も 409 で止まる。
+   取り込みが長引いても自動完了が止まらないよう、待つのは最大8秒 */
+var _refreshing=null;
+function refreshThenAutoComplete(){
+  if(_refreshing) return _refreshing;
+  var timer;
+  var limit=new Promise(function(resolve){ timer=setTimeout(resolve, 8000); });
+  _refreshing=Promise.race([autoPullIfStale(), limit]).then(function(){
+    clearTimeout(timer);
+    _refreshing=null;
+    if(autoCompleteOverdueItems()>0) softRender();
+  });
+  return _refreshing;
+}
+
 /* 繰り返し1回分だけ日付を進める。月・年単位は基準日(anchorDay)を保ち、
    その月に無い日(31日・2/29など)は月末に丸める。
    （setMonthのままだと 1/31 の翌月が 3/3 になってしまうため） */
@@ -3958,7 +3975,7 @@ function checkForUpdate(){
 }
 document.addEventListener("visibilitychange",function(){
   if(document.hidden){ flushAutoSync(); return; } // 閉じる前に、待っている自動同期を送る
-  checkForUpdate(); autoPullIfStale();
+  checkForUpdate(); refreshThenAutoComplete();
 });
 
 /* 定期的な再描画。入力欄を操作中や設定タブを開いているときは、
@@ -3982,14 +3999,14 @@ document.querySelectorAll(".tab").forEach(function(t){
 });
 document.getElementById("gearBtn").onclick=function(){ view=(view==="set")?"list":"set"; window.scrollTo(0,0); render(); };
 document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
-load(); autoCompleteOverdueItems(); applyTheme();
+load(); applyTheme();
 render();
 handleExportParam();
 handleActionParam();
-setInterval(function(){ autoCompleteOverdueItems(); softRender(); }, 60000); // 残り時間の更新とあわせて自動完了も確認
+setInterval(function(){ if(!_refreshing) autoCompleteOverdueItems(); softRender(); }, 60000); // 残り時間の更新とあわせて自動完了も確認（取り込み中は待つ）
 checkForUpdate();
-var _pullDone=autoPullIfStale();
+var _pullDone=refreshThenAutoComplete(); // 他の端末の更新の取り込み → 自動完了 の順
 handleDoneParam(_pullDone);
 setInterval(checkForUpdate, 10*60000); // 10分ごとに更新を確認
-setInterval(autoPullIfStale, 10*60000); // 10分ごとにGitHub側の新しい内容を確認
+setInterval(refreshThenAutoComplete, 10*60000); // 10分ごとに保存先の新しい内容を確認
 })();

@@ -15,7 +15,7 @@ after(() => mock.restoreAll());
 const FNS = [
   'cfKnownRev', 'cfSaveRev', 'cfFetchData', 'cfFetchState', 'cfPut', 'cfAskOverwrite', 'remoteHasUnknownChanges', 'fetchRemoteState',
   'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'ghHint',
-  'sanitizeIncomingItems', 'syncPayload',
+  'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems',
 ];
 
 /** 共有の Worker（1つの D1）と、複数の端末 */
@@ -50,6 +50,10 @@ function world() {
       sanitizeIncomingMeta: () => ({ templates: null, categories: null }),
       _autoSyncBlockedShown: false, _staleNoticeShown: false, CF_REV_KEY: 'cf-known-rev',
       utf8ToBase64: () => '', hoursSincePulled: () => null,
+      // 起動時の「取り込み → 自動完了」用（本物の applyCompletion / save は画面まわりに依存するので、同じ効果だけ再現する）
+      _refreshing: null, autoPullIfStale: () => d.ctx.autoPullWith(d.cfg),
+      parseItemDate: (it) => new Date(it.due), applyCompletion: (it) => { it.done = true; },
+      save: () => { d.db.updatedAt = clock(); }, scheduleAutoSync() {},
     };
     d.ctx = loadAppFunctions(FNS, g);
     d.cfg = { kind: 'cf', api: 'https://x.test/api/data', headers: { Authorization: `Bearer ${KEY}` } };
@@ -58,6 +62,7 @@ function world() {
     d.sync = async () => { d.ctx.doSync(d.cfg, d.status, false); await sleep(150); };
     d.pull = async () => { d.ctx.proceedPull(d.cfg, d.status); await sleep(150); };
     d.auto = async () => { d.ctx.runAutoSync(d.cfg); await sleep(150); };
+    d.start = async () => { await d.ctx.refreshThenAutoComplete(); }; // 起動時の処理
     d.autoPull = async () => { d.ctx.autoPullWith(d.cfg); await sleep(150); };
     return d;
   }
@@ -244,4 +249,32 @@ test('自動反映: この端末に未同期の変更が無ければ、rev が�
   await B.autoPull();
   assert.deepEqual(mine(B), ['Bの手元']);
   assert.equal(B.ctx.cfKnownRev(), '2');
+});
+
+test('起動時: 自動完了より先に他の端末の更新を取り込む。端末 B は A の内容を取り込み、続く同期も 409 にならない', async () => {
+  const w = world();
+  let t = 0;
+  const A = w.device('A', () => new Date(Date.UTC(2026, 9, 26, 10, 0, t++)).toISOString());
+  const B = w.device('B', () => new Date(Date.UTC(2026, 9, 26, 10, 0, t++)).toISOString());
+  const overdue = (d) => { d.db.items = [{ id: 'i1', title: '期限切れ', due: '2020-01-01T00:00:00.000Z', autoComplete: true }]; d.db.updatedAt = '2026-10-26T09:00:00.000Z'; };
+  overdue(A);
+  await A.sync();
+  await B.pull(); // B も同じ予定を持っている（期限切れ・自動完了つき）
+  await A.start(); // A が起動して自動完了 → 同期
+  assert.equal(A.db.items[0].done, true);
+  await A.sync();
+  await B.start(); // B が起動: 先に A の更新を取り込んでから、自動完了を確かめる
+  assert.equal(B.db.items[0].done, true, 'A の自動完了を取り込めている');
+  assert.ok(!B.toasts.some((m) => m.includes('自動反映していません')), '未同期の変更ありとして止められていない');
+  await B.sync(); // 続く同期（rev が一致するので 409 にならない）
+  assert.equal(B.confirms.length, 0, '上書きの確認が出ない');
+  assert.equal(B.ctx.cfKnownRev(), String((await w.server()).rev));
+});
+
+test('起動時: 取り込む内容が無い端末でも、期限切れの自動完了は行う', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.db.items = [{ id: 'i1', title: '期限切れ', due: '2020-01-01T00:00:00.000Z', autoComplete: true }];
+  await A.start(); // 同期の記録が無い端末（取り込みは何もしない）
+  assert.equal(A.db.items[0].done, true);
 });
