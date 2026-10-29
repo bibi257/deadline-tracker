@@ -35,6 +35,8 @@ const AUTH_MISS_WINDOW = 10 * 60;
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS docs (id TEXT PRIMARY KEY, json TEXT NOT NULL, rev INTEGER NOT NULL, updated_at TEXT, saved_at INTEGER NOT NULL)',
   'CREATE TABLE IF NOT EXISTS snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, rev INTEGER NOT NULL, json TEXT NOT NULL)',
+  // 保存のたびの MAX(at) が、バックアップの件数だけ行を読まないように（D1 の無料枠は読んだ行数で数える）
+  'CREATE INDEX IF NOT EXISTS snapshots_at ON snapshots(at)',
   'CREATE TABLE IF NOT EXISTS limits (k TEXT PRIMARY KEY, n INTEGER NOT NULL, until INTEGER NOT NULL)',
 ];
 

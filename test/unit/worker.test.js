@@ -256,3 +256,12 @@ test('/api/ics と /api/feed は認証が要り、Python 版と同じ内容を�
   assert.equal((await call('GET', '/api/feed?days=abc')).status, 400);
   assert.equal((await call('GET', '/api/feed?days=999')).status, 400);
 });
+
+test('snapshots の at に索引がある。保存時の MAX(at) は全行を読まず、索引で引く', async () => {
+  const { env, call } = setup();
+  assert.equal((await call('PUT', '/api/data', { body: { items: [] }, headers: { 'If-Match': '0' } })).status, 201);
+  const idx = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'snapshots'").all();
+  assert.ok(idx.results.some((r) => r.name === 'snapshots_at'), '索引 snapshots_at');
+  const plan = await env.DB.prepare('EXPLAIN QUERY PLAN SELECT MAX(at) AS at FROM snapshots').all();
+  assert.match(plan.results.map((r) => r.detail).join(' '), /snapshots_at/, 'MAX(at) が索引を使う');
+});
