@@ -1980,6 +1980,71 @@ function checkVersionDisplay(section, myStamp){
     .catch(function(){ el.textContent="確認に失敗しました。"; });
 }
 
+/* 設定の「バックアップと復元」に入れる、Cloudflare の世代バックアップの一覧と復元。
+   一覧はボタンを押したときだけ読む（設定を開くたびには読まない） */
+function snapshotSection(){
+  var sS=h('<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--rule)"><h4 style="margin:0 0 6px;font-size:14px">世代バックアップ（Cloudflare）</h4>'+
+    '<p style="font-size:12.5px;color:var(--ink-3);margin:0 0 10px">保存のたびに、前回から30分以上空いていれば、上書き前の内容を残しています（古いものは自動で間引きます）。「この時点に戻す」と、今のCloudflareの内容も世代バックアップに残してから、その時点の内容で置き換えます。使った世代バックアップは消えません。</p>'+
+    '<div class="row"></div><p class="snap-status" style="font-size:12.5px;margin:8px 0 0"></p><div class="cat-list snap-list"></div></div>');
+  var status=sS.querySelector(".snap-status"), list=sS.querySelector(".snap-list");
+  // 入力欄にアクセスキーがあればそれを、なければこの端末に保存したキーを使う
+  var snapCfg=function(){
+    var box=document.getElementById("ghToken"), key=box && box.value.trim();
+    return key ? Promise.resolve(cfConfigFor(key)) : getStoredCfConfig();
+  };
+  var bLoad=h('<button class="btn">世代バックアップの一覧を読み込む</button>');
+  bLoad.onclick=function(){
+    status.textContent="読み込んでいます…"; list.textContent="";
+    snapCfg().then(function(cfg){
+      if(!cfg){ status.textContent="下の「端末間の同期」でアクセスキーを入れてから押してください（「この端末にアクセスキーを保存」にすると、入れ直さずに使えます）。"; return; }
+      return cfFetchSnapshots(cfg).then(function(snaps){
+        status.textContent=snaps.length ? snaps.length+"件（新しい順）" : "世代バックアップはまだありません。";
+        snaps.forEach(function(sn){ list.appendChild(snapshotRow(sn,cfg,status)); });
+      });
+    }).catch(function(e){ status.textContent="読み込めませんでした："+(e.message||"通信に失敗しました"); });
+  };
+  sS.querySelector(".row").appendChild(bLoad);
+  return sS;
+}
+/* 一覧の1行。「中身を見る」で件数と先頭の数件を出し、「この時点に戻す」で復元する */
+function snapshotRow(sn,cfg,status){
+  var when=fmtSnapAt(sn.at);
+  var wrap=h('<div></div>');
+  var row=h('<div class="cat-row"><span class="cat-name"></span><div class="cat-btns"></div></div>');
+  var name=row.querySelector(".cat-name");
+  name.textContent=when;
+  var meta=h('<span style="font-size:11.5px;color:var(--ink-3)"></span>');
+  meta.textContent="版 "+sn.rev+"・"+Math.max(1,Math.round(sn.size/1024))+" KB";
+  name.append(document.createElement("br"),meta);
+  var detail=h('<div style="font-size:12.5px;color:var(--ink-2);padding:4px 0 8px"></div>');
+  detail.hidden=true;
+  var bView=h('<button class="act" title="中身を見る">中身</button>');
+  bView.onclick=function(){
+    detail.hidden=false; detail.textContent="読み込んでいます…";
+    cfReadSnapshot(cfg,sn.id).then(function(j){
+      var items=j.data.items, titles=items.slice(0,5).map(function(i){ return i && typeof i.title==="string" ? i.title : "（題名なし）"; });
+      detail.textContent="締切 "+items.length+"件"+(titles.length?"：":"")+titles.join("、")+(items.length>5?" ほか":"");
+      var bBack=h('<button class="act danger" style="display:block;margin-top:6px;border:1px solid var(--rule)">この時点に戻す</button>');
+      bBack.onclick=function(){
+        var unsynced=db.updatedAt && store.get("gh-known-updatedAt")!==db.updatedAt;
+        if(!confirm("Cloudflareのデータを、"+when+"（版 "+sn.rev+"・"+items.length+"件）の内容に戻します。\n\n"+
+          "今のCloudflareの内容は、先に世代バックアップへ残します。この世代バックアップも消えません。"+
+          (unsynced ? "\n\nこの端末には、まだ同期していない変更があります。戻すと、その変更は失われます。" : "")+"\n\nよろしいですか？")) return;
+        status.textContent="戻しています…";
+        cfRestoreSnapshot(cfg,j.data).then(function(r){
+          status.textContent=when+" の内容に戻しました（"+r.n+"件）。"+(r.quarantined ? r.quarantined+"件は形式が不正のため隔離しました。" : "");
+          toast(when+" の内容に戻しました");
+          render();
+        }).catch(function(e){ status.textContent="戻せませんでした："+(e.message||"通信に失敗しました")+"（この端末のデータは変えていません）"; });
+      };
+      detail.appendChild(bBack);
+    }).catch(function(e){ detail.textContent="中身を読み込めませんでした："+(e.message||"通信に失敗しました"); });
+  };
+  row.querySelector(".cat-btns").appendChild(bView);
+  wrap.append(row,detail);
+  return wrap;
+}
+
 function renderSettings(){
   // このアプリが最新版かどうかを確認できるセクション
   var myStamp=(document.querySelector('meta[name="build-stamp"]')||{}).content||"不明";
@@ -2226,6 +2291,7 @@ function renderSettings(){
   var bIcs=h('<button class="btn">全件を.icsで書き出す</button>');
   bIcs.onclick=function(){ downloadICS(activeItems().sort(sortByDue),"deadlines-all"); };
   s4.querySelector(".row").append(bOut,bIn,bIcs,file);
+  if(CF===true) s4.appendChild(snapshotSection());
   main.appendChild(s4);
 
   // 端末間の同期（Cloudflare の Worker / GitHub）。どちらかは、このアプリがどこから配信されているかで決まる
@@ -2453,6 +2519,69 @@ function cfPut(cfg,payload){
       if(!res.ok) return res;
       return res.clone().json().then(function(j){ cfSaveRev(j&&j.rev); return res; }, function(){ return res; });
     });
+}
+/* ---- 世代バックアップ（Cloudflare）。設定の「バックアップと復元」から、一覧・中身の確認・復元をする ---- */
+function cfSnapUrl(cfg,id){ return cfg.api.replace(/\/data$/,"/snapshots")+(id===undefined?"":"/"+encodeURIComponent(id)); }
+function cfGetJson(cfg,url){
+  return fetch(url,{headers:cfg.headers, cache:"no-store"}).then(function(res){
+    if(!res.ok) return res.json().catch(function(){ return {}; }).then(function(e){
+      var err=new Error(e.error||e.message||("HTTP "+res.status));
+      err.status=res.status;
+      throw err;
+    });
+    return res.json();
+  });
+}
+/* 一覧。[{id, at(保存した時刻。epoch秒), rev, size(バイト)}]を新しい順に */
+function cfFetchSnapshots(cfg){
+  return cfGetJson(cfg,cfSnapUrl(cfg)).then(function(j){ return Array.isArray(j.snapshots) ? j.snapshots : []; });
+}
+/* 1件の中身。{id, at, rev, data} */
+function cfReadSnapshot(cfg,id){
+  return cfGetJson(cfg,cfSnapUrl(cfg,id)).then(function(j){
+    if(!j || !j.data || !Array.isArray(j.data.items)) throw new Error("この世代バックアップの形式が読み取れません");
+    return j;
+  });
+}
+/* 保存した時刻（epoch秒）を、日本時間の「2026/10/29 22:24」に */
+function fmtSnapAt(sec){
+  var d=new Date(sec*1000+9*3600*1000), p2=function(n){ return ("0"+n).slice(-2); };
+  return d.getUTCFullYear()+"/"+(d.getUTCMonth()+1)+"/"+d.getUTCDate()+" "+p2(d.getUTCHours())+":"+p2(d.getUTCMinutes());
+}
+/* 世代バックアップの内容(snap=cfReadSnapshotのdata)に戻す。
+   先に Cloudflare の今の内容を世代バックアップに残してから(?backup=1)置き換え、成功したらこの端末のデータも置き換える。
+   失敗したら例外にして、この端末のデータは変えない。使った世代バックアップは消えない */
+function cfRestoreSnapshot(cfg,snap){
+  var check=sanitizeIncomingItems(snap.items);
+  var payload=Object.assign({}, snap, {items:check.kept, updatedAt:new Date().toISOString()});
+  return cfFetchData(cfg).then(function(cur){
+    cfg.ifMatch=String(cur.rev); // 今の版を確かめたうえで置き換える（同時に他の端末が更新していたら 409）
+    cfg.backup=true;             // 今の内容を、間隔に関わらず必ず世代バックアップに残す
+    return cfPut(cfg,payload);
+  }).then(function(res){
+    if(res.ok) return res;
+    return res.json().catch(function(){ return {}; }).then(function(e){
+      var err=new Error(res.status===409 ? "ほかの端末が同時に更新しました。もう一度試してください" : (e.error||e.message||("HTTP "+res.status)));
+      err.status=res.status;
+      throw err;
+    });
+  }).then(function(){
+    db.items=check.kept;
+    if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
+    var meta=sanitizeIncomingMeta(payload);
+    if(meta.templates) db.templates=meta.templates;
+    if(Array.isArray(payload.trash)) db.trash=normalizeTrash(payload.trash);
+    if(meta.categories) db.categories=meta.categories;
+    if(payload.catReminders) db.catReminders=cleanCatReminders(payload.catReminders);
+    if(payload.catColors) db.catColors=cleanCatColors(payload.catColors);
+    adoptCompletions(payload);
+    db.updatedAt=payload.updatedAt;
+    saveRaw();
+    markSynced("復元");
+    markPulled();
+    store.set("gh-known-updatedAt", db.updatedAt); // 保存先もこの時刻の内容と一致した（版は cfPut が保存した）
+    return {n:check.kept.length, quarantined:check.quarantined.length};
+  });
 }
 /* Cloudflare に、この端末がまだ読み込んでいない更新があるとき、どうするかを選ばせる。
    true=バックアップ付きで上書き、false=上書きせず読み込みの手順へ */
