@@ -35,6 +35,8 @@ const AUTH_MISS_WINDOW = 10 * 60;
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS docs (id TEXT PRIMARY KEY, json TEXT NOT NULL, rev INTEGER NOT NULL, updated_at TEXT, saved_at INTEGER NOT NULL)',
   'CREATE TABLE IF NOT EXISTS snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, rev INTEGER NOT NULL, json TEXT NOT NULL)',
+  // 保存のたびの MAX(at) が、バックアップの件数だけ行を読まないように（D1 の無料枠は読んだ行数で数える）
+  'CREATE INDEX IF NOT EXISTS snapshots_at ON snapshots(at)',
   'CREATE TABLE IF NOT EXISTS limits (k TEXT PRIMARY KEY, n INTEGER NOT NULL, until INTEGER NOT NULL)',
 ];
 
@@ -42,13 +44,6 @@ const DOC_ID = 'main';
 
 // どの応答にも付ける。Content-Type と違う種類として解釈させない（ブラウザの推測を止める）
 const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff' };
-
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, If-Match',
-  'Access-Control-Max-Age': '86400',
-};
 
 class HttpError extends Error {
   constructor(status, message, extra = {}) {
@@ -63,7 +58,7 @@ const now = (env) => (env.NOW ? env.NOW() : Math.floor(Date.now() / 1000));
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS, ...CORS },
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS },
   });
 }
 
@@ -379,7 +374,8 @@ export default {
     if (!url.pathname.startsWith('/api/')) {
       return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 });
     }
-    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...SECURITY_HEADERS, ...CORS } });
+    // CORS は許可しない（アプリは同じオリジンから配信される）。プリフライトは CORS ヘッダーなしで返し、ブラウザに拒否させる
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: SECURITY_HEADERS });
     try {
       await initDb(env.DB);
       return await route(env, request);

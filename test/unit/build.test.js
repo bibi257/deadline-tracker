@@ -9,7 +9,7 @@ const read = (p) => readFileSync(new URL(p, root), 'utf8');
 
 test('build: 画面のファイルと privacy.html を web/ にそろえる', () => {
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root.pathname, stdio: 'pipe' });
-  for (const f of ['index.html', 'privacy.html', 'app.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest', 'assets/icon-192.png']) {
+  for (const f of ['index.html', 'privacy.html', 'privacy.css', 'app.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest', 'assets/icon-192.png']) {
     assert.ok(existsSync(new URL(`web/${f}`, root)), f);
   }
 });
@@ -24,6 +24,12 @@ test('プライバシーポリシー: 使う権限・目的・第三者に渡さ
   assert.match(html, /api-services-user-data-policy/);
   assert.match(html, /github\.com\/bibi257\/deadline-tracker\/issues/);
   assert.doesNotMatch(html, /[\w.+-]+@[\w-]+\.[\w.]+/, 'メールアドレスは書かない');
+});
+
+test('プライバシーポリシー: スタイルは外部ファイル（CSP がインラインの <style> を止めるため）', () => {
+  assert.doesNotMatch(read('privacy.html'), /<style|\sstyle=/);
+  assert.match(read('privacy.html'), /<link rel="stylesheet" href="privacy\.css">/);
+  assert.match(read('web/privacy.css'), /max-width:42rem/);
 });
 
 test('サービスワーカー: /api/ と /ics/ は横取りしない（データをキャッシュに残さない）', () => {

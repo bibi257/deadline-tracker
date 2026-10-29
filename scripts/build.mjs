@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const out = `${root}web/`;
-const files = ['index.html', 'privacy.html', 'app.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest'];
+const files = ['index.html', 'privacy.html', 'privacy.css', 'app.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest'];
 
 /**
  * 静的ファイルに付けるセキュリティヘッダー（Workers の静的アセットの _headers）。

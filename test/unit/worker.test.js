@@ -177,11 +177,18 @@ test('未知のパス・メソッドは 404、/api/ 以外は静的ファイル�
   assert.equal(await res.text(), 'page');
 });
 
-test('OPTIONS（プリフライト）は認証なしで 204', async () => {
+test('CORS は許可しない: どの API の応答にも Access-Control-* が付かず、OPTIONS（プリフライト）も許可しない', async () => {
   const { env } = setup();
-  const res = await worker.fetch(new Request('https://x.test/api/data', { method: 'OPTIONS' }), env);
-  assert.equal(res.status, 204);
-  assert.match(res.headers.get('Access-Control-Allow-Headers'), /If-Match/);
+  const origin = { Origin: 'https://evil.test', 'CF-Connecting-IP': '1.1.1.1' };
+  const calls = [
+    worker.fetch(new Request('https://x.test/api/health', { headers: origin }), env),
+    worker.fetch(new Request('https://x.test/api/data', { headers: origin }), env), // 401
+    worker.fetch(new Request('https://x.test/api/data', { headers: { ...origin, Authorization: `Bearer ${KEY}` } }), env),
+    worker.fetch(new Request('https://x.test/api/data', { method: 'OPTIONS', headers: { ...origin, 'Access-Control-Request-Method': 'PUT' } }), env),
+  ];
+  for (const res of await Promise.all(calls)) {
+    for (const [name] of res.headers) assert.doesNotMatch(name, /^access-control-/i, `${res.status}: ${name}`);
+  }
 });
 
 // ---- 締切データから作る出力（feed・.ics） ----
@@ -248,4 +255,13 @@ test('/api/ics と /api/feed は認証が要り、Python 版と同じ内容を�
   assert.deepEqual(f.body.warnings, []);
   assert.equal((await call('GET', '/api/feed?days=abc')).status, 400);
   assert.equal((await call('GET', '/api/feed?days=999')).status, 400);
+});
+
+test('snapshots の at に索引がある。保存時の MAX(at) は全行を読まず、索引で引く', async () => {
+  const { env, call } = setup();
+  assert.equal((await call('PUT', '/api/data', { body: { items: [] }, headers: { 'If-Match': '0' } })).status, 201);
+  const idx = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'snapshots'").all();
+  assert.ok(idx.results.some((r) => r.name === 'snapshots_at'), '索引 snapshots_at');
+  const plan = await env.DB.prepare('EXPLAIN QUERY PLAN SELECT MAX(at) AS at FROM snapshots').all();
+  assert.match(plan.results.map((r) => r.detail).join(' '), /snapshots_at/, 'MAX(at) が索引を使う');
 });
