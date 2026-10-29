@@ -13,7 +13,7 @@ const FNS = [
   'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText',
   'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
   'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
-  'headerCount', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
+  'headerCount', 'needsKeyCard', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
 ];
 const VARS = ['DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
 
@@ -456,4 +456,19 @@ test('headerCount: 期限切れがあれば期限切れの数を出す。超過�
   assert.deepEqual(plain(app.headerCount(items, now, 'list')), { num: 2, label: '期限切れ', sub: '' });
   assert.deepEqual(plain(app.headerCount(items, now, 'over')), { num: 2, label: '超過', sub: '' });
   assert.deepEqual(plain(app.headerCount(items, now, 'rep')), { num: 2, label: '定期予定', sub: '' });
+});
+
+// ---- 初めての端末の案内カード（D6） ----
+
+test('needsKeyCard: Cloudflare 配信で、キー未入力（またはキー違いと分かった）端末にだけ出す。読み込めたら消す', () => {
+  const { app } = load();
+  const t = (...a) => app.needsKeyCard(...a);
+  //      (CF,    キー保存済み, 認証停止, 読み込み済み)
+  assert.equal(t(true, false, false, false), true, '初めての端末');
+  assert.equal(t(true, true, true, false), true, 'キーが違うと分かった端末');
+  assert.equal(t(true, true, false, false), false, 'キーがあって通れている端末には出さない');
+  assert.equal(t(true, false, false, true), false, '読み込めた後は、保存できない端末でも消す');
+  assert.equal(t(true, true, true, true), false, '入れ直して読み込めたら消す');
+  assert.equal(t(false, false, false, false), false, 'GitHub 配信では出さない');
+  assert.equal(t(null, false, false, false), false, '保存先の判定前は出さない');
 });
