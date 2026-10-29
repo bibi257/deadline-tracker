@@ -1,0 +1,14 @@
+{
+  "items": [
+    {"id": "r1", "title": "週次の掃除", "due": "2026-02-03T03:00:00.000Z", "cat": "家", "rep": "weekly", "done": false}
+  ],
+  "completions": [
+    {"itemId": "a1", "title": "朝のA", "cat": "家", "doneAt": "2026-01-27T22:00:00.000Z", "lead": 30, "kind": "early", "exp": 10},
+    {"itemId": "a2", "title": "朝のB", "cat": "家", "doneAt": "2026-01-28T22:30:00.000Z", "lead": 30, "kind": "early", "exp": 10},
+    {"itemId": "a3", "title": "夜のC", "cat": "家", "doneAt": "2026-01-29T11:00:00.000Z", "lead": 5, "kind": "ontime", "exp": 10},
+    {"itemId": "a4", "title": "夜のD", "cat": "家", "doneAt": "2026-01-30T12:00:00.000Z", "lead": 5, "kind": "ontime", "exp": 10},
+    {"itemId": "r1", "title": "週次の掃除", "cat": "家", "rep": true, "doneAt": "2026-01-25T09:00:00.000Z", "lead": 2, "kind": "ontime", "exp": 5},
+    {"itemId": "r1", "title": "週次の掃除", "cat": "家", "rep": true, "doneAt": "2026-01-18T09:00:00.000Z", "lead": -50, "kind": "late", "exp": 5}
+  ],
+  "expCarry": 0
+}

@@ -3,7 +3,7 @@ import { after, before, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import worker from '../../worker/src/index.js';
-import { CRON_DIGEST, CRON_MAIL_EVENING, CRON_MAIL_MORNING, CRON_MAINTENANCE, readConfig, runScheduled, sendDigest } from '../../worker/src/jobs.js';
+import { CRON_DIGEST, CRON_MAIL_EVENING, CRON_MAIL_MORNING, readConfig, runScheduled, sendDigest } from '../../worker/src/jobs.js';
 import { pruneSnapshots, runMaintenance } from '../../worker/src/maintenance.js';
 import { parseNow, fromJst } from '../../worker/src/time.js';
 import { createD1 } from '../support/d1Shim.js';
@@ -116,7 +116,8 @@ test('一覧を作る処理が失敗したら、失敗したことを Discord �
 
 test('wrangler.jsonc の Cron の式が、コードの定数と同じ', () => {
   const text = readFileSync(new URL('../../wrangler.jsonc', import.meta.url), 'utf8').replace(/^\s*\/\/.*$/gm, '');
-  assert.deepEqual(JSON.parse(text).triggers.crons, [CRON_DIGEST, CRON_MAIL_EVENING, CRON_MAIL_MORNING, CRON_MAINTENANCE]);
+  assert.deepEqual(JSON.parse(text).triggers.crons, [CRON_DIGEST, CRON_MAIL_EVENING, CRON_MAIL_MORNING]);
+  assert.equal(JSON.parse(text).triggers.crons.length, 3, '無料プランの Cron Triggers はアカウント全体で5本まで。このWorkerでは3本にまとめる');
 });
 
 test('Worker の scheduled() が、Cron の式に応じて動く。知らない式は何もしない', async () => {
@@ -240,7 +241,7 @@ test('夜の Cron（20:23）は翌日分、朝の Cron（5:23）は当日分の�
     assert.match(body, /■ おすすめの順番（上位5件）/);
     assert.match(body, new RegExp(`この日付: ${date} `));
     assert.doesNotMatch(raw, /CLIENT-SECRET|REFRESH-TOKEN|ya29/);
-    assert.equal(net.calls.filter((c) => c.kind === 'discord').length, 0, 'メールだけ。Discord には送らない');
+    assert.equal(net.calls.filter((c) => c.kind === 'discord').length, cron === CRON_MAIL_EVENING ? 1 : 0, '夜の Cron だけ、メールのあとに夜の再通知を Discord へ送る。朝の Cron は Discord へ送らない');
   }
 });
 
@@ -248,12 +249,12 @@ test('Gmail の設定が未設定・一部だけのとき、データが無い�
   for (const extra of [{}, { ...GOOGLE, GOOGLE_REFRESH_TOKEN: undefined }, { ...GOOGLE, MAIL_TO: 'bad' }]) {
     const net = fakeNet();
     const { env } = await setup({ ...extra, FETCH: net.fetchFn });
-    assert.deepEqual(await runScheduled(CRON_MAIL_EVENING, env, MORNING), { mail: null });
-    assert.equal(net.calls.length, 0);
+    assert.equal((await runScheduled(CRON_MAIL_EVENING, env, MORNING)).mail, null);
+    assert.equal(net.calls.filter((c) => c.kind !== 'discord').length, 0, 'Google には何も送らない（夜の再通知は Discord へ届く）');
   }
   const net = fakeNet();
   const { env } = await setup({ ...GOOGLE, FETCH: net.fetchFn }, { data: null });
-  assert.deepEqual(await runScheduled(CRON_MAIL_MORNING, env, MORNING), { mail: null });
+  assert.equal((await runScheduled(CRON_MAIL_MORNING, env, MORNING)).mail, null);
   assert.equal(net.calls.length, 0);
 });
 
@@ -303,4 +304,98 @@ test('朝の Cron: DISCORD_USER_ID が未設定でも、送る本文すべてに
   await runScheduled(CRON_DIGEST, env, MORNING);
   assert.ok(discord.calls.length > 0);
   for (const c of discord.calls) assert.deepEqual(c.body.allowed_mentions, { parse: [], users: [] });
+});
+
+
+// ---- 夜の再通知・週次レビュー・掃除（Cron の本数を増やさないための振り分け） ----
+
+const THU = '2026-01-29 20:23'; // 木曜
+const SUN = '2026-02-01 20:23'; // 日曜
+
+test('夜の Cron（20:23）: 月〜土は夜の再通知、日曜は週次レビューを Discord へ送る', async () => {
+  const a = await setup();
+  const out = await runScheduled(CRON_MAIL_EVENING, a.env, parseNow(THU) / 1000);
+  assert.equal(out.review, 1);
+  assert.match(a.discord.calls[0].body.content, /^<@100000000000000001> \n# 🌙 まだ終わっていません/);
+  assert.equal(a.discord.calls.length, 1);
+
+  const b = await setup();
+  const w = await runScheduled(CRON_MAIL_EVENING, b.env, parseNow(SUN) / 1000);
+  assert.equal(w.review, 2);
+  assert.match(b.discord.calls[0].body.content, /^# 📅 来週の見通し/);
+  assert.match(b.discord.calls[1].body.content, /^# 📈 先々の見通し/);
+  for (const c of b.discord.calls) assert.deepEqual(c.body.allowed_mentions, { parse: [], users: [UID] });
+});
+
+test('夜の再通知: 対象が0件の日は、何も送らない（エラーにもしない）', async () => {
+  const { env, discord } = await setup({}, { data: { items: [{ id: 'f', title: '来月', due: '2026-03-01T03:00:00.000Z' }] } });
+  assert.equal((await runScheduled(CRON_MAIL_EVENING, env, parseNow(THU) / 1000)).review, 0);
+  assert.equal(discord.calls.length, 0);
+});
+
+test('夜の再通知・週次レビュー: Webhook が未設定なら送らない。データが無いときも送らない（朝の一覧のような警告は出さない）', async () => {
+  const none = await setup({ DISCORD_WEBHOOK_URL: '' });
+  assert.equal((await runScheduled(CRON_MAIL_EVENING, none.env, parseNow(THU) / 1000)).review, null);
+  assert.equal(none.discord.calls.length, 0);
+  const empty = await setup({}, { data: null });
+  assert.equal((await runScheduled(CRON_MAIL_EVENING, empty.env, parseNow(THU) / 1000)).review, 0);
+  assert.equal((await runScheduled(CRON_MAIL_EVENING, empty.env, parseNow(SUN) / 1000)).review, 0);
+  assert.equal(empty.discord.calls.length, 0);
+});
+
+test('朝の Cron（5:23）: メールのあとに世代バックアップの間引きと掃除を行う', async () => {
+  const net = fakeNet();
+  const { env } = await setup({ ...GOOGLE, FETCH: net.fetchFn });
+  await env.DB.prepare('INSERT INTO limits (k, n, until) VALUES (?, 1, ?)').bind('auth:old', 1).run();
+  const out = await runScheduled(CRON_MAIL_MORNING, env, parseNow('2026-01-30 05:23') / 1000);
+  assert.equal(out.mail.subject, '【締切トラッカー】1/30（金）の締切');
+  assert.ok(out.maintenance);
+  assert.equal(await env.DB.prepare("SELECT COUNT(*) AS n FROM limits WHERE k = 'auth:old'").first('n'), 0, '期限切れの記録が消える');
+});
+
+test('1つの仕事が失敗しても、同じ Cron の残りは実行し、最後に例外を投げる（Cron の履歴に失敗として残る）', async () => {
+  // 朝 5:23: メールが失敗しても、掃除は実行する
+  const net = fakeNet({ token: [{ status: 400, body: { error: 'invalid_grant' } }] });
+  const m = await setup({ ...GOOGLE, FETCH: net.fetchFn });
+  await m.env.DB.prepare('INSERT INTO limits (k, n, until) VALUES (?, 1, ?)').bind('auth:old', 1).run();
+  const e1 = await runScheduled(CRON_MAIL_MORNING, m.env, parseNow('2026-01-30 05:23') / 1000).catch((x) => x);
+  assert.match(e1.message, /invalid_grant/);
+  assert.equal(await m.env.DB.prepare("SELECT COUNT(*) AS n FROM limits WHERE k = 'auth:old'").first('n'), 0, '失敗のあとも掃除は実行された');
+
+  // 夜 20:23: メールが失敗しても、夜の再通知は送る。Discord にはメール失敗の知らせも届く
+  const net2 = fakeNet({ token: [{ status: 400, body: { error: 'invalid_grant' } }] });
+  const n = await setup({ ...GOOGLE, FETCH: net2.fetchFn });
+  const e2 = await runScheduled(CRON_MAIL_EVENING, n.env, parseNow(THU) / 1000).catch((x) => x);
+  assert.match(e2.message, /invalid_grant/);
+  const texts = net2.calls.filter((c) => c.kind === 'discord').map((c) => JSON.parse(c.init.body).content);
+  assert.ok(texts.some((t) => /締切のメールを送れませんでした/.test(t)));
+  assert.ok(texts.some((t) => /まだ終わっていません/.test(t)), 'メールが失敗しても夜の再通知は届く');
+  assert.doesNotMatch(texts.join('') + e2.message, /REFRESH-TOKEN|CLIENT-SECRET|SECRET-TOKEN/);
+
+  // 2つとも失敗したら、両方の理由を1つの例外にまとめる（秘密は含めない）
+  const net3 = fakeNet({ token: [{ status: 400, body: { error: 'invalid_grant' } }] });
+  const both = await setup({ ...GOOGLE, FETCH: async (url, init) => (String(url).includes('discord.com') ? new Response(null, { status: 500 }) : net3.fetchFn(url, init)) });
+  const e3 = await runScheduled(CRON_MAIL_EVENING, both.env, parseNow(THU) / 1000).catch((x) => x);
+  assert.ok(e3 instanceof AggregateError);
+  assert.equal(e3.errors.length, 2);
+  assert.match(e3.message, /invalid_grant/);
+  assert.match(e3.message, /HTTP 500/);
+  assert.doesNotMatch(e3.message, /SECRET-TOKEN/);
+});
+
+test('GET/POST /api/digest?kind=: 夜の再通知・週次レビューの文面を確かめる／今すぐ送る。kind が違えば 400', async () => {
+  const t = await setup();
+  t.clock.t = parseNow(THU) / 1000;
+  const ev = await t.call('GET', '/api/digest?kind=evening');
+  assert.equal(ev.status, 200);
+  assert.match(ev.body.chunks[0], /# 🌙 まだ終わっていません/);
+  const wk = await t.call('GET', '/api/digest?kind=weekly');
+  assert.equal(wk.body.chunks.length, 2);
+  assert.match((await t.call('GET', '/api/digest')).body.chunks[0], /# 📋 締切トラッカー/, '既定は朝の一覧');
+  assert.equal((await t.call('GET', '/api/digest?kind=other')).status, 400);
+  assert.equal((await t.call('GET', '/api/digest?kind=evening', null)).status, 401);
+  const sent = await t.call('POST', '/api/digest?kind=weekly');
+  assert.deepEqual(sent.body, { ok: true, sent: 2 });
+  assert.equal(t.discord.calls.length, 2);
+  assert.equal((await t.call('POST', '/api/digest?kind=other')).status, 400);
 });

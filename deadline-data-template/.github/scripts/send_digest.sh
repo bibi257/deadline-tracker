@@ -426,7 +426,7 @@ send_weekly_review(){
           end
         | select(. < $to)
       end;
-    [ .items[]? | select(.done|not) | select(ok) | (.cat // "その他") as $c
+    [ .items[]? | select(.done|not) | select(ok) | select(.autoComplete|not) | (.cat // "その他") as $c
       | occs($s; $s + 14*86400) | {c: $c, w: (((. - $s) / (7*86400)) | floor)} ] as $all
     | range(0; 2) as $w
     | [ $all[] | select(.w == $w) ] as $x
@@ -464,7 +464,7 @@ send_weekly_review(){
   fi
 
   if [ -n "$APP_URL" ]; then
-    EXTRA="${EXTRA}"$'\n\n'"## 🔗 リンク"$'\n'"- [アプリを開く](${APP_URL})"
+    EXTRA="${EXTRA}"$'\n\n'"## 🔗 リンク"$'\n'"- [アプリを開く](<${APP_URL}>)"
   fi
 
   # 節が増えて2000文字を超えやすいので、見通しと達成／繰り返し・負荷・支出に分けて送る
@@ -484,6 +484,8 @@ fi
 if [ "${DIGEST_MODE:-}" = "evening" ]; then
   EVE_LINES=""
   EVE_COUNT=0
+  EVE_AUTO=0     # 自動完了の予定の件数（見出しの件数には数えず、「＋自動完了N件」と分けて書く）
+  AUTO_IDS=" $(echo "$JSON" | jq -r '[ .items[]? | select(.autoComplete) | (.id // "" | tostring) ] | join(" ")') "
   EVE_SEEN=" "   # 上で拾った項目のID（繰り返しの分と二重に出さないため）
   if [ -n "$ROWS" ]; then
     while IFS=$'\x1f' read -r epoch title cat due start allday refep rep id; do
@@ -501,6 +503,7 @@ if [ "${DIGEST_MODE:-}" = "evening" ]; then
       fi
       EVE_LINES="${EVE_LINES}- ${MARK}**${title}**　\`${cat}\`　${STATE}$(done_link "$id")"$'\n'
       EVE_COUNT=$((EVE_COUNT+1))
+      case "$AUTO_IDS" in *" ${id} "*) [ -n "$id" ] && EVE_AUTO=$((EVE_AUTO+1)) ;; esac
     done <<< "$ROWS"
   fi
   # 繰り返しの予定は、次の回（今から先で最初の回）が今日のものを加える。
@@ -516,15 +519,21 @@ if [ "${DIGEST_MODE:-}" = "evening" ]; then
       fi
       EVE_LINES="${EVE_LINES}- 🔁 **${title}**　\`${cat}\`　${STATE}$(done_link "$id")"$'\n'
       EVE_COUNT=$((EVE_COUNT+1))
+      case "$AUTO_IDS" in *" ${id} "*) [ -n "$id" ] && EVE_AUTO=$((EVE_AUTO+1)) ;; esac
     done <<< "$REP_ROWS"
   fi
   if [ "$EVE_COUNT" -eq 0 ]; then
     echo "夜の再通知：対象なし（送信しません）"
     exit 0
   fi
-  CONTENT="${MENTION}# 🌙 まだ終わっていません（${EVE_COUNT}件）"$'\n'"${EVE_LINES}"
+  if [ "$EVE_AUTO" -gt 0 ]; then
+    EVE_HEAD="$(( EVE_COUNT - EVE_AUTO ))件＋自動完了${EVE_AUTO}件"
+  else
+    EVE_HEAD="${EVE_COUNT}件"
+  fi
+  CONTENT="${MENTION}# 🌙 まだ終わっていません（${EVE_HEAD}）"$'\n'"${EVE_LINES}"
   if [ -n "$APP_URL" ]; then
-    CONTENT="${CONTENT}"$'\n'"[アプリで完了にする](${APP_URL})"
+    CONTENT="${CONTENT}"$'\n'"[アプリで完了にする](<${APP_URL}>)"
   fi
   send_content "$CONTENT"
   exit 0

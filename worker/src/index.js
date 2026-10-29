@@ -9,11 +9,11 @@
 //   GET  /ics/<FEED_TOKEN>.ics  購読用の .ics（メモなし）。認証は URL の中の長いトークン（シークレット FEED_TOKEN）
 //   GET  /api/mail              締切のメールの件名と本文を作る（送らない。確認用）。?target=today|tomorrow|auto
 //   POST /api/mail              締切のメールを今すぐ自分宛てに送る（手動）
-//   GET  /api/digest            Discord に送る締切一覧の文面を作る（送らない。確認用）
-//   POST /api/digest            締切一覧を今すぐ Discord に送る（手動）
+//   GET  /api/digest            Discord に送る文面を作る（送らない。確認用）。?kind=morning（朝の一覧。既定）|evening（夜の再通知）|weekly（週次レビュー）
+//   POST /api/digest            今すぐ Discord に送る（手動）。?kind= は同じ
 //
-// 定時の処理（scheduled）: 毎朝 6:47 に締切一覧を Discord へ、20:23 と 5:23 に締切のメールを Gmail API で自分宛てに、
-// 毎日 3:10 に世代バックアップの間引きと掃除。
+// 定時の処理（scheduled）: 毎朝 6:47 に締切一覧を Discord へ。20:23 に翌日分のメールと、夜の再通知（日曜は週次レビュー）。
+// 5:23 に当日分のメールと、世代バックアップの間引き・掃除。
 
 // 認証は Authorization: Bearer <アクセスキー>。キーは Worker のシークレット APP_KEY（24文字以上のランダムな値）。
 // キーが長いランダム値なので、パスワードのような重いハッシュは使わず（無料プランの CPU 時間 10ms に収める）、定数時間で比べる。
@@ -21,7 +21,7 @@
 import { buildFeed } from './feed.js';
 import { buildIcs } from './ics.js';
 import { gmailConfig } from './mail.js';
-import { previewDigest, previewMail, runScheduled, sendDigest, sendMail } from './jobs.js';
+import { DIGEST_KINDS, previewDigest, previewMail, runScheduled, sendDigest, sendMail } from './jobs.js';
 
 const MIN_KEY_LENGTH = 24;
 // D1 の1行の上限は 2,000,000 バイト。日本語は1文字3バイトなので、文字数ではなくバイト数で測る（余裕を残した値）
@@ -301,8 +301,14 @@ async function postMail(env, url) {
   return json({ ok: true, subject: sent.subject });
 }
 
-async function getDigest(env) {
-  const { cfg, warnings, bodies } = await previewDigest(env, now(env) * 1000);
+function digestKind(url) {
+  const kind = url.searchParams.get('kind') ?? 'morning';
+  if (!DIGEST_KINDS.includes(kind)) throw new HttpError(400, `kind は ${DIGEST_KINDS.join('・')} のどれかです`);
+  return kind;
+}
+
+async function getDigest(env, url) {
+  const { cfg, warnings, bodies } = await previewDigest(env, now(env) * 1000, digestKind(url));
   return json({
     ok: true,
     chunks: bodies.map((b) => b.content),
@@ -312,10 +318,11 @@ async function getDigest(env) {
   });
 }
 
-async function postDigest(env) {
+async function postDigest(env, url) {
+  const kind = digestKind(url);
   let sent;
   try {
-    sent = await sendDigest(env, now(env) * 1000);
+    sent = await sendDigest(env, now(env) * 1000, kind);
   } catch (e) {
     throw new HttpError(502, e.message);
   }
@@ -332,8 +339,8 @@ async function route(env, request) {
   await authorize(env, request);
   if (path === '/api/mail' && method === 'GET') return getMail(env, url);
   if (path === '/api/mail' && method === 'POST') return postMail(env, url);
-  if (path === '/api/digest' && method === 'GET') return getDigest(env);
-  if (path === '/api/digest' && method === 'POST') return postDigest(env);
+  if (path === '/api/digest' && method === 'GET') return getDigest(env, url);
+  if (path === '/api/digest' && method === 'POST') return postDigest(env, url);
   if (path === '/api/feed' && method === 'GET') return getFeed(env, url);
   if (path === '/api/ics' && method === 'GET') return getIcs(env, url);
   if (path === '/api/data' && method === 'GET') return getData(env);
