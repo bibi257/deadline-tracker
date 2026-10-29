@@ -177,11 +177,18 @@ test('未知のパス・メソッドは 404、/api/ 以外は静的ファイル�
   assert.equal(await res.text(), 'page');
 });
 
-test('OPTIONS（プリフライト）は認証なしで 204', async () => {
+test('CORS は許可しない: どの API の応答にも Access-Control-* が付かず、OPTIONS（プリフライト）も許可しない', async () => {
   const { env } = setup();
-  const res = await worker.fetch(new Request('https://x.test/api/data', { method: 'OPTIONS' }), env);
-  assert.equal(res.status, 204);
-  assert.match(res.headers.get('Access-Control-Allow-Headers'), /If-Match/);
+  const origin = { Origin: 'https://evil.test', 'CF-Connecting-IP': '1.1.1.1' };
+  const calls = [
+    worker.fetch(new Request('https://x.test/api/health', { headers: origin }), env),
+    worker.fetch(new Request('https://x.test/api/data', { headers: origin }), env), // 401
+    worker.fetch(new Request('https://x.test/api/data', { headers: { ...origin, Authorization: `Bearer ${KEY}` } }), env),
+    worker.fetch(new Request('https://x.test/api/data', { method: 'OPTIONS', headers: { ...origin, 'Access-Control-Request-Method': 'PUT' } }), env),
+  ];
+  for (const res of await Promise.all(calls)) {
+    for (const [name] of res.headers) assert.doesNotMatch(name, /^access-control-/i, `${res.status}: ${name}`);
+  }
 });
 
 // ---- 締切データから作る出力（feed・.ics） ----
