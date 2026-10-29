@@ -16,6 +16,7 @@ const FNS = [
   'cfKnownRev', 'cfSaveRev', 'cfFetchData', 'cfFetchState', 'cfPut', 'cfAskOverwrite', 'remoteHasUnknownChanges', 'fetchRemoteState',
   'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'ghHint',
   'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems', 'cfAutoBlocked', 'cfNoteAuthFailure',
+  'cfSnapUrl', 'cfGetJson', 'cfFetchSnapshots', 'cfReadSnapshot', 'fmtSnapAt', 'cfRestoreSnapshot',
 ];
 
 /** 共有の Worker（1つの D1）と、複数の端末 */
@@ -311,4 +312,67 @@ test('429（すでに止められている）のときは、理由を一度だ�
   await A.autoPull();
   assert.equal(A.toasts.filter((m) => m.includes('しばらく使えません')).length, 1);
   assert.equal(A.ctx._cfAuthStopped, false, '429 では止めない');
+});
+
+test('世代バックアップ: 一覧 → 中身 → 戻す。戻す前の内容も世代バックアップに残り、使ったバックアップは消えない', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.edit('v1');
+  await A.sync(); // rev1（初回の保存では世代バックアップは作らない）
+  A.edit('v2');
+  await A.sync(); // rev2。上書きされる v1 が世代バックアップに残る
+  A.edit('v3');
+  await A.sync(); // rev3（前回から30分以内なので、新しいバックアップは作らない）
+
+  const list = await A.ctx.cfFetchSnapshots(A.cfg);
+  assert.equal(list.length, 1);
+  assert.deepEqual([list[0].rev, typeof list[0].size], [1, 'number']);
+  const snap = await A.ctx.cfReadSnapshot(A.cfg, list[0].id);
+  assert.deepEqual(snap.data.items.map((i) => i.title), ['v1']);
+
+  const before = w.log.puts.length;
+  const r = await A.ctx.cfRestoreSnapshot(A.cfg, snap.data);
+  assert.equal(r.n, 1);
+  const put = w.log.puts[before];
+  assert.equal(put.search, '?backup=1', '戻すときは、今の内容を必ず世代バックアップに残す');
+  assert.equal(put.ifMatch, '3', '今の版を確かめたうえで置き換える');
+  assert.deepEqual(titles(await w.server()), ['v1'], 'Cloudflare は v1 の内容に戻る');
+  assert.equal((await w.server()).rev, 4);
+  assert.deepEqual(mine(A), ['v1'], 'この端末のデータも置き換わる');
+  assert.equal(A.ctx.cfKnownRev(), '4');
+  assert.equal(A.store.get('gh-known-updatedAt'), A.db.updatedAt, '同期済みの状態になる');
+
+  const after = (await w.snapshots()).snapshots;
+  assert.equal(after.length, 2, '戻す前の内容（v3）が新しい世代バックアップに残る');
+  assert.ok(after.some((s) => s.id === list[0].id), '使ったバックアップは消えない');
+  const kept = await w.api('GET', `/api/snapshots/${after.find((s) => s.id !== list[0].id).id}`);
+  assert.deepEqual(kept.data.items.map((i) => i.title), ['v3']);
+});
+
+test('世代バックアップ: 戻すのに失敗したら、この端末のデータは変えない。キー違いは 401、無い世代は 404', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.edit('v1');
+  await A.sync();
+  A.edit('v2');
+  await A.sync();
+  const [first] = await A.ctx.cfFetchSnapshots(A.cfg);
+  const snap = await A.ctx.cfReadSnapshot(A.cfg, first.id);
+
+  const wrong = { ...A.cfg, headers: { Authorization: `Bearer ${'x'.repeat(32)}` } };
+  const e1 = await A.ctx.cfRestoreSnapshot(wrong, snap.data).catch((x) => x);
+  assert.equal(e1.status, 401);
+  assert.deepEqual(mine(A), ['v2'], '失敗したときは、この端末のデータを変えない');
+  assert.deepEqual(titles(await w.server()), ['v2']);
+
+  const e2 = await A.ctx.cfReadSnapshot(A.cfg, 9999).catch((x) => x);
+  assert.equal(e2.status, 404);
+});
+
+test('世代バックアップ: 日時は日本時間の「YYYY/M/D HH:MM」', () => {
+  const A = world().device('A', () => '2026-10-26T10:00:00.000Z');
+  assert.equal(A.ctx.fmtSnapAt(1_700_000_000), '2023/11/15 07:13'); // 2023-11-14T22:13:20Z
+  assert.equal(A.ctx.fmtSnapAt(Date.UTC(2026, 0, 1, 14, 59) / 1000), '2026/1/1 23:59');
+  assert.equal(A.ctx.cfSnapUrl({ api: 'https://x.test/api/data' }), 'https://x.test/api/snapshots');
+  assert.equal(A.ctx.cfSnapUrl({ api: 'https://x.test/api/data' }, 12), 'https://x.test/api/snapshots/12');
 });
