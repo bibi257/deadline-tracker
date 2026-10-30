@@ -3356,6 +3356,7 @@ function openDialog(item){
   host.appendChild(cp);
   dlgColorPicker=cp;
   catSel.onchange=function(){ cp.refresh(); };
+  document.getElementById("dlgMore").open=false; // 前回の開閉を引き継がない。設定済みのものがあれば、下の syncDialogRows が開く
   syncDialogRows();
   dlg.showModal();
 }
@@ -3380,8 +3381,16 @@ function setRepCountValue(n){
   sel.value=v;
 }
 
+/* 「詳しい設定」の中に、既定から変えてあるものがあるか（期間・自動完了・この締切だけの色・帯を隠す） */
+function dlgMoreActive(){
+  return document.getElementById("fSpan").checked || document.getElementById("fAutoComplete").checked || !!dlgColor ||
+    (document.getElementById("fRep").value!=="none" && !document.getElementById("fCalShow").checked);
+}
+
 /* チェックや選択に応じて、関係のある入力欄だけを出す */
 function syncDialogRows(){
+  // 「詳しい設定」は閉じておく。ただし、設定済みのものが中にあるときは開いて、見えないまま効いていることがないようにする
+  if(dlgMoreActive()) document.getElementById("dlgMore").open=true;
   var span=document.getElementById("fSpan").checked;
   document.getElementById("startRow").style.display=span?"":"none";
   document.getElementById("dueLabel").textContent=span?"終了日":"締切日";

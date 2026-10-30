@@ -472,3 +472,21 @@ test('needsKeyCard: Cloudflare 配信で、キー未入力（またはキー違�
   assert.equal(t(false, false, false, false), false, 'GitHub 配信では出さない');
   assert.equal(t(null, false, false, false), false, '保存先の判定前は出さない');
 });
+
+// ---- 登録画面の「詳しい設定」（D4: たまにしか使わない項目は閉じておく。設定済みなら開いて、見えないまま効かせない） ----
+
+test('dlgMoreActive: 期間・自動完了・この締切だけの色・帯を隠す、のどれかが既定から変わっていれば開く', () => {
+  const state = { fSpan: false, fAutoComplete: false, fRep: 'none', fCalShow: true };
+  const doc = { getElementById: (id) => ({ checked: state[id], value: state[id] }) };
+  const run = (over = {}, color = null) => {
+    Object.assign(state, { fSpan: false, fAutoComplete: false, fRep: 'none', fCalShow: true }, over);
+    return loadAppFunctions(['dlgMoreActive'], { document: doc, dlgColor: color }).dlgMoreActive();
+  };
+  assert.equal(run(), false, '既定のまま');
+  assert.equal(run({ fSpan: true }), true, '期間つき');
+  assert.equal(run({ fAutoComplete: true }), true, '自動完了');
+  assert.equal(run({}, '#336699'), true, 'この締切だけの色');
+  assert.equal(run({ fRep: 'weekly', fCalShow: false }), true, '繰り返しで帯を隠している');
+  assert.equal(run({ fRep: 'none', fCalShow: false }), false, '繰り返さない予定では、帯の設定は効かない');
+  assert.equal(run({ fRep: 'weekly', fCalShow: true }), false, '繰り返しでも、帯を出すのは既定');
+});

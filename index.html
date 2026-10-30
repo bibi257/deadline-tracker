@@ -18,7 +18,7 @@
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う）。
      app.js / styles.css を変えたときは、<script src="app.js?v=..."> / <link href="styles.css?v=..."> の v も同じ日時（例 20261009-1019）に変える。
      これは GitHub Pages（旧環境）用の手作業。Worker から配信する web/ は、ビルド（scripts/build.mjs）が v・スタンプ・キャッシュ名をハッシュで自動で書き換える。旧環境をやめたら、この手作業は不要 -->
-<meta name="build-stamp" content="2026-10-30 01:00 初めての端末で、一覧の先頭からアクセスキーを入れて読み込めるように">
+<meta name="build-stamp" content="2026-10-30 01:30 登録画面の並びを見直し（締切日を先に、細かい設定は折りたたみ）">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -31,7 +31,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20261030-0100">
+<link rel="stylesheet" href="styles.css?v=20261030-0130">
 </head>
 <body>
 
@@ -71,15 +71,6 @@
       <select id="fTpl"></select>
     </label>
     <label class="field"><span>タイトル</span><input type="text" id="fTitle" required maxlength="80" placeholder="例：月次報告書の提出"></label>
-    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
-      <input type="checkbox" id="fSpan" style="width:auto">何日かにまたがる予定にする（出張・研修期間など）
-    </label>
-    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
-      <input type="checkbox" id="fAllDay" style="width:auto">終日（時刻を決めない）
-    </label>
-    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:0 0 12px">
-      <input type="checkbox" id="fAutoComplete" style="width:auto">期限を過ぎたら自動的に完了にする（超過として扱わない）
-    </label>
     <div class="two" id="startRow" style="display:none">
       <label class="field"><span>開始日</span><input type="date" id="fStart"></label>
       <label class="field startTimeCell"><span>開始時刻</span><input type="time" id="fStartTime" value="09:00"></label>
@@ -90,6 +81,7 @@
     </div>
     <p id="dayOffNote" style="display:none;font-size:12px;color:var(--amber);margin:-6px 0 12px"></p>
     <p id="overlapNote" style="display:none;font-size:12px;color:var(--amber);margin:-6px 0 12px"></p>
+    <label class="chk"><input type="checkbox" id="fAllDay">終日（時刻を決めない）</label>
     <div class="two">
       <label class="field"><span>カテゴリ</span><select id="fCat"></select></label>
       <label class="field"><span>繰り返し</span><select id="fRep">
@@ -97,7 +89,6 @@
         <option value="biweekly">隔週</option><option value="monthly">毎月</option><option value="yearly">毎年</option>
       </select></label>
     </div>
-    <div class="field" id="fColorField"><span>色（この締切だけ変える場合）</span><div id="fColorHost"></div></div>
     <label class="field" id="repCountRow" style="display:none"><span>繰り返す回数（初回を含む）</span>
       <select id="fRepCount">
         <option value="4">4回</option><option value="8">8回</option>
@@ -105,10 +96,14 @@
         <option value="30">30回</option><option value="0">終わりを決めない</option>
       </select>
     </label>
-    <label id="calShowRow" style="display:none;gap:8px;align-items:center;font-size:13px;margin:-4px 0 12px">
-      <input type="checkbox" id="fCalShow" style="width:auto" checked>カレンダーに帯を表示する（オフにしても日付を押すと一覧には出ます）
-    </label>
     <label class="field"><span>メモ</span><textarea id="fMemo" maxlength="500" placeholder="提出先・必要書類・関係者など"></textarea></label>
+    <details class="dlg-more" id="dlgMore">
+      <summary>詳しい設定</summary>
+      <label class="chk"><input type="checkbox" id="fSpan"><span>期間の予定にする（開始日を決める）<small>出張・研修期間など</small></span></label>
+      <label class="chk"><input type="checkbox" id="fAutoComplete"><span>締切を過ぎたら自動で完了にする<small>超過として扱いません</small></span></label>
+      <div class="field" id="fColorField"><span>色（この締切だけ変える場合）</span><div id="fColorHost"></div></div>
+      <label class="chk" id="calShowRow" style="display:none"><input type="checkbox" id="fCalShow" checked><span>カレンダーに帯を表示する<small>オフにしても、日付を押すと一覧には出ます</small></span></label>
+    </details>
     <div class="dlg-acts">
       <button class="btn" value="cancel" type="submit" formnovalidate>やめる</button>
       <button class="btn fill" value="save" type="submit">保存する</button>
@@ -116,6 +111,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261030-0100"></script>
+<script src="app.js?v=20261030-0130"></script>
 </body>
 </html>
