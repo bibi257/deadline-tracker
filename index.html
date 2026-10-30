@@ -7,10 +7,11 @@
      script-src に 'unsafe-inline' は付けない：スクリプトはすべて app.js に置く。
      HTMLにインラインの <script> や onclick="..." などの属性を書くと動かなくなる（イベントは app.js で付ける）。
      CSS は styles.css に置き、<style> 要素は許さない（style-src-elem）。
-     画面を組み立てる style="..." の属性だけ 'unsafe-inline' で許す（style-src-attr）。
-     style-src の 'unsafe-inline' は、style-src-elem/attr を知らない古いブラウザ向けの予備。
+     style="..." の属性も許さない（style-src-attr 'none'）。HTML に style 属性を書くと効かなくなる。
+     固定の見た目は styles.css のクラスに置き、計算で決まる値（色・幅・位置）は data-st="プロパティ:値;…" で渡す（app.js の applyDyn が、要素ができてから CSSOM で付ける）。
+     'unsafe-inline' は付けない：style-src-elem/attr を知らない古いブラウザでも、style 属性は許されない。
      外部へ通信する機能（GitHub同期・Discord送信・フォント）を足すときは、ここにも追加すること -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://api.github.com https://discord.com https://discordapp.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'none'; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://api.github.com https://discord.com https://discordapp.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <!-- ブラウザがHTMLを保持し続けないようにする（更新をすぐ反映させるため） -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
@@ -18,7 +19,7 @@
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う）。
      app.js / styles.css を変えたときは、<script src="app.js?v=..."> / <link href="styles.css?v=..."> の v も同じ日時（例 20261009-1019）に変える。
      これは GitHub Pages（旧環境）用の手作業。Worker から配信する web/ は、ビルド（scripts/build.mjs）が v・スタンプ・キャッシュ名をハッシュで自動で書き換える。旧環境をやめたら、この手作業は不要 -->
-<meta name="build-stamp" content="2026-10-30 03:30 カードを2行に、月カレンダーの印と凡例を見やすく">
+<meta name="build-stamp" content="2026-10-30 04:30 文字の大きさを段階にそろえ、style 属性をなくして CSP を強化">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -31,7 +32,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20261030-0330">
+<link rel="stylesheet" href="styles.css?v=20261030-0430">
 </head>
 <body>
 
@@ -62,16 +63,16 @@
 <main class="wrap" id="main"></main>
 
 <button class="fab" id="fabAdd">＋ 締切を登録</button>
-<div class="toast" id="toast"><span id="toastMsg"></span><button id="toastAction" style="display:none"></button></div>
+<div class="toast" id="toast"><span id="toastMsg"></span><button id="toastAction" hidden></button></div>
 
 <dialog id="dlg">
   <form method="dialog" class="dlg-in" id="dlgForm">
     <h2 id="dlgTitle">締切を登録</h2>
-    <label class="field" id="tplRow" style="display:none"><span>テンプレートから入力</span>
+    <label class="field" id="tplRow" hidden><span>テンプレートから入力</span>
       <select id="fTpl"></select>
     </label>
     <label class="field"><span>タイトル</span><input type="text" id="fTitle" required maxlength="80" placeholder="例：月次報告書の提出"></label>
-    <div class="two" id="startRow" style="display:none">
+    <div class="two" id="startRow" hidden>
       <label class="field"><span>開始日</span><input type="date" id="fStart"></label>
       <label class="field startTimeCell"><span>開始時刻</span><input type="time" id="fStartTime" value="09:00"></label>
     </div>
@@ -79,8 +80,8 @@
       <label class="field"><span id="dueLabel">締切日</span><input type="date" id="fDate" required></label>
       <label class="field dueTimeCell"><span>時刻</span><input type="time" id="fTime" value="09:00" required></label>
     </div>
-    <p id="dayOffNote" style="display:none;font-size:12px;color:var(--amber);margin:-6px 0 12px"></p>
-    <p id="overlapNote" style="display:none;font-size:12px;color:var(--amber);margin:-6px 0 12px"></p>
+    <p id="dayOffNote" class="dlg-note" hidden></p>
+    <p id="overlapNote" class="dlg-note" hidden></p>
     <label class="chk"><input type="checkbox" id="fAllDay">終日（時刻を決めない）</label>
     <div class="two">
       <label class="field"><span>カテゴリ</span><select id="fCat"></select></label>
@@ -89,7 +90,7 @@
         <option value="biweekly">隔週</option><option value="monthly">毎月</option><option value="yearly">毎年</option>
       </select></label>
     </div>
-    <label class="field" id="repCountRow" style="display:none"><span>繰り返す回数（初回を含む）</span>
+    <label class="field" id="repCountRow" hidden><span>繰り返す回数（初回を含む）</span>
       <select id="fRepCount">
         <option value="4">4回</option><option value="8">8回</option>
         <option value="12">12回</option><option value="15" selected>15回</option>
@@ -102,7 +103,7 @@
       <label class="chk"><input type="checkbox" id="fSpan"><span>期間の予定にする（開始日を決める）<small>出張・研修期間など</small></span></label>
       <label class="chk"><input type="checkbox" id="fAutoComplete"><span>締切を過ぎたら自動で完了にする<small>超過として扱いません</small></span></label>
       <div class="field" id="fColorField"><span>色（この締切だけ変える場合）</span><div id="fColorHost"></div></div>
-      <label class="chk" id="calShowRow" style="display:none"><input type="checkbox" id="fCalShow" checked><span>カレンダーに帯を表示する<small>オフにしても、日付を押すと一覧には出ます</small></span></label>
+      <label class="chk" id="calShowRow" hidden><input type="checkbox" id="fCalShow" checked><span>カレンダーに帯を表示する<small>オフにしても、日付を押すと一覧には出ます</small></span></label>
     </details>
     <div class="dlg-acts">
       <button class="btn" value="cancel" type="submit" formnovalidate>やめる</button>
@@ -111,6 +112,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261030-0330"></script>
+<script src="app.js?v=20261030-0430"></script>
 </body>
 </html>

@@ -531,7 +531,7 @@ Discord などの添付ファイルを直接タップすると、iOS は「照�
 - ブラウザのサイトデータを消すなどで鍵が失われると、保存済みの値は読めなくなる。そのときは自動で消えるので、入力し直す（Webhook URL は空欄のまま送れば、GitHub の設定から取り直せる）
 - 暗号化できない環境（IndexedDB / WebCrypto が使えない）では、平文で残さず保存しない。設定（右上の歯車）にその旨が出て、今回の操作にだけトークンを使う
 - Worker から配信するときの CSP と、`frame-ancestors 'none'` などのセキュリティヘッダーは、`scripts/build.mjs` が `index.html` の meta から `web/_headers` に作る。
-- CSP のため、HTML にインライン `<script>` や `onclick="..."` を書かない（イベントは `app.js` で付ける）。CSS は `styles.css` に置き、`<style>` 要素も許さない（`style-src-elem`）。`'unsafe-inline'` は、画面を組み立てる `style="..."` の属性のためだけに許している（`style-src-attr`。`style-src` 側の指定は、これを知らない古いブラウザ向けの予備）
+- CSP のため、HTML にインライン `<script>` や `onclick="..."` を書かない（イベントは `app.js` で付ける）。CSS は `styles.css` に置き、`<style>` 要素も `style="..."` の属性も許さない（`style-src-elem`・`style-src-attr 'none'`。`'unsafe-inline'` は付けない）。固定の見た目は `styles.css` のクラスに置き、計算で決まる値（色・幅・位置）は `data-st="プロパティ:値;…"` で渡す（`app.js` の `applyDyn` が、要素ができてから CSSOM で付ける）
 
 ---
 

@@ -593,7 +593,22 @@ function sortByDue(a,b){
   return d!==0?d:(parseItemDate(a)-parseItemDate(b));
 }
 
-function h(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); return t.content.firstElementChild; }
+function h(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); var el=t.content.firstElementChild; applyDyn(el); return el; }
+/* 計算で決まる見た目（色・幅・位置）は、style 属性では書かず data-st="プロパティ:値;…" で渡し、要素ができてから CSSOM で付ける。
+   CSP で style 属性を許さない（style-src-attr 'none'）ため。固定の見た目は styles.css のクラスに置く */
+function applyDyn(root){
+  if(!root || !root.querySelectorAll) return root;
+  var list=Array.prototype.slice.call(root.querySelectorAll("[data-st]"));
+  if(root.hasAttribute("data-st")) list.push(root);
+  list.forEach(function(el){
+    el.getAttribute("data-st").split(";").forEach(function(d){
+      var i=d.indexOf(":"); if(i<0) return;
+      el.style.setProperty(d.slice(0,i).trim(), d.slice(i+1).trim());
+    });
+    el.removeAttribute("data-st");
+  });
+  return root;
+}
 function escHtml(s){ return String(s).replace(/[&<>"]/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
 
 /* ヘッダー右上の数字・ラベル・補足。
@@ -822,7 +837,7 @@ function displayColor(hex){
 }
 function catColor(cat){ return displayColor(catColorRaw(cat)); }
 function itemColor(it){ return displayColor(itemColorRaw(it)); }
-function swatch(color, title){ return '<i class="sw" style="background:'+color+'"'+(title?' title="'+escHtml(title)+'"':'')+' aria-hidden="true"></i>'; }
+function swatch(color, title){ return '<i class="sw" data-st="background:'+color+'"'+(title?' title="'+escHtml(title)+'"':'')+' aria-hidden="true"></i>'; }
 
 /* 色の選択部品（36色・カラーコード・自動に戻す）。value は保存値（null＝自動） */
 function colorPicker(opts){
@@ -835,12 +850,12 @@ function colorPicker(opts){
   var value=normHex(opts.value);
   function paint(){
     var raw=value||opts.autoColor();
-    cur.innerHTML=swatch(displayColor(raw))+'<span>'+(value?escHtml(value):escHtml(opts.autoText||"自動"))+'</span>';
+    cur.innerHTML=swatch(displayColor(raw))+'<span>'+(value?escHtml(value):escHtml(opts.autoText||"自動"))+'</span>'; applyDyn(cur);
     hexIn.value=value||""; nat.value=(value||raw).toLowerCase();
     grid.querySelectorAll("button").forEach(function(b){ b.setAttribute("aria-pressed", b.getAttribute("data-c")===value?"true":"false"); });
   }
   CAT_PALETTE.forEach(function(c,i){
-    var b=h('<button type="button" class="cp-sw" data-c="'+c+'" title="'+CAT_HUES[i%12]+"（"+["濃","中","淡"][Math.floor(i/12)]+"） "+c+'" style="background:'+displayColor(c)+'"></button>');
+    var b=h('<button type="button" class="cp-sw" data-c="'+c+'" title="'+CAT_HUES[i%12]+"（"+["濃","中","淡"][Math.floor(i/12)]+"） "+c+'" data-st="background:'+displayColor(c)+'"></button>');
     b.onclick=function(){ set(c); };
     grid.appendChild(b);
   });
@@ -915,7 +930,7 @@ function cardOf(it){
         (it.repCount>0?" 残"+it.repCount+"回":"")+'</span>':"")+'</div>'+
       (it.memo?'<p class="memo">'+escHtml(it.memo)+'</p>':"")+
       (isStale(it)&&!it.done?'<p class="stale-note">⚠️ '+overdueDays(it)+'日が過ぎています。まだ必要ですか？完了か削除をおすすめします。</p>':"")+
-      '<div class="rail"><i style="width:'+pct+'%"></i></div>'+
+      '<div class="rail"><i data-st="width:'+pct+'%"></i></div>'+
       '<div class="acts"></div>'+
     '</div></article>');
   var acts=el.querySelector(".acts");
@@ -928,7 +943,7 @@ function cardOf(it){
         if(confirm(key+" の回だけ取りやめます。よろしいですか？")) animateCardOut(el, "skipping", "休み", function(){ skipOccurrence(it.id, key); });
       });
       add("カレンダーへ","primary",function(){ downloadICS([it], it.title); });
-      var note=h('<div style="font-size:11.5px;color:var(--ink-3);margin-top:6px">完了・編集は「定期予定」の一覧（一覧の下のリンク）から行ってください</div>');
+      var note=h('<div class="note mt-6">完了・編集は「定期予定」の一覧（一覧の下のリンク）から行ってください</div>');
       el.querySelector(".body").appendChild(note);
     } else {
       add("完了にする","main",function(){ complete(it, el); });
@@ -1458,8 +1473,8 @@ function describeQuick(r){
   if(r.rep!=="none") parts.push({weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"}[r.rep]);
   if(r.cat) parts.push("#"+escHtml(r.cat));
   if(r.tpl) parts.push("テンプレート「"+escHtml(r.tpl.name)+"」");
-  parts.push(r.title?"「"+escHtml(r.title)+"」":'<span style="color:var(--amber)">タイトル未入力</span>');
-  if(!r.date) parts.push('<span style="color:var(--ink-3)">日付は読み取れませんでした（今日で開きます）</span>');
+  parts.push(r.title?"「"+escHtml(r.title)+"」":'<span class="c-amber">タイトル未入力</span>');
+  if(!r.date) parts.push('<span class="c-ink3">日付は読み取れませんでした（今日で開きます）</span>');
   return "→ "+parts.join("　");
 }
 function quickBar(){
@@ -1472,7 +1487,7 @@ function quickBar(){
   function update(){
     quickText=input.value;
     if(!quickText.trim()){
-      prev.innerHTML='<a href="#" style="color:var(--ink-3)">'+(quickHelpOpen?"書き方を閉じる":"書き方の例")+'</a>';
+      prev.innerHTML='<a href="#" class="c-ink3">'+(quickHelpOpen?"書き方を閉じる":"書き方の例")+'</a>';
       prev.querySelector("a").onclick=function(e){ e.preventDefault(); quickHelpOpen=!quickHelpOpen; render(); };
       return;
     }
@@ -1549,9 +1564,9 @@ function todaySummary(){
     var when=t.starts.indexOf(i)>=0?"開始":(i.allDay?"終日":fmtTime(d));
     ul.appendChild(h('<li>'+(isRepeating(i)?"🔁 ":"・")+'<span class="num">'+escHtml(when)+'</span>　'+escHtml(i.title)+'</li>'));
   });
-  if(!lines.length) ul.appendChild(h('<li style="color:var(--ink-3)">今日の予定はありません</li>'));
+  if(!lines.length) ul.appendChild(h('<li class="c-ink3">今日の予定はありません</li>'));
   var more=total-lines.length;
-  if(more>0) ul.appendChild(h('<li style="color:var(--ink-3)">ほか '+more+' 件</li>'));
+  if(more>0) ul.appendChild(h('<li class="c-ink3">ほか '+more+' 件</li>'));
   el.appendChild(ul);
   return el;
 }
@@ -1565,8 +1580,8 @@ function renderListBody(){
   var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&(showRoutine||!isRepeating(i))&&matchesSearch(i); }).sort(sortByDue);
   if(!list.length){
     var msg=searchKw.trim()
-      ? '<div class="empty" style="margin-top:18px"><b>見つかりませんでした</b>「'+escHtml(searchKw)+'」に一致する締切はありません。</div>'
-      : '<div class="empty" style="margin-top:18px"><b>登録された締切はありません</b>下のボタンから最初の締切を登録してください。</div>';
+      ? '<div class="empty mt-18"><b>見つかりませんでした</b>「'+escHtml(searchKw)+'」に一致する締切はありません。</div>'
+      : '<div class="empty mt-18"><b>登録された締切はありません</b>下のボタンから最初の締切を登録してください。</div>';
     body.appendChild(h(msg));
     return;
   }
@@ -1618,11 +1633,11 @@ function renderOverdue(){
     .sort(function(a,b){ return overdueDays(b)-overdueDays(a); });
 
   if(!list.length){
-    main.appendChild(h('<div class="empty" style="margin-top:18px"><b>超過しているものはありません</b>すべて期限内です。</div>'));
+    main.appendChild(h('<div class="empty mt-18"><b>超過しているものはありません</b>すべて期限内です。</div>'));
     return;
   }
   var stale=list.filter(isStale).length;
-  main.appendChild(h('<div class="notice" style="margin-top:14px">'+
+  main.appendChild(h('<div class="notice mt-14">'+
     '合計 '+list.length+' 件が期限を過ぎています'+(stale?'（うち '+stale+' 件は7日以上）':'')+'。'+
     '対応済みのものは完了か削除にしておくと、毎朝の連絡が見やすくなります。</div>'));
 
@@ -1641,7 +1656,7 @@ function renderOverdue(){
   });
 
   // まとめて片付けるための導線
-  var bulk=h('<div style="margin:20px 0 0"><button class="act danger" style="padding:8px 14px">7日以上のものをまとめて完了にする</button></div>');
+  var bulk=h('<div class="mt-20"><button class="act danger act-lg">7日以上のものをまとめて完了にする</button></div>');
   bulk.querySelector("button").onclick=function(){
     var target=list.filter(isStale);
     if(!target.length){ toast("7日以上のものはありません"); return; }
@@ -1687,7 +1702,7 @@ function renderWeek(){
       '<div class="wday-head tap'+dowCls+'" title="この日を時間軸で見る"><span class="num">'+(d.getMonth()+1)+'/'+d.getDate()+'</span>'+
       '<span class="wdow">（'+DOW[d.getDay()]+'）</span><span class="wgo">›</span>'+
       (label?'<span class="wtag">'+label+'</span>':'')+
-      (hol?'<span class="wdow"'+(hit.length?' style="width:100%"':'')+'>'+escHtml(hol)+'</span>':'')+'</div>'+
+      (hol?'<span class="wdow'+(hit.length?' w-full':'')+'">'+escHtml(hol)+'</span>':'')+'</div>'+
       '<div class="wday-body"></div></div>');
     row.querySelector(".wday-head").onclick=(function(key){ return function(){ openDayView(key); }; })(key);
     var body=row.querySelector(".wday-body");
@@ -1710,8 +1725,8 @@ function renderWeek(){
     wrap.appendChild(row);
   }
   main.appendChild(wrap);
-  if(!total) main.appendChild(h('<div class="empty" style="margin-top:14px">この7日間に予定はありません。</div>'));
-  main.appendChild(h('<p style="font-size:11.5px;color:var(--ink-3);margin:10px 0 0">日付をタップすると、その日を時間軸で表示します。</p>'));
+  if(!total) main.appendChild(h('<div class="empty mt-14">この7日間に予定はありません。</div>'));
+  main.appendChild(h('<p class="note mt-10">日付をタップすると、その日を時間軸で表示します。</p>'));
 }
 function fmtTime(d){ return pad(d.getHours())+":"+pad(d.getMinutes()); }
 
@@ -1765,10 +1780,10 @@ function renderDay(){
   var d=new Date(key+"T00:00:00");
   var hol=holidayName(key);
   var head=h('<div class="dv-head"><h2><span class="num">'+(d.getMonth()+1)+'/'+d.getDate()+'</span>（'+DOW[d.getDay()]+'）'+
-    (hol?' <span style="font-size:12px;color:var(--red)">'+escHtml(hol)+'</span>':'')+'</h2><div class="row"></div></div>');
+    (hol?' <span class="note c-red">'+escHtml(hol)+'</span>':'')+'</h2><div class="row"></div></div>');
   function shift(n){ var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()+n); openDayView(toLocalISO(x)); }
   var prev=h('<button class="nav" title="前の日">‹</button>'), next=h('<button class="nav" title="次の日">›</button>');
-  var back=h('<button class="nav" style="width:auto;padding:0 10px;font-size:12px">今週へ</button>');
+  var back=h('<button class="nav nav-wide">今週へ</button>');
   prev.onclick=function(){ shift(-1); }; next.onclick=function(){ shift(1); };
   back.onclick=function(){ view="week"; render(); };
   head.querySelector(".row").append(prev,back,next);
@@ -1793,7 +1808,7 @@ function renderDay(){
   }
 
   var scroll=h('<div class="dv-scroll"></div>'), grid=h('<div class="dv-grid"></div>');
-  for(var hr=0;hr<24;hr++) grid.appendChild(h('<div class="dv-hour" style="top:calc('+hr+' * var(--hh))">'+hr+':00</div>'));
+  for(var hr=0;hr<24;hr++) grid.appendChild(h('<div class="dv-hour" data-st="top:calc('+hr+' * var(--hh))">'+hr+':00</div>'));
 
   // 重なる予定は横に並べる。重なりの塊ごとに列を割り当てる
   var evs=timed.map(function(i){ var r=timeRangeOf(i); return {it:i, s:r.start, e:r.end}; })
@@ -1820,7 +1835,7 @@ function renderDay(){
     var mins=Math.max(20,(ev.e-ev.s)/60000);
     var i=ev.it, cls=isRepeating(i)?"routine":statusOf(i);
     var byCat=calColorMode()==="cat";
-    var el=h('<div class="dv-ev '+cls+(byCat?" bycat":"")+'" style="top:'+top+'px;height:'+(mins/60*hh-2)+'px;'+(byCat?'--cc:'+itemColor(i)+';':'')+
+    var el=h('<div class="dv-ev '+cls+(byCat?" bycat":"")+'" data-st="top:'+top+'px;height:'+(mins/60*hh-2)+'px;'+(byCat?'--cc:'+itemColor(i)+';':'')+
       'left:calc('+(ev.col*100/ev.ncol)+'% + 2px);width:calc('+(100/ev.ncol)+'% - 4px)">'+
       '<b>'+(isRepeating(i)?"🔁 ":"")+escHtml(i.title)+'</b><span class="num">'+
       (i.start?fmtTime(ev.s)+"–":"")+fmtTime(ev.e)+(i.start?"":" 締切")+'</span></div>');
@@ -1830,11 +1845,11 @@ function renderDay(){
   var isToday=(key===toLocalISO(new Date()));
   if(isToday){
     var n=new Date();
-    grid.appendChild(h('<div class="dv-now" style="top:'+((n.getHours()*60+n.getMinutes())/60*hh)+'px"></div>'));
+    grid.appendChild(h('<div class="dv-now" data-st="top:'+((n.getHours()*60+n.getMinutes())/60*hh)+'px"></div>'));
   }
   scroll.appendChild(grid);
   main.appendChild(scroll);
-  if(!all.length) main.appendChild(h('<div class="empty" style="margin-top:12px">この日の予定はありません。</div>'));
+  if(!all.length) main.appendChild(h('<div class="empty mt-12">この日の予定はありません。</div>'));
   // 今日なら今の時刻の少し前、それ以外は最初の予定か8時あたりから見せる
   var firstH=isToday?Math.max(0,new Date().getHours()-1):(evs.length?Math.max(0,evs[0].s.getHours()-1):8);
   setTimeout(function(){ scroll.scrollTop=firstH*hh; },0);
@@ -1851,7 +1866,7 @@ function renderRepeat(){
   main.appendChild(filterBar());
   var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&isRepeating(i); }).sort(sortByDue);
   if(!list.length){
-    main.appendChild(h('<div class="empty" style="margin-top:18px"><b>定期予定はありません</b>締切を登録するとき「繰り返し」を選ぶと、ここにまとまります。</div>'));
+    main.appendChild(h('<div class="empty mt-18"><b>定期予定はありません</b>締切を登録するとき「繰り返し」を選ぶと、ここにまとまります。</div>'));
     return;
   }
   var labels={weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"};
@@ -1867,7 +1882,7 @@ function renderRepeat(){
       pair.appendChild(card);
       main.appendChild(pair);
       var box=h('<div class="skipbox">'+
-        '<div style="font-size:11.5px;color:var(--ink-3);letter-spacing:.1em;margin-bottom:6px">取りやめた回</div>'+
+        '<div class="note note-label">取りやめた回</div>'+
         '<div class="row"></div></div>');
       i.skip.slice().sort().forEach(function(k){
         var b=h('<button class="act">'+escHtml(k)+' を戻す</button>');
@@ -1877,7 +1892,7 @@ function renderRepeat(){
       pair.appendChild(box);
     });
   });
-  var all=h('<div style="margin:20px 0 0"><button class="act primary" style="padding:8px 14px">定期予定をまとめてカレンダーへ書き出す</button></div>');
+  var all=h('<div class="mt-20"><button class="act primary act-lg">定期予定をまとめてカレンダーへ書き出す</button></div>');
   all.querySelector("button").onclick=function(){ downloadICS(list,"routines"); };
   main.appendChild(all);
 }
@@ -1919,7 +1934,7 @@ function renderCal(){
   main.appendChild(layout);
   var y=calRef.getFullYear(), m=calRef.getMonth();
   var head=h('<div class="cal-head"><h2><span class="num">'+y+"."+pad(m+1)+'</span></h2><div class="row"></div></div>');
-  var prev=h('<button class="nav">‹</button>'), today=h('<button class="nav" style="width:auto;padding:0 10px;font-size:12px">今月</button>'), next=h('<button class="nav">›</button>');
+  var prev=h('<button class="nav">‹</button>'), today=h('<button class="nav nav-wide">今月</button>'), next=h('<button class="nav">›</button>');
   prev.onclick=function(){ calRef=new Date(y,m-1,1); selDay=null; render(); };
   next.onclick=function(){ calRef=new Date(y,m+1,1); selDay=null; render(); };
   today.onclick=function(){ calRef=new Date(); selDay=null; render(); };
@@ -1974,7 +1989,7 @@ function renderCal(){
       var isDue=(toLocalISO(new Date(i.due))===key);
       // 定期予定は緑、それ以外は緊急度の色。期間の途中は薄い帯にする
       var cls=i.done?"done":(isRepeating(i)?"routine":statusOf(i));
-      var style=(mode==="cat"&&!i.done)?' style="background:'+itemColor(i)+'"':'';
+      var style=(mode==="cat"&&!i.done)?' data-st="background:'+itemColor(i)+'"':'';
       day.appendChild(h('<span class="dot '+cls+(isDue?"":" span")+'"'+style+' title="'+escHtml(i.title+"（"+(i.cat||"その他")+"）")+'"></span>'));
     });
     (function(key){ day.onclick=function(){ selDay=(selDay===key?null:key); render(); }; })(key);
@@ -2004,7 +2019,7 @@ function renderCal(){
   if(selDay){
     var sel=hitsOn(selDay).sort(sortByDue);
     var dd=new Date(selDay+"T00:00:00");
-    var selHead=h('<div class="sel-title" style="display:flex;justify-content:space-between;align-items:center">'+(dd.getMonth()+1)+"月"+dd.getDate()+"日（"+DOW[dd.getDay()]+"）の予定"+
+    var selHead=h('<div class="sel-title sel-title-row">'+(dd.getMonth()+1)+"月"+dd.getDate()+"日（"+DOW[dd.getDay()]+"）の予定"+
       '<button class="act">時間軸で見る</button></div>');
     selHead.querySelector("button").onclick=function(){ openDayView(selDay); };
     side.appendChild(selHead);
@@ -2026,10 +2041,10 @@ function checkVersionDisplay(section, myStamp){
       var m=html.match(/<meta name="build-stamp" content="([^"]*)">/);
       var serverStamp=m?m[1]:"不明";
       if(serverStamp===myStamp){
-        el.innerHTML='<span style="color:var(--blue)">✓ 最新版を表示しています</span>';
+        el.innerHTML='<span class="c-blue">✓ 最新版を表示しています</span>';
       } else {
         el.innerHTML='サーバー上の版：<b>'+escHtml(serverStamp)+'</b><br>'+
-          '<span style="color:var(--red)">画面が古い可能性があります。強制リロード（Ctrl/⌘+Shift+R）するか、'+
+          '<span class="c-red">画面が古い可能性があります。強制リロード（Ctrl/⌘+Shift+R）するか、'+
           'URLの末尾に <code>?v=2</code> のように付けて開き直してください。</span>';
       }
     })
@@ -2039,9 +2054,9 @@ function checkVersionDisplay(section, myStamp){
 /* 設定の「バックアップと復元」に入れる、Cloudflare の世代バックアップの一覧と復元。
    一覧はボタンを押したときだけ読む（設定を開くたびには読まない） */
 function snapshotSection(){
-  var sS=h('<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--rule)"><h4 style="margin:0 0 6px;font-size:14px">世代バックアップ（Cloudflare）</h4>'+
-    '<p style="font-size:12.5px;color:var(--ink-3);margin:0 0 10px">保存のたびに、前回から30分以上空いていれば、上書き前の内容を残しています（古いものは自動で間引きます）。「この時点に戻す」と、今のCloudflareの内容も世代バックアップに残してから、その時点の内容で置き換えます。使った世代バックアップは消えません。</p>'+
-    '<div class="row"></div><p class="snap-status" style="font-size:12.5px;margin:8px 0 0"></p><div class="cat-list snap-list"></div></div>');
+  var sS=h('<div class="snap-sec"><h4>世代バックアップ（Cloudflare）</h4>'+
+    '<p class="note-m mb-10">保存のたびに、前回から30分以上空いていれば、上書き前の内容を残しています（古いものは自動で間引きます）。「この時点に戻す」と、今のCloudflareの内容も世代バックアップに残してから、その時点の内容で置き換えます。使った世代バックアップは消えません。</p>'+
+    '<div class="row"></div><p class="snap-status"></p><div class="cat-list snap-list"></div></div>');
   var status=sS.querySelector(".snap-status"), list=sS.querySelector(".snap-list");
   // 入力欄にアクセスキーがあればそれを、なければこの端末に保存したキーを使う
   var snapCfg=function(){
@@ -2069,10 +2084,10 @@ function snapshotRow(sn,cfg,status){
   var row=h('<div class="cat-row"><span class="cat-name"></span><div class="cat-btns"></div></div>');
   var name=row.querySelector(".cat-name");
   name.textContent=when;
-  var meta=h('<span style="font-size:11.5px;color:var(--ink-3)"></span>');
+  var meta=h('<span class="note"></span>');
   meta.textContent="版 "+sn.rev+"・"+Math.max(1,Math.round(sn.size/1024))+" KB";
   name.append(document.createElement("br"),meta);
-  var detail=h('<div style="font-size:12.5px;color:var(--ink-2);padding:4px 0 8px"></div>');
+  var detail=h('<div class="snap-detail"></div>');
   detail.hidden=true;
   var bView=h('<button class="act" title="中身を見る">中身</button>');
   bView.onclick=function(){
@@ -2080,7 +2095,7 @@ function snapshotRow(sn,cfg,status){
     cfReadSnapshot(cfg,sn.id).then(function(j){
       var items=j.data.items, titles=items.slice(0,5).map(function(i){ return i && typeof i.title==="string" ? i.title : "（題名なし）"; });
       detail.textContent="締切 "+items.length+"件"+(titles.length?"：":"")+titles.join("、")+(items.length>5?" ほか":"");
-      var bBack=h('<button class="act danger" style="display:block;margin-top:6px;border:1px solid var(--rule)">この時点に戻す</button>');
+      var bBack=h('<button class="act danger act-block">この時点に戻す</button>');
       bBack.onclick=function(){
         var unsynced=db.updatedAt && store.get("gh-known-updatedAt")!==db.updatedAt;
         if(!confirm("Cloudflareのデータを、"+when+"（版 "+sn.rev+"・"+items.length+"件）の内容に戻します。\n\n"+
@@ -2133,7 +2148,7 @@ function renderSettings(){
   var myStamp=(document.querySelector('meta[name="build-stamp"]')||{}).content||"不明";
   var s0=h('<div class="sec"><h3>バージョン</h3>'+
     '<p>この画面が読み込んでいる版：<b>'+escHtml(myStamp)+'</b></p>'+
-    '<p id="verCheck" style="color:var(--ink-3)">サーバー上の版を確認しています…</p>'+
+    '<p id="verCheck" class="c-ink3">サーバー上の版を確認しています…</p>'+
     '<div class="row"></div></div>');
   var bCheck=h('<button class="btn">今すぐ確認する</button>');
   bCheck.onclick=function(){ checkVersionDisplay(s0, myStamp); };
@@ -2143,7 +2158,7 @@ function renderSettings(){
 
   // 当日リマインド時刻
   var s1=h('<div class="sec"><h3>当日リマインドの時刻</h3><p>カレンダーに書き出すとき、締切当日の通知をこの時刻に入れます。1週間前・前日の通知は締切と同じ時刻に鳴ります。</p></div>');
-  var sel=h('<select style="max-width:160px"></select>');
+  var sel=h('<select class="w-max160"></select>');
   for(var hh=5;hh<=22;hh++){ var o=document.createElement("option"); o.value=hh; o.textContent=hh+":00"; if(hh===db.settings.dayHour) o.selected=true; sel.appendChild(o); }
   sel.onchange=function(){ db.settings.dayHour=parseInt(sel.value,10); saveRaw(); toast("当日リマインドを "+sel.value+":00 にしました"); }; // 設定は同期対象外なのでupdatedAtは進めない
   s1.appendChild(sel); put("notify",s1);
@@ -2154,11 +2169,11 @@ function renderSettings(){
     '<div class="cat-list"></div></div>');
   var tplList=sT.querySelector(".cat-list");
   if(!db.templates.length){
-    tplList.appendChild(h('<p style="font-size:12.5px;color:var(--ink-3);margin:0">まだありません。</p>'));
+    tplList.appendChild(h('<p class="note-m m0">まだありません。</p>'));
   } else {
     db.templates.forEach(function(t){
       var row=h('<div class="cat-row"><span class="cat-name">'+escHtml(t.name)+
-        '<br><span style="font-size:11.5px;color:var(--ink-3)">'+escHtml(t.title)+'　'+escHtml(t.cat||"")+
+        '<br><span class="note">'+escHtml(t.title)+'　'+escHtml(t.cat||"")+
         '　'+(t.allDay?"終日":escHtml(t.timeOfDay||"09:00"))+'</span></span>'+
         '<div class="cat-btns"></div></div>');
       var del=h('<button class="act" title="削除">×</button>');
@@ -2180,13 +2195,13 @@ function renderSettings(){
     '<div class="cat-list"></div></div>');
   var trList=sTr.querySelector(".cat-list");
   if(!trashSorted.length){
-    trList.appendChild(h('<p style="font-size:12.5px;color:var(--ink-3);margin:0">ゴミ箱は空です。</p>'));
+    trList.appendChild(h('<p class="note-m m0">ゴミ箱は空です。</p>'));
   } else {
     trashSorted.forEach(function(t){
       var d=new Date(t.deletedAt);
       var when=(d.getMonth()+1)+"/"+d.getDate()+" "+pad(d.getHours())+":"+pad(d.getMinutes())+" に削除";
       var row=h('<div class="cat-row"><span class="cat-name">'+escHtml(t.item.title)+
-        '<br><span style="font-size:11.5px;color:var(--ink-3)">'+escHtml(when)+'</span></span>'+
+        '<br><span class="note">'+escHtml(when)+'</span></span>'+
         '<div class="cat-btns"></div></div>');
       var back=h('<button class="act" title="元に戻す">戻す</button>');
       back.onclick=function(){ restoreFromTrash(t.trashId); };
@@ -2198,7 +2213,7 @@ function renderSettings(){
       row.querySelector(".cat-btns").append(back,del);
       trList.appendChild(row);
     });
-    var emptyBtn=h('<button class="act danger" style="margin-top:4px">ゴミ箱を空にする</button>');
+    var emptyBtn=h('<button class="act danger mt-4">ゴミ箱を空にする</button>');
     emptyBtn.onclick=purgeAllTrash;
     sTr.appendChild(emptyBtn);
   }
@@ -2206,14 +2221,14 @@ function renderSettings(){
 
   // 隔離（読み込み時に形式が不正で除外された項目）
   if(db.quarantine.length){
-    var sQ=h('<div class="sec"><h3 style="color:var(--red)">隔離された項目（'+db.quarantine.length+'件）</h3>'+
+    var sQ=h('<div class="sec"><h3 class="c-red">隔離された項目（'+db.quarantine.length+'件）</h3>'+
       '<p>GitHubなどから読み込んだ内容のうち、必須項目（タイトル・締切日など）が壊れていたため取り込めなかったものです。「修復」で内容を直して保存すると一覧に戻ります。放置しても他の機能には影響しません。</p>'+
       '<div class="cat-list"></div></div>');
     var qList=sQ.querySelector(".cat-list");
     db.quarantine.forEach(function(q){
       var rawTitle=(q.raw&&typeof q.raw.title==="string")?q.raw.title:"(タイトル不明)";
       var row=h('<div class="cat-row"><span class="cat-name">'+escHtml(rawTitle)+
-        '<br><span style="font-size:11.5px;color:var(--red)">'+escHtml(q.reason)+'</span></span>'+
+        '<br><span class="note c-red">'+escHtml(q.reason)+'</span></span>'+
         '<div class="cat-btns"></div></div>');
       var fix=h('<button class="act" title="修復して一覧に戻す">修復</button>');
       fix.onclick=function(){ openQuarantineFixDialog(q.qid); };
@@ -2232,12 +2247,12 @@ function renderSettings(){
   var s2=h('<div class="sec"><h3>カテゴリ</h3><p>登録画面の選択肢と、フィルタの並び順になります。左の色を押すと、36色のテンプレートかカラーコードで色を選べます（指定しなければ自動で割り振ります）。各カテゴリの「通知」で、カレンダー（.ics）の通知を何日前に鳴らすかを選べます（N日前は締切と同じ時刻、当日は「当日リマインドの時刻」）。</p><div class="cat-list"></div></div>');
   var line=s2.querySelector(".cat-list");
   db.categories.forEach(function(c,idx){
-    var row=h('<div class="cat-row" style="flex-wrap:wrap"><span class="cat-name">'+escHtml(c)+'</span><div class="cat-btns"></div>'+
-      '<div class="rem-row" style="flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:11.5px;color:var(--ink-3)">通知：</div></div>');
+    var row=h('<div class="cat-row cat-row-wrap"><span class="cat-name">'+escHtml(c)+'</span><div class="cat-btns"></div>'+
+      '<div class="rem-row">通知：</div></div>');
     var cur=remindersFor(c);
     REMINDER_CHOICES.forEach(function(n){
       var on=cur.indexOf(n)>=0;
-      var b=h('<button class="chip" style="padding:1px 9px;font-size:11.5px">'+(n===0?"当日":n===1?"前日":n+"日前")+'</button>');
+      var b=h('<button class="chip">'+(n===0?"当日":n===1?"前日":n+"日前")+'</button>');
       b.setAttribute("aria-pressed", on?"true":"false");
       b.onclick=function(){
         var arr=remindersFor(c).slice();
@@ -2259,7 +2274,7 @@ function renderSettings(){
     row.querySelector(".cat-name").before(cp);
     var btns=row.querySelector(".cat-btns");
     function mkBtn(label,title,disabled,fn){
-      var b=h('<button class="act" title="'+title+'"'+(disabled?' disabled style="opacity:.3"':'')+'>'+label+'</button>');
+      var b=h('<button class="act" title="'+title+'"'+(disabled?' disabled':'')+'>'+label+'</button>');
       if(!disabled) b.onclick=fn;
       btns.appendChild(b);
     }
@@ -2279,7 +2294,7 @@ function renderSettings(){
     });
     line.appendChild(row);
   });
-  var addRow=h('<div class="row"><input type="text" id="newCat" maxlength="20" placeholder="新しいカテゴリ名" style="flex:1;min-width:140px"><button class="btn">追加する</button></div>');
+  var addRow=h('<div class="row"><input type="text" id="newCat" maxlength="20" placeholder="新しいカテゴリ名" class="grow-140"><button class="btn">追加する</button></div>');
   addRow.querySelector("button").onclick=function(){
     var v=addRow.querySelector("input").value.trim();
     if(!v) return;
@@ -2342,7 +2357,7 @@ function renderSettings(){
     toast("バックアップを書き出しました");
   };
   var bIn=h('<button class="btn">JSONを読み込む</button>');
-  var file=h('<input type="file" accept="application/json,.json" style="display:none">');
+  var file=h('<input type="file" accept="application/json,.json" hidden>');
   bIn.onclick=function(){ file.click(); };
   file.onchange=function(){
     var f=file.files[0]; if(!f) return;
@@ -2381,26 +2396,26 @@ function renderSettings(){
   if(CF===null) cfDetect().then(function(){ if(CF!==null && view==="set") render(); }); // 保存先の判定が終わったら描き直す
   var s5=CF===true ? h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+
     '<p>締切データをCloudflareに保存し、端末間で受け渡します。<b>同期する</b>でこの端末の内容を送り、<b>読み込む</b>で他の端末から送られた内容を取り込みます。毎朝のDiscord送信とメールも同じデータを見ています。</p>'+
-    '<p style="font-size:12px;color:var(--ink-3)">アクセスキーを保存している端末では、この端末に未同期の変更が無いときに限り、Cloudflare上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
+    '<p class="note">アクセスキーを保存している端末では、この端末に未同期の変更が無いときに限り、Cloudflare上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
     '<label class="field"><span>アクセスキー</span><input type="password" id="ghToken" placeholder="Cloudflare に登録したアクセスキー（APP_KEY）" autocomplete="off"></label>'+
-    '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
-    '<input type="checkbox" id="ghRemember" style="width:auto">この端末にアクセスキーを保存して次回から入力を省く</label>'+
-    '<p style="font-size:11.5px;color:var(--ink-3);margin:-6px 0 12px">保存すると、アクセスキーは暗号化してこのブラウザの中に残ります。共用の端末では保存しないでください。</p>'+
-    '<p id="ghSecretNote" style="font-size:12.5px;color:var(--red);margin:-4px 0 12px"></p>'+
-    '<div class="row"></div><p id="ghStatus" style="margin-top:8px"></p></div>')
-  : CF===null ? h('<div class="sec"><h3>端末間の同期とDiscord通知</h3><p style="color:var(--ink-3)">保存先を確認しています…</p></div>')
+    '<label class="chk-set">'+
+    '<input type="checkbox" id="ghRemember" class="cb">この端末にアクセスキーを保存して次回から入力を省く</label>'+
+    '<p class="note note-tight">保存すると、アクセスキーは暗号化してこのブラウザの中に残ります。共用の端末では保存しないでください。</p>'+
+    '<p id="ghSecretNote" class="note-m c-red secret-note"></p>'+
+    '<div class="row"></div><p id="ghStatus" class="mt-8"></p></div>')
+  : CF===null ? h('<div class="sec"><h3>端末間の同期とDiscord通知</h3><p class="c-ink3">保存先を確認しています…</p></div>')
   : h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+
     '<p>締切データ（data.json）をPrivateリポジトリに置き、端末間で受け渡します。<b>同期する</b>でこの端末の内容を送り、<b>読み込む</b>で他の端末から送られた内容を取り込みます。毎朝のDiscord送信も同じデータを見ています。</p>'+
-    '<p style="font-size:12px;color:var(--ink-3)">トークンを保存している端末では、この端末に未同期の変更が無いときに限り、GitHub上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
+    '<p class="note">トークンを保存している端末では、この端末に未同期の変更が無いときに限り、GitHub上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
     '<div class="two"><label class="field"><span>GitHubユーザー名 / Organization</span><input type="text" id="ghOwner" placeholder="例：yamada-taro"></label>'+
     '<label class="field"><span>データ用リポジトリ名（Private推奨）</span><input type="text" id="ghRepo" placeholder="例：deadline-data"></label></div>'+
     '<label class="field"><span>ブランチ</span><input type="text" id="ghBranch" value="main"></label>'+
     '<label class="field"><span>Personal Access Token（Contents: Read and write）</span><input type="password" id="ghToken" placeholder="このリポジトリだけに絞ったトークンを推奨"></label>'+
-    '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
-    '<input type="checkbox" id="ghRemember" style="width:auto">この端末にトークンを保存して次回から入力を省く</label>'+
-    '<p style="font-size:11.5px;color:var(--ink-3);margin:-6px 0 12px">保存すると、トークンは暗号化してこのブラウザの中に残ります。共用の端末では保存しないでください。</p>'+
-    '<p id="ghSecretNote" style="font-size:12.5px;color:var(--red);margin:-4px 0 12px"></p>'+
-    '<div class="row"></div><p id="ghStatus" style="margin-top:8px"></p></div>');
+    '<label class="chk-set">'+
+    '<input type="checkbox" id="ghRemember" class="cb">この端末にトークンを保存して次回から入力を省く</label>'+
+    '<p class="note note-tight">保存すると、トークンは暗号化してこのブラウザの中に残ります。共用の端末では保存しないでください。</p>'+
+    '<p id="ghSecretNote" class="note-m c-red secret-note"></p>'+
+    '<div class="row"></div><p id="ghStatus" class="mt-8"></p></div>');
   var g=function(id){ return s5.querySelector("#"+id); };
   if(CF===true){ // 同期が働いていない理由を、節の先頭に出す
     var why=!store.get("cf-key") ? ["未入力","アクセスキーがまだ入っていません。下の欄に入れると、保存してある締切を読み込めます。"]
@@ -2429,14 +2444,14 @@ function renderSettings(){
   // このリポジトリが以前「Publicと承知の上」で確認済みなら、開くたびに気づけるよう常に出す
   if(CF===false && saved.owner && saved.repo && ackedPublicRepo(saved.owner, saved.repo)){
     s5.insertBefore(
-      h('<p style="font-size:12.5px;color:var(--red);margin:0 0 10px">⚠️ 同期先「'+escHtml(saved.owner)+'/'+escHtml(saved.repo)+'」はPublicリポジトリです。締切の内容が誰でも見られます。</p>'),
+      h('<p class="note-m c-red mb-10">⚠️ 同期先「'+escHtml(saved.owner)+'/'+escHtml(saved.repo)+'」はPublicリポジトリです。締切の内容が誰でも見られます。</p>'),
       s5.querySelector(".two")
     );
   }
   // 最後に同期した時刻。間が空いていると赤字にして気づけるようにする
   var ls=lastSyncText();
-  var lsEl=h('<p style="font-size:12.5px;margin:0 0 12px;'+(ls&&ls.stale?'color:var(--red)':'color:var(--ink-2)')+'">'+
-    (ls?('最終'+escHtml(ls.kind)+'：<b>'+escHtml(ls.rel)+'</b>　<span style="color:var(--ink-3)">'+escHtml(ls.text)+'</span>'
+  var lsEl=h('<p class="sync-last'+(ls&&ls.stale?' c-red':'')+'">'+
+    (ls?('最終'+escHtml(ls.kind)+'：<b>'+escHtml(ls.rel)+'</b>　<span class="c-ink3">'+escHtml(ls.text)+'</span>'
          +(ls.stale?'<br>しばらく同期されていません。登録した内容が毎朝の連絡に反映されていない可能性があります。':''))
         :'まだ一度も同期していません。')+'</p>');
   s5.insertBefore(lsEl, s5.querySelector(".two")||s5.querySelector(".field")||s5.querySelector("p:last-child"));
@@ -2469,11 +2484,11 @@ function renderSettings(){
       ? '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。通知先は、Cloudflare に登録したWebhookです（空欄のまま送信すると、Cloudflare から送ります。この端末に保存したURLがそのまま入っているときも同じです。別の宛先へ送りたいときだけ、下に別のURLを入力してください）。</p>'
       : '<p>毎朝の連絡を待たずに、今の締切一覧をDiscordへ送ります。通知先は上の同期設定を使って、Privateリポジトリの送信スクリプトから自動で読み取ります（別の宛先へ送りたいときだけ、下に直接入力してください）。</p>')+
     '<label class="field"><span>Discord Webhook URL（空欄で'+(CF===true?'Cloudflareから送信':'GitHubから自動取得')+'）</span><input type="password" id="dcHook" placeholder="通常は空欄のままで大丈夫です"></label>'+
-    '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-bottom:12px">'+
-    '<input type="checkbox" id="dcRemember" style="width:auto">この端末に保存して次回から取得を省く</label>'+
-    '<p style="font-size:11.5px;color:var(--ink-3);margin:-6px 0 12px">保存すると、Webhook URLは暗号化してこのブラウザの中に残ります。URLを知っている人は誰でもDiscordへ投稿できるので、共用の端末では保存しないでください。</p>'+
-    '<p id="dcSecretNote" style="font-size:12.5px;color:var(--red);margin:-4px 0 12px"></p>'+
-    '<div class="row"></div><p id="dcStatus" style="margin-top:8px"></p></div>');
+    '<label class="chk-set">'+
+    '<input type="checkbox" id="dcRemember" class="cb">この端末に保存して次回から取得を省く</label>'+
+    '<p class="note note-tight">保存すると、Webhook URLは暗号化してこのブラウザの中に残ります。URLを知っている人は誰でもDiscordへ投稿できるので、共用の端末では保存しないでください。</p>'+
+    '<p id="dcSecretNote" class="note-m c-red secret-note"></p>'+
+    '<div class="row"></div><p id="dcStatus" class="mt-8"></p></div>');
   s6.querySelector("#dcRemember").checked=!!store.get("dc-hook");
   secretGet("dc-hook").then(function(u){ // 暗号化して保存してあるので、復号できてから入れる（入力し始めていたら上書きしない）
     var box=s6.querySelector("#dcHook");
@@ -2492,9 +2507,9 @@ function renderSettings(){
   [["autoSync",RN()+"へ自動で同期する","同期ボタンを押し忘れても、翌朝のDiscord通知に反映されます"],
    ["autoNotify","Discordへ自動で通知する","登録するたびにチャンネルへ送信されます（頻繁だと煩わしい場合があります）"]
   ].forEach(function(p){
-    var wrap=h('<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:10px">'+
-      '<input type="checkbox" style="width:auto;margin-top:3px">'+
-      '<span>'+escHtml(p[1])+'<br><span style="font-size:11.5px;color:var(--ink-3)">'+escHtml(p[2])+'</span></span></label>');
+    var wrap=h('<label class="chk-auto">'+
+      '<input type="checkbox" class="cb cb-top">'+
+      '<span>'+escHtml(p[1])+'<br><span class="note">'+escHtml(p[2])+'</span></span></label>');
     var cb=wrap.querySelector("input");
     cb.checked=!!db.settings[p[0]];
     cb.onchange=function(){
@@ -3358,7 +3373,7 @@ function openDialog(item){
   // テンプレート欄は新規登録のときだけ出す（編集中に入れ替わると混乱するため）
   var tplRow=document.getElementById("tplRow"), tplSel=document.getElementById("fTpl");
   if(!item && db.templates.length){
-    tplRow.style.display="";
+    tplRow.hidden=false;
     tplSel.innerHTML="";
     var none=document.createElement("option"); none.value=""; none.textContent="（使わない）"; tplSel.appendChild(none);
     db.templates.forEach(function(t){
@@ -3367,7 +3382,7 @@ function openDialog(item){
     tplSel.value="";
     tplSel.onchange=function(){ applyTemplate(tplSel.value); };
   } else {
-    tplRow.style.display="none";
+    tplRow.hidden=true;
   }
   if(item){
     var d=parseItemDate(item);
@@ -3442,11 +3457,11 @@ function syncDialogRows(){
   // 「詳しい設定」は閉じておく。ただし、設定済みのものが中にあるときは開いて、見えないまま効いていることがないようにする
   if(dlgMoreActive()) document.getElementById("dlgMore").open=true;
   var span=document.getElementById("fSpan").checked;
-  document.getElementById("startRow").style.display=span?"":"none";
+  document.getElementById("startRow").hidden=!span;
   document.getElementById("dueLabel").textContent=span?"終了日":"締切日";
   var rep=document.getElementById("fRep").value;
-  document.getElementById("repCountRow").style.display=(rep==="none")?"none":"";
-  document.getElementById("calShowRow").style.display=(rep==="none")?"none":"flex";
+  document.getElementById("repCountRow").hidden=(rep==="none");
+  document.getElementById("calShowRow").hidden=(rep==="none");
   // 終日のときは時刻欄を隠す
   var allDay=document.getElementById("fAllDay").checked;
   var dueCell=document.querySelector(".dueTimeCell"), startCell=document.querySelector(".startTimeCell");
@@ -3457,13 +3472,13 @@ function syncDialogRows(){
   // 締切日が土日祝なら知らせる（登録は妨げない）
   var note=document.getElementById("dayOffNote");
   var dv=document.getElementById("fDate").value;
-  note.style.display="none";
+  note.hidden=true;
   if(dv){
     var dd=new Date(dv+"T00:00:00");
     var hol=holidayName(dv);
-    if(hol){ note.textContent="⚠️ この日は祝日です（"+hol+"）"; note.style.display=""; }
-    else if(dd.getDay()===0){ note.textContent="⚠️ この日は日曜です"; note.style.display=""; }
-    else if(dd.getDay()===6){ note.textContent="⚠️ この日は土曜です"; note.style.display=""; }
+    if(hol){ note.textContent="⚠️ この日は祝日です（"+hol+"）"; note.hidden=false; }
+    else if(dd.getDay()===0){ note.textContent="⚠️ この日は日曜です"; note.hidden=false; }
+    else if(dd.getDay()===6){ note.textContent="⚠️ この日は土曜です"; note.hidden=false; }
   }
   updateOverlapNote();
 }
@@ -3472,7 +3487,7 @@ function syncDialogRows(){
    判定は時刻のある予定どうしだけ。終日・数日にまたがる期間は対象外 */
 function updateOverlapNote(){
   var note=document.getElementById("overlapNote");
-  note.style.display="none";
+  note.hidden=true;
   var dv=document.getElementById("fDate").value;
   if(!dv || document.getElementById("fAllDay").checked) return;
   var end=new Date(dv+"T"+(document.getElementById("fTime").value||"09:00")+":00");
@@ -3492,7 +3507,7 @@ function updateOverlapNote(){
     return "「"+i.title+"」"+(i.start?fmtTime(r.start)+"–":"")+fmtTime(r.end);
   }).join("、");
   note.textContent="⚠️ この時間帯には他の予定があります："+names+(hits.length>3?" ほか"+(hits.length-3)+"件":"");
-  note.style.display="";
+  note.hidden=false;
 }
 document.getElementById("fDate").addEventListener("change",syncDialogRows);
 ["fTime","fStart","fStartTime"].forEach(function(id){ document.getElementById(id).addEventListener("change",updateOverlapNote); });
@@ -3860,7 +3875,7 @@ function playAllClear(exp){
   var old=document.querySelector(".quest"); if(old) old.remove();
   var sparks="";
   for(var k=0;k<20;k++){ var a=k/20*Math.PI*2, d=110+(k%4)*34;
-    sparks+='<i style="--x:'+Math.round(Math.cos(a)*d*1.9)+'px;--y:'+Math.round(Math.sin(a)*d*.6)+'px;--d:'+(k%5)*50+'ms"></i>'; }
+    sparks+='<i data-st="--x:'+Math.round(Math.cos(a)*d*1.9)+'px;--y:'+Math.round(Math.sin(a)*d*.6)+'px;--d:'+(k%5)*50+'ms"></i>'; }
   var el=h('<div class="quest allclear" role="status" aria-live="polite"><div class="quest-band">'+
     '<div class="quest-sparks" aria-hidden="true">'+sparks+'</div>'+
     '<div class="quest-kicker">ALL CLEAR</div>'+
@@ -3999,7 +4014,7 @@ function playQuestClear(title, rw, sub, onClose){
   var sparks="";
   for(var k=0;k<14;k++){
     var a=k/14*Math.PI*2, d=90+(k%3)*38;
-    sparks+='<i style="--x:'+Math.round(Math.cos(a)*d*1.8)+'px;--y:'+Math.round(Math.sin(a)*d*.55)+'px;--d:'+(k%4)*40+'ms"></i>';
+    sparks+='<i data-st="--x:'+Math.round(Math.cos(a)*d*1.8)+'px;--y:'+Math.round(Math.sin(a)*d*.55)+'px;--d:'+(k%4)*40+'ms"></i>';
   }
   var el=h('<div class="quest" role="status" aria-live="polite">'+
     '<div class="quest-band"><div class="quest-sparks" aria-hidden="true">'+sparks+'</div>'+
@@ -4008,7 +4023,7 @@ function playQuestClear(title, rw, sub, onClose){
       '<div class="quest-name">「'+escHtml(title)+'」</div>'+
       (sub?'<div class="quest-sub">'+escHtml(sub)+'</div>':'')+
       '<div class="quest-reward"><span class="quest-exp">EXP +'+rw.gain+'</span><span class="quest-bonus">'+rw.bonus+'</span></div>'+
-      '<div class="quest-lv"><span>Lv.'+rw.level+'</span><span class="quest-bar"><b style="--from:'+fromPct+'%;--to:'+toPct+'%"></b></span><span>'+rw.into+'/'+EXP_PER_LEVEL+'</span></div>'+
+      '<div class="quest-lv"><span>Lv.'+rw.level+'</span><span class="quest-bar"><b data-st="--from:'+fromPct+'%;--to:'+toPct+'%"></b></span><span>'+rw.into+'/'+EXP_PER_LEVEL+'</span></div>'+
       (rw.levelUp?'<div class="quest-up">LEVEL UP!　Lv.'+(rw.level-1)+' → Lv.'+rw.level+'</div>':'')+
     '</div></div>');
   var gone=false;
@@ -4170,10 +4185,10 @@ function toast(msg, actionLabel, actionFn){
   toastMsgEl.textContent=msg; toastEl.classList.add("on");
   if(actionLabel&&actionFn){
     toastActionEl.textContent=actionLabel;
-    toastActionEl.style.display="";
+    toastActionEl.hidden=false;
     toastActionEl.onclick=function(){ actionFn(); toastEl.classList.remove("on"); clearTimeout(toastTimer); };
   } else {
-    toastActionEl.style.display="none";
+    toastActionEl.hidden=true;
     toastActionEl.onclick=null;
   }
   clearTimeout(toastTimer);
@@ -4195,7 +4210,7 @@ function handleExportParam(){
     else list=activeItems().sort(sortByDue);
     if(!list.length){ toast("書き出す予定がありません"); return; }
     downloadIcsPreferWorker(list, "deadlines");
-    var guide=h('<div class="sec" style="border-color:var(--blue)">'+
+    var guide=h('<div class="sec bd-blue">'+
       '<h3>カレンダーへの入れ方</h3>'+
       '<p>1. 保存された <b>deadlines.ics</b> を開く（Safariの右上のダウンロードマーク、または「ファイル」アプリの中）<br>'+
       '2. 「カレンダーに追加」を選ぶ<br>'+
