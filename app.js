@@ -1017,6 +1017,8 @@ function runAutoSync(cfg){
   }
   // GitHub上に「この端末がまだ取り込んでいない他の端末の更新」があれば、上書きして消さないよう止める
   function checkedPut(){
+    // Cloudflare は、手元の rev を If-Match に付けて直接送る（衝突は Worker が 409 で断る）。先に全データを読み直さない
+    if(cfg.kind==="cf") return put();
     return fetchRemoteState(cfg).then(function(r){
       if(remoteHasUnknownChanges(r)){
         if(!_autoSyncBlockedShown){

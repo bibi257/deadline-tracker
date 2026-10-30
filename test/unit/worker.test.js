@@ -297,3 +297,28 @@ test('GET /api/ics?dayHour=: 当日リマインドの時刻を指定できる（
   assert.equal(await (await get('?dayHour=9')).text(), nine, '9 を明示しても同じ');
   for (const bad of ['?dayHour=24', '?dayHour=-1', '?dayHour=x', '?dayHour=', '?dayHour=9.5']) assert.equal((await get(bad)).status, 400, bad);
 });
+
+test('GET /api/data: 保存してある JSON を解析し直さずに返す。中身・rev・時刻は変わらず、記号・絵文字・改行を含んでも壊れない', async () => {
+  const { env, call } = setup();
+  const data = {
+    items: [{ id: 'a', title: '改行\n引用"と\\と</script>と と😀と𠮷', due: '2026-11-01T00:00:00.000Z', memo: '{"入れ子":[1,2,{"x":null}]}' }],
+    categories: ['課題'], catReminders: {}, updatedAt: '2026-10-23T00:00:00.000Z',
+  };
+  assert.equal((await call('PUT', '/api/data', { body: data, headers: { 'If-Match': '0' } })).status, 201);
+  const r = await call('GET', '/api/data');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.data, data);
+  assert.equal(r.body.ok, true);
+  assert.equal(r.body.rev, 1);
+  assert.equal(r.body.updatedAt, '2026-10-23T00:00:00.000Z');
+  assert.ok(r.body.savedAt, '保存した時刻');
+  // JSON の解析・再変換をしない（Worker の CPU 時間のため）。巨大なデータの GET で JSON.parse が呼ばれない
+  const real = JSON.parse;
+  let parsed = 0;
+  JSON.parse = (...a) => { parsed += 1; return real(...a); };
+  try {
+    const res = await worker.fetch(new Request('https://x.test/api/data', { headers: { Authorization: `Bearer ${KEY}`, 'CF-Connecting-IP': '1.1.1.1' } }), env);
+    await res.text(); // 応答の本文を読む（テスト側の解析は含めない）
+  } finally { JSON.parse = real; }
+  assert.equal(parsed, 0, 'GET /api/data は JSON.parse を呼ばない');
+});
