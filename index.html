@@ -19,7 +19,10 @@
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う）。
      app.js / styles.css を変えたときは、<script src="app.js?v=..."> / <link href="styles.css?v=..."> の v も同じ日時（例 20261009-1019）に変える。
      これは GitHub Pages（旧環境）用の手作業。Worker から配信する web/ は、ビルド（scripts/build.mjs）が v・スタンプ・キャッシュ名をハッシュで自動で書き換える。旧環境をやめたら、この手作業は不要 -->
-<meta name="build-stamp" content="2026-10-30 07:00 完了タブに達成カレンダー、設定に実績バッジ">
+<meta name="build-stamp" content="2026-10-31 02:00 版を「日時 v3.1」の形で表示">
+<!-- アプリの版番号（設定の「バージョン」に「2026-10-31 08:00 v3.1」のように出る）。大きな変更のときに手で上げる。決め方は docs/VERSIONS.md。
+     package.json の version（3.1.0）と major.minor をそろえる（テストで確かめる） -->
+<meta name="app-version" content="3.1">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -32,7 +35,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20261030-0700">
+<link rel="stylesheet" href="styles.css?v=20261031-0200">
 </head>
 <body>
 
@@ -46,11 +49,11 @@
       </div>
       <div class="count"><b class="num" id="cntNum">0</b><span id="cntLabel">締切 7日以内</span><span class="sub" id="cntSub"></span></div>
       <button class="gear" id="gearBtn" type="button" aria-label="設定" title="設定" aria-pressed="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
     </div>
     <!-- 画面の切り替え。スマホでは画面の下に固定し、広い画面では見出しの下に並べる（styles.css）。
-         超過・定期予定は一覧から、設定は右上の歯車から開く -->
+         超過・定期予定は一覧から、設定は右上のメニュー（☰）から開く -->
     <nav class="tabs" role="tablist" aria-label="画面">
       <button class="tab" role="tab" data-view="list" aria-selected="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span class="tab-name">一覧</span><span class="tab-badge" hidden></span></button>
       <button class="tab" role="tab" data-view="week" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg><span class="tab-name">今週</span></button>
@@ -112,6 +115,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261030-0700"></script>
+<script src="app.js?v=20261031-0200"></script>
 </body>
 </html>

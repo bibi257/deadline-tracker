@@ -22,6 +22,7 @@
   --mark-ink:#1C1B18;
   --radius:2px;
   /* 文字の大きさの段階（11px 未満は使わない）。場当たりの数値を書かず、ここから選ぶ */
+  --grass-0:#ebedf0; --grass-1:#9be9a8; --grass-2:#40c463; --grass-3:#30a14e; --grass-4:#216e39; --grass-edge:rgba(27,31,36,.08);
   --fs-xs:11px; --fs-s:12px; --fs-m:13px; --fs-l:14px; --fs-xl:15px;
   --sans:"IBM Plex Sans JP","Hiragino Kaku Gothic ProN",system-ui,sans-serif;
   --num:var(--sans);
@@ -41,6 +42,7 @@ html[data-theme="dark"]{
   --routine:#18A28D;
   --mark:#5E5622;
   --mark-ink:#F3EBC0;
+  --grass-0:#161b22; --grass-1:#0e4429; --grass-2:#006d32; --grass-3:#26a641; --grass-4:#39d353; --grass-edge:rgba(255,255,255,.06);
 }
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -745,15 +747,27 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .ach{margin:14px 0 6px;padding:12px;background:var(--card);border:1px solid var(--rule);border-top:2px solid var(--ink);border-radius:var(--radius)}
 .ach-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 10px;margin-bottom:8px}
 .ach-head b{font-size:var(--fs-xl);letter-spacing:.04em}
-.ach-grid{display:grid;grid-template-rows:repeat(7,1fr);grid-auto-flow:column;grid-auto-columns:1fr;gap:3px}
-.ach-grid i,.ach-sw{position:relative;display:block;aspect-ratio:1;border:1px solid var(--rule);border-radius:var(--radius);background:var(--card)}
-.ach-grid i.gf{border-style:dashed;border-color:var(--rule-2);background:transparent}
-.ach .g1{background:color-mix(in srgb,var(--ink) 18%,var(--card))}
-.ach .g2{background:color-mix(in srgb,var(--ink) 48%,var(--card))}
-.early::after{content:"";position:absolute;top:2px;right:2px;width:5px;height:5px;background:var(--blue)}
-.ach-legend{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;margin-top:8px}
-.ach-sw{display:inline-block;width:12px;height:12px;margin-left:6px}
-.ach-sw:first-child{margin-left:0}
+.ach-board{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto;gap:3px 4px}
+.ach-months{display:grid;grid-template-columns:repeat(26,minmax(0,1fr));gap:3px;font-size:var(--fs-xs);color:var(--ink-3);line-height:1;white-space:nowrap;min-height:12px}
+.ach-dows{display:grid;grid-template-rows:repeat(7,1fr);gap:3px;font-size:var(--fs-xs);color:var(--ink-3);line-height:1}
+.ach-dows span{display:flex;align-items:center}
+.ach-dows span:nth-child(1){grid-row:2}
+.ach-dows span:nth-child(2){grid-row:4}
+.ach-dows span:nth-child(3){grid-row:6}
+.ach-grid{display:grid;grid-template-columns:repeat(26,minmax(0,1fr));grid-template-rows:repeat(7,auto);grid-auto-flow:column;gap:3px}
+.ach-grid i,.ach-sw{position:relative;display:block;aspect-ratio:1;border-radius:2px;border:1px solid var(--grass-edge);background:var(--grass-0)}
+.ach-grid i{cursor:pointer}
+.ach-grid i.gf{border-color:transparent;background:transparent;cursor:default}
+.ach .g1{background:var(--grass-1)}
+.ach .g2{background:var(--grass-2)}
+.ach .g3{background:var(--grass-3)}
+.ach .g4{background:var(--grass-4)}
+.ach .early{outline:2px solid var(--blue);outline-offset:-2px}
+.ach-grid i.now{border-color:var(--ink)}
+.ach-pick{min-height:1.4em;margin:8px 0 0}
+.ach-legend{display:flex;flex-wrap:wrap;align-items:center;gap:2px 3px;margin-top:6px}
+.ach-sw{display:inline-block;width:12px;height:12px}
+.ach-legend .early{margin-left:10px;margin-right:4px}
 .ach-badges{margin-top:14px;padding-top:12px;border-top:1px dashed var(--rule)}
 .ach-badges ul{list-style:none;margin:8px 0 0;padding:0}
 .ach-badges li{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--rule-2)}
@@ -764,3 +778,11 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .ach-state{flex-shrink:0;font-size:var(--fs-s);color:var(--ink-3)}
 .ach-badges li.done .ach-mark,.ach-badges li.done .ach-state{color:var(--routine);font-weight:700}
 .ach-badges li.todo b{color:var(--ink-3)}
+
+/* ---- 設定の節のプルダウン（見出しを押したときだけ中身を出す） ---- */
+.sec.acc>h3{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0;cursor:pointer;user-select:none}
+.sec.acc>h3::after{content:"▾";flex-shrink:0;font-weight:400;font-size:var(--fs-m);color:var(--ink-3)}
+.sec.acc.open>h3{margin-bottom:8px}
+.sec.acc.open>h3::after{content:"▴"}
+.sec.acc>h3:focus-visible{outline:2px solid var(--mark);outline-offset:3px}
+.sec.acc:not(.open)>:not(h3){display:none}

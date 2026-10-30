@@ -86,3 +86,14 @@ test('版の日時: BUILD_DATE で固定できる。無ければ、画面のフ�
   assert.match(versionDate(root.pathname, {}), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
   assert.match(versionDate('/', {}), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, 'git のリポジトリではない場所でも、ビルドした時刻で動く');
 });
+
+test('版番号: index.html の app-version（v3.1 の 3.1）と package.json の version の major.minor がそろっている。Worker 用の web/ にもそのまま出る', () => {
+  const v = /<meta name="app-version" content="([^"]+)">/.exec(read('index.html'));
+  assert.ok(v, 'index.html に app-version の meta がある');
+  assert.match(v[1], /^\d+\.\d+$/, '「3.1」の形');
+  const pkg = JSON.parse(read('package.json')).version;
+  assert.equal(pkg.split('.').slice(0, 2).join('.'), v[1], 'package.json の version と major.minor が同じ');
+  execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root.pathname, stdio: 'pipe' });
+  assert.ok(read('web/index.html').includes(`<meta name="app-version" content="${v[1]}">`), 'ビルドしても版番号は消えない');
+  assert.ok(read('docs/VERSIONS.md').includes(`| v${v[1]} |`), 'docs/VERSIONS.md の履歴に、この版の行がある');
+});

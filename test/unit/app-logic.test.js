@@ -13,7 +13,7 @@ const FNS = [
   'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText',
   'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
   'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
-  'headerCount', 'needsKeyCard', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
+  'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
 ];
 const VARS = ['DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
 
@@ -523,4 +523,25 @@ test('progressOf: 繰り返さない予定は登録日から締切まで（登�
   assert.equal(app.progressOf(weekly, new Date(2026, 1, 7, 12)), 100, '締切を過ぎた');
   assert.equal(app.progressOf(weekly, new Date(2026, 0, 20, 12)), 0, '前の回より前（カレンダーの先の回）');
   assert.equal(app.progressOf({ ...weekly, done: true }, new Date(2026, 1, 3, 12)), 100);
+});
+
+// ---- 設定の「バージョン」の表示（日時と v3.1。ハッシュは表に出さない） ----
+
+test('versionInfo: 「日時 v版」の文字を作る。ハッシュ（[…]）と説明は表に出さず、ビルドの特定用に返す', () => {
+  const { app } = load();
+  const t = (stamp, v) => plain(app.versionInfo(stamp, v));
+  assert.deepEqual(t('2026-10-31 08:00 [d21065ddfb] 達成カレンダーを草のように', '3.1'), { label: '2026-10-31 08:00 v3.1', build: 'd21065ddfb' });
+  assert.deepEqual(t('2026-10-31 08:00 [d21065ddfb]', '3.1'), { label: '2026-10-31 08:00 v3.1', build: 'd21065ddfb' });
+  assert.deepEqual(t('2026-10-30 07:00 手書きの説明', '3.1'), { label: '2026-10-30 07:00 v3.1', build: '' }, 'ハッシュが無い（旧環境・手書き）');
+  assert.deepEqual(t('2026-10-31 08:00 [d21065ddfb]', undefined), { label: '2026-10-31 08:00', build: 'd21065ddfb' }, '版番号が無いときは日時だけ');
+  assert.deepEqual(t('不明', '3.1'), { label: '不明', build: '' }, '読めないときはそのまま');
+  assert.deepEqual(t('', '3.1'), { label: '不明', build: '' });
+});
+
+test('metaContent: HTML の meta の値を取り出す（サーバー上の版の比較に使う）', () => {
+  const { app } = load();
+  const html = '<meta name="build-stamp" content="2026-10-31 08:00 [abc]">\n<meta name="app-version" content="3.1">';
+  assert.equal(app.metaContent(html, 'app-version'), '3.1');
+  assert.equal(app.metaContent(html, 'build-stamp'), '2026-10-31 08:00 [abc]');
+  assert.equal(app.metaContent(html, 'nothing'), '');
 });
