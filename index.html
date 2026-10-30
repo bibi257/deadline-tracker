@@ -18,7 +18,7 @@
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う）。
      app.js / styles.css を変えたときは、<script src="app.js?v=..."> / <link href="styles.css?v=..."> の v も同じ日時（例 20261009-1019）に変える。
      これは GitHub Pages（旧環境）用の手作業。Worker から配信する web/ は、ビルド（scripts/build.mjs）が v・スタンプ・キャッシュ名をハッシュで自動で書き換える。旧環境をやめたら、この手作業は不要 -->
-<meta name="build-stamp" content="2026-10-30 01:30 登録画面の並びを見直し（締切日を先に、細かい設定は折りたたみ）">
+<meta name="build-stamp" content="2026-10-30 02:00 設定画面を、同期・通知・カテゴリ・表示・データの順に並べ直し">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -31,7 +31,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20261030-0130">
+<link rel="stylesheet" href="styles.css?v=20261030-0220">
 </head>
 <body>
 
@@ -111,6 +111,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261030-0130"></script>
+<script src="app.js?v=20261030-0220"></script>
 </body>
 </html>

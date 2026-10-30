@@ -1107,6 +1107,7 @@ function isStale(it){ return overdueDays(it)>=7; }
    同期し忘れに気づけるようにするため） */
 function markSynced(kind){
   store.set("gh-last-sync", JSON.stringify({at:new Date().toISOString(), kind:kind}));
+  var warn=document.querySelector(".sync-warn"); if(warn) warn.remove(); // 設定画面の「未入力」「停止中」の案内は、同期できたら消す
   flashSynced();
 }
 /* 同期が終わったことを、ヘッダーに一瞬だけ「✓ 同期済み」と出して知らせる */
@@ -2085,7 +2086,34 @@ function snapshotRow(sn,cfg,status){
   return wrap;
 }
 
+/* 設定画面の組み立て：グループの見出しと、先頭の目次（押すとそのグループへ移る）を置く。
+   id や href を使わず、要素の位置から直接スクロールする（main の描き直しで id がずれないように） */
+var SETTINGS_GROUPS=[["sync","同期とアクセスキー"],["notify","通知"],["cat","カテゴリとテンプレート"],["display","表示"],["data","データ"],["about","このアプリについて"]];
+function settingsAssemble(groups){
+  var toc=h('<nav class="set-toc" aria-label="設定の目次"></nav>');
+  var heads={};
+  SETTINGS_GROUPS.forEach(function(p){
+    if(!groups[p[0]].length) return;
+    var b=h('<button type="button">'+escHtml(p[1])+'</button>');
+    b.onclick=function(){ // 上に固定されている見出し（header）の分だけ手前で止める
+      var top=heads[p[0]].getBoundingClientRect().top+window.pageYOffset-document.querySelector("header").offsetHeight-8;
+      window.scrollTo({top:Math.max(0,top), behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
+    };
+    toc.appendChild(b);
+  });
+  main.appendChild(toc);
+  SETTINGS_GROUPS.forEach(function(p){
+    if(!groups[p[0]].length) return;
+    var hd=h('<h2 class="set-group">'+escHtml(p[1])+'</h2>');
+    heads[p[0]]=hd;
+    main.appendChild(hd);
+    groups[p[0]].forEach(function(el){ main.appendChild(el); });
+  });
+}
 function renderSettings(){
+  // 節は、よく使う・困ったときに見る順のグループに並べる（作る順番は変えず、置き先だけを決める）
+  var groups={sync:[],notify:[],cat:[],display:[],data:[],about:[]};
+  function put(g,el){ groups[g].push(el); }
   // このアプリが最新版かどうかを確認できるセクション
   var myStamp=(document.querySelector('meta[name="build-stamp"]')||{}).content||"不明";
   var s0=h('<div class="sec"><h3>バージョン</h3>'+
@@ -2095,7 +2123,7 @@ function renderSettings(){
   var bCheck=h('<button class="btn">今すぐ確認する</button>');
   bCheck.onclick=function(){ checkVersionDisplay(s0, myStamp); };
   s0.querySelector(".row").appendChild(bCheck);
-  main.appendChild(s0);
+  put("about",s0);
   checkVersionDisplay(s0, myStamp);
 
   // 当日リマインド時刻
@@ -2103,7 +2131,7 @@ function renderSettings(){
   var sel=h('<select style="max-width:160px"></select>');
   for(var hh=5;hh<=22;hh++){ var o=document.createElement("option"); o.value=hh; o.textContent=hh+":00"; if(hh===db.settings.dayHour) o.selected=true; sel.appendChild(o); }
   sel.onchange=function(){ db.settings.dayHour=parseInt(sel.value,10); saveRaw(); toast("当日リマインドを "+sel.value+":00 にしました"); }; // 設定は同期対象外なのでupdatedAtは進めない
-  s1.appendChild(sel); main.appendChild(s1);
+  s1.appendChild(sel); put("notify",s1);
 
   // テンプレート
   var sT=h('<div class="sec"><h3>テンプレート</h3>'+
@@ -2128,7 +2156,7 @@ function renderSettings(){
       tplList.appendChild(row);
     });
   }
-  main.appendChild(sT);
+  put("cat",sT);
 
   // ゴミ箱
   var trashSorted=db.trash.slice().sort(function(a,b){ return new Date(b.deletedAt)-new Date(a.deletedAt); });
@@ -2159,7 +2187,7 @@ function renderSettings(){
     emptyBtn.onclick=purgeAllTrash;
     sTr.appendChild(emptyBtn);
   }
-  main.appendChild(sTr);
+  put("data",sTr);
 
   // 隔離（読み込み時に形式が不正で除外された項目）
   if(db.quarantine.length){
@@ -2182,7 +2210,7 @@ function renderSettings(){
       row.querySelector(".cat-btns").append(fix,del);
       qList.appendChild(row);
     });
-    main.appendChild(sQ);
+    put("data",sQ);
   }
 
   // カテゴリ
@@ -2243,7 +2271,7 @@ function renderSettings(){
     if(db.categories.indexOf(v)>=0){ toast("同じ名前があります"); return; }
     db.categories.push(v); save(); render(); scheduleAutoSync();
   };
-  s2.appendChild(addRow); main.appendChild(s2);
+  s2.appendChild(addRow); put("cat",s2);
 
   // 表示
   var s3=h('<div class="sec"><h3>表示テーマ</h3><p>「自動」は端末の設定に合わせます。</p><div class="row"></div></div>');
@@ -2253,7 +2281,7 @@ function renderSettings(){
     b.onclick=function(){ db.settings.theme=p[0]; saveRaw(); applyTheme(); render(); }; // 設定は同期対象外なのでupdatedAtは進めない
     s3.querySelector(".row").appendChild(b);
   });
-  main.appendChild(s3);
+  put("display",s3);
 
   // 広い画面の並び
   var s3w=h('<div class="sec"><h3>広い画面の並び</h3><p>PCなど幅の広い画面（960px以上）で、一覧・超過・定期予定・完了のカードを何列に並べるかを選びます。スマホなど狭い画面では、どちらでも1列です。この端末だけの設定です。</p><div class="row"></div></div>');
@@ -2263,7 +2291,7 @@ function renderSettings(){
     b.onclick=function(){ db.settings.cols=p[0]; saveRaw(); render(); }; // 設定は同期対象外なのでupdatedAtは進めない
     s3w.querySelector(".row").appendChild(b);
   });
-  main.appendChild(s3w);
+  put("display",s3w);
 
   // 完了の演出
   var s3b=h('<div class="sec"><h3>演出</h3><p>「ゲーム風」は、登録したときに「クエスト受注」、完了にしたときに「ミッション達成」、今日の締切を全部片付けたら「全クリア」（ボーナス +'+ALL_CLEAR_BONUS+' EXP）の帯を出します（タップですぐ閉じます）。「手帳風」は帯を出さず、完了にしたカードに「済」の印を押し、全部片付けた日は「皆済」の印を出します。「なし」にすると、延期・休み・削除のカードの動き、期限切れの点滅、数字の数え上げも止まります。端末で「視差効果を減らす」をオンにしている場合は動きを出しません。<br>いまの記録：Lv.'+levelOf(totalExp())+'（累計 '+totalExp()+' EXP・完了 '+db.completions.length+' 件の記録）。記録は GitHub 同期で端末間に共有され、週次レビューにも載ります。</p><div class="row"></div></div>');
@@ -2273,7 +2301,7 @@ function renderSettings(){
     b.onclick=function(){ db.settings.motion=p[0]; saveRaw(); render(); }; // 設定は同期対象外なのでupdatedAtは進めない
     s3b.querySelector(".row").appendChild(b);
   });
-  main.appendChild(s3b);
+  put("display",s3b);
 
   // 効果音
   var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたときに短い音を鳴らします（手帳風では紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
@@ -2286,7 +2314,7 @@ function renderSettings(){
     };
     s3c.querySelector(".row").appendChild(b);
   });
-  main.appendChild(s3c);
+  put("display",s3c);
 
   // バックアップ
   var s4=h('<div class="sec"><h3>バックアップと復元</h3><p>データは端末ごとに保存されます。PCとiPhoneで同じ内容にしたいときは、書き出したファイルを読み込んでください。</p><div class="row"></div></div>');
@@ -2332,7 +2360,7 @@ function renderSettings(){
   bIcs.onclick=function(){ downloadIcsPreferWorker(activeItems().sort(sortByDue),"deadlines-all"); };
   s4.querySelector(".row").append(bOut,bIn,bIcs,file);
   if(CF===true) s4.appendChild(snapshotSection());
-  main.appendChild(s4);
+  put("data",s4);
 
   // 端末間の同期（Cloudflare の Worker / GitHub）。どちらかは、このアプリがどこから配信されているかで決まる
   if(CF===null) cfDetect().then(function(){ if(CF!==null && view==="set") render(); }); // 保存先の判定が終わったら描き直す
@@ -2359,6 +2387,11 @@ function renderSettings(){
     '<p id="ghSecretNote" style="font-size:12.5px;color:var(--red);margin:-4px 0 12px"></p>'+
     '<div class="row"></div><p id="ghStatus" style="margin-top:8px"></p></div>');
   var g=function(id){ return s5.querySelector("#"+id); };
+  if(CF===true){ // 同期が働いていない理由を、節の先頭に出す
+    var why=!store.get("cf-key") ? ["未入力","アクセスキーがまだ入っていません。下の欄に入れると、保存してある締切を読み込めます。"]
+      : _cfAuthStopped ? ["停止中","アクセスキーが違うため、自動の読み込み・同期を止めています。正しいキーを入れ直してください。"] : null;
+    if(why) s5.querySelector("h3").after(h('<p class="sync-warn"><span class="badge"><i>●</i> '+why[0]+'</span>'+why[1]+'</p>'));
+  }
   var saved=JSON.parse(store.get("gh-sync")||"{}");
   var guess=guessRepoFromURL();
   if(CF===true){
@@ -2399,7 +2432,7 @@ function renderSettings(){
   var bPull=h('<button class="btn'+(emptyHere?' fill':'')+'">'+RN()+'から読み込む</button>');
   bPull.onclick=function(){ pullFromGitHub(g,s5); };
   if(s5.querySelector(".row")) s5.querySelector(".row").append(bSync,bPull);
-  main.appendChild(s5);
+  put("sync",s5);
   // Cloudflare: まだ何も無い端末なら、アクセスキーを入れた時点で自動で読み込む（ボタンを押さなくてよい）。
   // 締切がある端末や、同期したことがある端末では、取り違えを防ぐため自動では読み込まない（ボタンで確認つきで読み込む）
   if(CF===true){
@@ -2436,7 +2469,7 @@ function renderSettings(){
   var bSend=h('<button class="btn fill">今すぐ送信</button>');
   bSend.onclick=function(){ sendToDiscord(s6,s5); };
   s6.querySelector(".row").appendChild(bSend);
-  main.appendChild(s6);
+  put("notify",s6);
 
   // 登録時の自動処理
   var s7=h('<div class="sec"><h3>登録したときの自動処理</h3>'+
@@ -2457,10 +2490,12 @@ function renderSettings(){
     };
     s7.appendChild(wrap);
   });
-  main.appendChild(s7);
+  put("notify",s7);
 
-  main.appendChild(h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p>'+
+  put("notify",h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p>'+
     '<p><b>iPhoneで取り込むときの注意：</b>Discordなどの添付ファイルを直接タップすると「照会カレンダー」として登録され、更新がすぐ反映されません。長押しして「ファイルに保存」してから開き、「カレンダーに追加」を選んでください。このアプリの「カレンダーへ」ボタンから書き出したファイルは、その心配がありません。</p></div>'));
+  settingsAssemble(groups);
+
 }
 
 /* 締切データの保存先リポジトリ名。Privateリポジトリを推奨（下のREADME参照） */

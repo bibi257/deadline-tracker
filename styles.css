@@ -310,6 +310,14 @@ header{
 .sec{background:var(--card);border:1px solid var(--rule);border-top:2px solid var(--ink);border-radius:var(--radius);padding:14px;margin:14px 0}
 .sec h3{margin:0 0 4px;font-family:var(--sans);font-weight:700;font-size:15px;letter-spacing:.04em}
 .sec p{margin:0 0 10px;font-size:12.5px;color:var(--ink-2)}
+/* 設定画面：先頭の目次と、グループの見出し（節の h3 より一段大きい） */
+.set-toc{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 0}
+.set-toc button{border:1px solid var(--rule);background:var(--card);color:var(--ink-2);border-radius:var(--radius);padding:7px 11px;font-size:12.5px}
+.set-toc button:hover{color:var(--ink);border-color:var(--ink-3)}
+.set-group{margin:26px 0 0;padding:0 0 4px;border-bottom:1px solid var(--ink);font-family:var(--sans);font-size:17px;font-weight:700;letter-spacing:.08em}
+.set-group + .sec{margin-top:10px}
+.sync-warn{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px}
+.sync-warn .badge{border-color:var(--red);color:var(--red)}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .field{display:block;margin:0 0 12px}
 .field span{display:block;font-size:11.5px;letter-spacing:.08em;color:var(--ink-2);margin-bottom:4px}
