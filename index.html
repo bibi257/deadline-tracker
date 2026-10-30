@@ -19,7 +19,10 @@
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う）。
      app.js / styles.css を変えたときは、<script src="app.js?v=..."> / <link href="styles.css?v=..."> の v も同じ日時（例 20261009-1019）に変える。
      これは GitHub Pages（旧環境）用の手作業。Worker から配信する web/ は、ビルド（scripts/build.mjs）が v・スタンプ・キャッシュ名をハッシュで自動で書き換える。旧環境をやめたら、この手作業は不要 -->
-<meta name="build-stamp" content="2026-10-31 01:00 達成カレンダーを草のように、設定をメニュー（☰）とプルダウンに">
+<meta name="build-stamp" content="2026-10-31 02:00 版を「日時 v3.1」の形で表示">
+<!-- アプリの版番号（設定の「バージョン」に「2026-10-31 08:00 v3.1」のように出る）。大きな変更のときに手で上げる。決め方は docs/VERSIONS.md。
+     package.json の version（3.1.0）と major.minor をそろえる（テストで確かめる） -->
+<meta name="app-version" content="3.1">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -32,7 +35,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20261031-0100">
+<link rel="stylesheet" href="styles.css?v=20261031-0200">
 </head>
 <body>
 
@@ -112,6 +115,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261031-0100"></script>
+<script src="app.js?v=20261031-0200"></script>
 </body>
 </html>

@@ -2034,6 +2034,18 @@ function renderCal(){
 }
 
 /* サーバー上のindex.htmlを取り直し、ビルドスタンプを比較して表示する */
+/* 画面に出す版：「2026-10-31 08:00 v3.1」。日時は build-stamp の先頭、v の後ろは app-version。
+   build-stamp の中のハッシュ（[d21065ddfb]）は、最新版かの比較と、ビルドの特定にだけ使い、表には出さない（マウスを載せたときの title に出す） */
+function versionInfo(stamp, version){
+  var m=/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})(?:\s+\[([0-9a-f]+)\])?/.exec(stamp||"");
+  if(!m) return {label:stamp||"不明", build:""};
+  return {label:m[1]+(version?" v"+version:""), build:m[2]||""};
+}
+function versionBadge(info){ return '<b'+(info.build?' title="ビルド '+escHtml(info.build)+'"':'')+'>'+escHtml(info.label)+'</b>'; }
+function metaContent(html, name){
+  var m=new RegExp('<meta name="'+name+'" content="([^"]*)">').exec(html);
+  return m?m[1]:"";
+}
 function checkVersionDisplay(section, myStamp){
   var el=section.querySelector("#verCheck");
   if(location.protocol==="file:"){ el.textContent="ローカルファイルのため確認できません。"; return; }
@@ -2041,12 +2053,11 @@ function checkVersionDisplay(section, myStamp){
     .then(function(res){ return res.ok?res.text():null; })
     .then(function(html){
       if(!html){ el.textContent="サーバーへ接続できませんでした。"; return; }
-      var m=html.match(/<meta name="build-stamp" content="([^"]*)">/);
-      var serverStamp=m?m[1]:"不明";
+      var serverStamp=metaContent(html,"build-stamp")||"不明";
       if(serverStamp===myStamp){
         el.innerHTML='<span class="c-blue">✓ 最新版を表示しています</span>';
       } else {
-        el.innerHTML='サーバー上の版：<b>'+escHtml(serverStamp)+'</b><br>'+
+        el.innerHTML='サーバー上の版：'+versionBadge(versionInfo(serverStamp, metaContent(html,"app-version")))+'<br>'+
           '<span class="c-red">画面が古い可能性があります。強制リロード（Ctrl/⌘+Shift+R）するか、'+
           'URLの末尾に <code>?v=2</code> のように付けて開き直してください。</span>';
       }
@@ -2212,7 +2223,7 @@ function renderSettings(){
   // このアプリが最新版かどうかを確認できるセクション
   var myStamp=(document.querySelector('meta[name="build-stamp"]')||{}).content||"不明";
   var s0=h('<div class="sec"><h3>バージョン</h3>'+
-    '<p>この画面が読み込んでいる版：<b>'+escHtml(myStamp)+'</b></p>'+
+    '<p>この画面が読み込んでいる版：'+versionBadge(versionInfo(myStamp, (document.querySelector('meta[name="app-version"]')||{}).content))+'</p>'+
     '<p id="verCheck" class="c-ink3">サーバー上の版を確認しています…</p>'+
     '<div class="row"></div></div>');
   var bCheck=h('<button class="btn">今すぐ確認する</button>');
