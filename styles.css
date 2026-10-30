@@ -737,3 +737,6 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"â
 .mt-14{margin-top:14px}
 .mt-18{margin-top:18px}
 .mt-20{margin-top:20px}
+.feed-box{margin:10px 0 0}
+.feed-box input{width:100%;font-size:var(--fs-s);margin-bottom:8px}
+.offscreen{position:fixed;left:-9999px;top:0;opacity:0}
