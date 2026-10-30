@@ -214,7 +214,7 @@ header{
 .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:0;border-top:1px solid var(--ink);border-left:1px solid var(--rule)}
 .dow{text-align:center;font-size:11px;padding:5px 0;color:var(--ink-2);border-right:1px solid var(--rule);border-bottom:1px solid var(--rule);font-weight:700}
 .dow.sun{color:var(--red)}.dow.sat{color:var(--blue)}
-.day{background:var(--card);min-height:62px;padding:4px 4px 5px;border:0;border-right:1px solid var(--rule);border-bottom:1px solid var(--rule);text-align:left;display:flex;flex-direction:column;gap:3px}
+.day{position:relative;background:var(--card);min-height:62px;padding:4px 4px 5px;border:0;border-right:1px solid var(--rule);border-bottom:1px solid var(--rule);text-align:left;display:flex;flex-direction:column;gap:3px}
 .day:hover{background:var(--paper)}
 .day.out{background:transparent;color:var(--ink-3)}
 .day .d{font-family:var(--num);font-size:13px;color:var(--ink-2);align-self:flex-start;padding:0 2px}
@@ -223,7 +223,7 @@ header{
 .day.holiday .d{color:var(--red)}
 .holname{font-size:8.5px;line-height:1.2;color:var(--red);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
 @media (max-width:420px){.holname{display:none}}
-.dot{height:4px;border-radius:1px;background:var(--ink-3)}
+.dot{height:6px;border-radius:1px;background:var(--ink-3)}
 .dot.over,.dot.today{background:var(--red)}.dot.soon{background:var(--amber)}.dot.near{background:var(--blue)}
 .dot.done{background:var(--rule)}
 .dot.span{opacity:.4}
@@ -649,7 +649,19 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
   border-right:1px solid var(--rule);border-bottom:1px solid var(--rule);font-size:12px;line-height:1.2;color:var(--ink-2)}
 .wk i{font-style:normal;font-size:11px}
 .wk.warn{color:var(--red);font-weight:700;background:color-mix(in srgb,var(--red) 9%,var(--paper))}
-.cal-legend{margin:6px 0 0;font-size:11.5px;line-height:1.6;color:var(--ink-3)}
+/* 表の下：1行の凡例と、表示の切り替え */
+.cal-foot{margin:8px 0 0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px}
+.cal-foot .cal-opt{margin:0}
+.cal-legend{font-size:11.5px;line-height:1.6;color:var(--ink-3);display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;flex-basis:100%}
+.lg-warn{color:var(--red);margin-left:6px}
+.cal-help{display:inline-block;margin-left:8px}
+.cal-help summary{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--rule);border-radius:50%;cursor:pointer;list-style:none;font-size:11.5px;color:var(--ink-2)}
+.cal-help summary::-webkit-details-marker{display:none}
+.cal-help[open] summary{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.cal-help p{margin:6px 0 0;flex-basis:100%}
+/* 日のマスの右上に件数（スマホ幅だけ。印が細くても、混み具合が数字で読める） */
+.day .cnt{display:none;position:absolute;top:3px;right:4px;font-family:var(--num);font-size:11px;font-weight:700;line-height:1;color:var(--ink-2)}
+@media (max-width:600px){.day .cnt{display:block}}
 .lg-sw{display:inline-block;width:10px;height:10px;border:1px solid var(--rule);margin-right:2px;vertical-align:-1px}
 .lg-sw.load3{margin-right:6px}
 @media (max-width:420px){.grid{grid-template-columns:repeat(7,minmax(0,1fr)) 24px}.wk{font-size:11px}}

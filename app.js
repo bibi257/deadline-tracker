@@ -1926,22 +1926,8 @@ function renderCal(){
   head.querySelector(".row").append(prev,today,next);
   cm.appendChild(head);
 
-  // 定期予定の帯をまとめて出し入れする（この端末だけの表示設定）
-  var showRoutine=store.get("cal-show-routine")!=="0";
-  var rtToggle=h('<label class="cal-opt"><input type="checkbox"'+(showRoutine?" checked":"")+'>定期予定の帯を表示</label>');
-  rtToggle.querySelector("input").onchange=function(){ store.set("cal-show-routine", this.checked?"1":"0"); render(); };
-  cm.appendChild(rtToggle);
-  // 帯の色分け：カテゴリの色 / 締切の近さ（状態）の色（この端末だけの表示設定）
-  var mode=calColorMode();
-  var modeRow=h('<div class="cal-opt cal-mode">帯の色：</div>');
-  [["cat","カテゴリ"],["status","締切の近さ"]].forEach(function(p){
-    var b=h('<button type="button" class="chip">'+p[1]+'</button>');
-    b.setAttribute("aria-pressed", mode===p[0]?"true":"false");
-    b.onclick=function(){ store.set("cal-color-mode", p[0]); render(); };
-    modeRow.appendChild(b);
-  });
-  cm.appendChild(modeRow);
-
+  var showRoutine=store.get("cal-show-routine")!=="0"; // 定期予定の帯を出すか（この端末だけの表示設定）
+  var mode=calColorMode(); // 帯の色分け：カテゴリ / 締切の近さ（この端末だけの表示設定）
   var grid=h('<div class="grid"></div>');
   DOW.forEach(function(d,i){ grid.appendChild(h('<div class="dow'+(i===0?" sun":i===6?" sat":"")+'">'+d+'</div>')); });
   grid.appendChild(h('<div class="dow wk-h" title="その週（日〜土）の未完了の件数">週</div>'));
@@ -1976,9 +1962,11 @@ function renderCal(){
     (loadByDay[key]||[]).forEach(function(i){ var c=i.cat||"その他"; wkCats[c]=(wkCats[c]||0)+1; });
     var hol=holidayName(key);
     var dayTitle=[hol, dayLoad?"締切 "+dayLoad+" 件":""].filter(Boolean).join("・");
+    var dayLabel=(d.getMonth()+1)+"月"+d.getDate()+"日"+(dayTitle?" "+dayTitle:"");
     var day=h('<button class="day'+(d.getMonth()!==m?" out":"")+(key===todayKey?" is-today":"")+(selDay===key?" sel":"")+(hol?" holiday":"")+
-      (dayLoad?" load"+Math.min(dayLoad,3):"")+'" '+
+      (dayLoad?" load"+Math.min(dayLoad,3):"")+'" aria-label="'+escHtml(dayLabel)+'" '+
       (dayTitle?'title="'+escHtml(dayTitle)+'"':'')+'><span class="d">'+d.getDate()+'</span>'+
+      (dayLoad?'<span class="cnt" aria-hidden="true">'+(dayLoad>=3?"3+":dayLoad)+'</span>':'')+ // スマホ幅では、印が細くても件数が読めるように数字を添える
       (hol?'<span class="holname">'+escHtml(hol)+'</span>':'')+'</button>');
     // 帯：定期予定は、全体で隠しているときと、その予定だけ隠す設定のときは出さない
     var hit=hitsOn(key).filter(function(i){ return !isRepeating(i) || (showRoutine && !i.calHide); });
@@ -1994,8 +1982,24 @@ function renderCal(){
     if(k%7===6){ grid.appendChild(weekCell(wkN, wkCats)); wkN=0; wkCats=Object.create(null); }
   }
   cm.appendChild(grid);
-  cm.appendChild(h('<p class="cal-legend"><span class="lg-sw load1"></span><span class="lg-sw load2"></span><span class="lg-sw load3"></span>'+
-    'マスの濃さはその日の未完了の締切の数（1・2・3件以上。自動完了の予定は数えません）。右端は週の件数で、'+LOAD_WARN+'件以上か1カテゴリ'+CAT_WARN+'件以上の週に ⚠</p>'));
+  // 表の下：1行の凡例（詳しい説明は「？」で開く）と、表示の切り替え
+  var foot=h('<div class="cal-foot"><div class="cal-legend"><span class="lg-sw load1"></span>1件 <span class="lg-sw load2"></span>2件 <span class="lg-sw load3"></span>3件以上 <span class="lg-warn">⚠</span>混む週'+
+    '<details class="cal-help"><summary aria-label="凡例の説明">？</summary>'+
+    '<p>マスの濃さはその日の未完了の締切の数（1・2・3件以上。自動完了の予定は数えません）。右端は週の件数で、'+LOAD_WARN+'件以上か1カテゴリ'+CAT_WARN+'件以上の週に ⚠</p></details></div></div>');
+  // 定期予定の帯をまとめて出し入れする（この端末だけの表示設定）
+  var rtToggle=h('<label class="cal-opt"><input type="checkbox"'+(showRoutine?" checked":"")+'>定期予定の帯を表示</label>');
+  rtToggle.querySelector("input").onchange=function(){ store.set("cal-show-routine", this.checked?"1":"0"); render(); };
+  // 帯の色分け：カテゴリの色 / 締切の近さ（状態）の色（この端末だけの表示設定）
+  var modeRow=h('<div class="cal-opt cal-mode">帯の色：</div>');
+  [["cat","カテゴリ"],["status","締切の近さ"]].forEach(function(p){
+    var b=h('<button type="button" class="chip">'+p[1]+'</button>');
+    b.setAttribute("aria-pressed", mode===p[0]?"true":"false");
+    b.onclick=function(){ store.set("cal-color-mode", p[0]); render(); };
+    modeRow.appendChild(b);
+  });
+
+  foot.appendChild(rtToggle); foot.appendChild(modeRow);
+  cm.appendChild(foot);
 
   if(selDay){
     var sel=hitsOn(selDay).sort(sortByDue);
