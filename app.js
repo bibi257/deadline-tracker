@@ -878,11 +878,20 @@ function cardStateOf(it){
   var badge=ongoing?["→","進行中","st"]:(labels[st]?labels[st].concat("st"):null);
   return {cls:st, badge:badge};
 }
+/* カードの下の線（経過メーター）の長さ（0〜100）。
+   繰り返さない予定：登録した日から締切まで（登録日が無ければ、締切の14日前に登録したとみなす）。
+   繰り返す予定：前の回から次の回まで（毎週なら7日の中での位置）。初回の登録日から測ると、毎回ほぼいっぱいになるため */
+function progressOf(it, now){
+  if(it.done) return 100;
+  var d=parseItemDate(it), from;
+  if(isRepeating(it)) from=prevOccurrence(d, it.rep, anchorDayOf(it));
+  else from=it.created?new Date(it.created):new Date(d.getTime()-14*86400000);
+  var total=Math.max(1, d-from), pass=Math.min(total, Math.max(0, now-from));
+  return Math.round(pass/total*100);
+}
 function cardOf(it){
   var cs=cardStateOf(it), st=cs.cls, r=remainText(it), d=parseItemDate(it);
-  var created=it.created?new Date(it.created):new Date(d.getTime()-14*86400000);
-  var total=Math.max(1, d-created), pass=Math.min(total, Math.max(0, Date.now()-created));
-  var pct=it.done?100:Math.round(pass/total*100);
+  var pct=progressOf(it, new Date());
   // カレンダー画面の繰り返しは表示用の複製（occurrence>0、または展開由来）で、
   // 完了・編集をここから行うと元の予定がずれるので、その回の取りやめだけに絞る
   var isCopy=!!it.isExpanded;
@@ -4064,6 +4073,19 @@ function nextOccurrence(d, rep, anchorDay){
   else if(rep==="biweekly") n.setDate(d.getDate()+14);
   else if(rep==="monthly"||rep==="yearly"){
     var y=d.getFullYear()+(rep==="yearly"?1:0), m=d.getMonth()+(rep==="monthly"?1:0);
+    var last=new Date(y,m+1,0).getDate();
+    n=new Date(y,m,Math.min(anchorDay||d.getDate(),last),d.getHours(),d.getMinutes(),d.getSeconds());
+  }
+  return n;
+}
+
+/* nextOccurrence の逆。ひとつ前の回（月・年は基準日を保ち、その月に無い日は月末に丸める） */
+function prevOccurrence(d, rep, anchorDay){
+  var n=new Date(d);
+  if(rep==="weekly") n.setDate(d.getDate()-7);
+  else if(rep==="biweekly") n.setDate(d.getDate()-14);
+  else if(rep==="monthly"||rep==="yearly"){
+    var y=d.getFullYear()-(rep==="yearly"?1:0), m=d.getMonth()-(rep==="monthly"?1:0);
     var last=new Date(y,m+1,0).getDate();
     n=new Date(y,m,Math.min(anchorDay||d.getDate(),last),d.getHours(),d.getMinutes(),d.getSeconds());
   }
