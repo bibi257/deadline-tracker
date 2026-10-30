@@ -902,10 +902,12 @@ function cardOf(it){
     '<div class="left"><b class="n num'+(isWord?" word":"")+'">'+escHtml(r.n)+'</b><span class="u">'+escHtml(r.u)+'</span></div>'+
     '<div class="body">'+
       '<h3 class="title">'+escHtml(it.title)+'</h3>'+
-      '<div class="meta">'+(badge?'<span class="badge '+badge[2]+'"><i aria-hidden="true">'+badge[0]+'</i>'+badge[1]+'</span>':'')+
-      (isRepeating(it)&&!it.done?'<span class="badge rt"><i aria-hidden="true">↻</i>定期</span>':'')+
-      '<span class="cat catg">'+swatch(itemColor(it))+escHtml(it.cat||"その他")+'</span><span class="num">'+
-      escHtml(it.start?(fmtDue(new Date(it.start),it.allDay)+" 〜 "+fmtDue(d,it.allDay)):fmtDue(d,it.allDay))+'</span>'+
+      // 1行目は「いつ」（状態の判子と日時）、2行目は属性。日時がどのカードでも同じ位置に来る
+      '<div class="meta meta-when">'+(badge?'<span class="badge '+badge[2]+'"><i aria-hidden="true">'+badge[0]+'</i>'+badge[1]+'</span>':'')+
+      '<span class="num">'+
+      escHtml(it.start?(fmtDue(new Date(it.start),it.allDay)+" 〜 "+fmtDue(d,it.allDay)):fmtDue(d,it.allDay))+'</span></div>'+
+      '<div class="meta meta-attr">'+(isRepeating(it)&&!it.done?'<span class="badge rt"><i aria-hidden="true">↻</i>定期</span>':'')+
+      '<span class="cat catg">'+swatch(itemColor(it))+escHtml(it.cat||"その他")+'</span>'+
       (it.allDay?'<span class="cat">終日</span>':"")+
       (it.autoComplete?'<span class="cat">自動完了</span>':"")+
       (isRepeating(it)&&it.calHide?'<span class="cat">カレンダー非表示</span>':"")+

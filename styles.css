@@ -126,6 +126,8 @@ header{
 .card.done .title{text-decoration:line-through;text-decoration-color:var(--ink-3);color:var(--ink-2)}
 .meta{font-size:12px;color:var(--ink-2);display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
 .cat{font-size:11px;color:var(--ink-2);letter-spacing:.04em}
+.meta-attr{margin-top:3px;gap:3px 10px;color:var(--ink-3)}
+.meta-attr .cat{color:var(--ink-3)}
 .catg::before{content:"#";color:var(--ink-3);margin-right:1px}
 /* 判子：枠と記号に状態色、文字はインク */
 .badge{
