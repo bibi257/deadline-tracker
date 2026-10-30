@@ -644,7 +644,7 @@ function render(){
   document.documentElement.classList.toggle("techo", techoStyle());
   setTimeout(countUpSummary, 0);
 
-  // 日表示は今週タブ、超過・定期予定は一覧タブの一部として扱う（設定は歯車なので、どのタブも選ばない）
+  // 日表示は今週タブ、超過・定期予定は一覧タブの一部として扱う（設定はメニュー（☰）なので、どのタブも選ばない）
   var tabView=(view==="day")?"week":(view==="over"||view==="rep")?"list":view;
   var tabsChanged=(tabView!==_lastTabView);
   document.querySelectorAll(".tab").forEach(function(t){
@@ -1023,7 +1023,7 @@ function runAutoSync(cfg){
       if(remoteHasUnknownChanges(r)){
         if(!_autoSyncBlockedShown){
           _autoSyncBlockedShown=true;
-          toast(RN()+"に他の端末の更新があるため、自動同期を止めました。設定（右上の歯車）で読み込むか同期するかを選んでください");
+          toast(RN()+"に他の端末の更新があるため、自動同期を止めました。設定（右上のメニュー（☰））で読み込むか同期するかを選んでください");
         }
         return null;
       }
@@ -1036,7 +1036,7 @@ function runAutoSync(cfg){
         if(cfg.kind==="cf"){ // 新しい版で自動的に送り直すと、他の端末の更新を消してしまう。止めて知らせる
           if(!_autoSyncBlockedShown){
             _autoSyncBlockedShown=true;
-            toast("Cloudflareに他の端末の更新があるため、自動同期を止めました。設定（右上の歯車）で読み込むか同期するかを選んでください");
+            toast("Cloudflareに他の端末の更新があるため、自動同期を止めました。設定（右上のメニュー（☰））で読み込むか同期するかを選んでください");
           }
           return null;
         }
@@ -2119,6 +2119,24 @@ function snapshotRow(sn,cfg,status){
   return wrap;
 }
 
+/* 設定の節は、見出しを押したときだけ開く（プルダウン）。見出しの文字をキーに開閉を覚え、設定を操作して描き直しても閉じ直さない。
+   節の中身は動かさず、クラスで出し入れする（節の要素への参照を壊さないため）。同期が働いていない理由（.sync-warn）があるときは、最初から開く */
+var _secOpen={};
+function settingsAccordion(el){
+  var head=el.querySelector(":scope > h3");
+  if(!head || !el.classList.contains("sec")) return;
+  var key=head.textContent.replace(/（\d+件）/,"").trim();
+  var open=!!_secOpen[key] || !!el.querySelector(":scope > .sync-warn");
+  el.classList.add("acc"); el.classList.toggle("open", open);
+  head.setAttribute("role","button"); head.tabIndex=0; head.setAttribute("aria-expanded", open?"true":"false");
+  function toggle(){
+    var now=!el.classList.contains("open");
+    el.classList.toggle("open", now); head.setAttribute("aria-expanded", now?"true":"false"); _secOpen[key]=now;
+  }
+  head.onclick=toggle;
+  head.onkeydown=function(e){ if(e.key==="Enter" || e.key===" "){ e.preventDefault(); toggle(); } };
+}
+
 /* 設定画面の組み立て：グループの見出しと、先頭の目次（押すとそのグループへ移る）を置く。
    id や href を使わず、要素の位置から直接スクロールする（main の描き直しで id がずれないように） */
 var SETTINGS_GROUPS=[["sync","同期とアクセスキー"],["notify","通知"],["cat","カテゴリとテンプレート"],["display","表示"],["data","データ"],["about","このアプリについて"]];
@@ -2140,7 +2158,7 @@ function settingsAssemble(groups){
     var hd=h('<h2 class="set-group">'+escHtml(p[1])+'</h2>');
     heads[p[0]]=hd;
     main.appendChild(hd);
-    groups[p[0]].forEach(function(el){ main.appendChild(el); });
+    groups[p[0]].forEach(function(el){ settingsAccordion(el); main.appendChild(el); });
   });
 }
 /* ---- 購読用 URL（Cloudflare）。押したときだけ Worker から取り、画面に出したままにしない ---- */
@@ -2641,7 +2659,7 @@ function cfNoteAuthFailure(err){
   if(st===401){
     if(_cfAuthStopped) return;
     _cfAuthStopped=true;
-    toast("アクセスキーが違うため、自動の読み込み・同期を止めました。設定（右上の歯車）で入れ直してください");
+    toast("アクセスキーが違うため、自動の読み込み・同期を止めました。設定（右上のメニュー（☰））で入れ直してください");
   } else if(st===429 && !_cfLimitShown){
     _cfLimitShown=true;
     toast("認証の失敗が続いたため、しばらく使えません。10分ほど待ってください");
@@ -3953,8 +3971,10 @@ function streakInfo(){
 /* ---- 達成カレンダーと実績バッジ（完了の記録 db.completions から毎回計算する。データは増やさない） ----
    数えるのは、自分で完了にした記録だけ（自動完了 kind:"auto" と、全クリアのボーナス kind:"bonus" は数えない） */
 function isOwnCompletion(c){ return c.kind!=="auto" && c.kind!=="bonus"; }
-var ACTIVITY_WEEKS=12;
-/* 達成カレンダー：今日を含む週までの12週（日曜はじまり・84マス）。マスごとに、その日の完了件数と、前倒しで終えた日か。
+var ACTIVITY_WEEKS=26;
+/* 1日の完了件数を、色の5段階（GitHub の草と同じ）にする：0件・1件・2件・3〜4件・5件以上 */
+function activityLevel(n){ return n<=0?0:n===1?1:n===2?2:n<=4?3:4; }
+/* 達成カレンダー：今日を含む週までの26週（日曜はじまり・182マス）。マスごとに、その日の完了件数・色の段階（level 0〜4）・前倒しで終えた日か。
    cells は週ごとに7つずつ（日〜土）並ぶ。今日より先のマスは future:true */
 function buildActivityGrid(completions, today){
   var byDay={};
@@ -3969,11 +3989,22 @@ function buildActivityGrid(completions, today){
   var todayKey=toLocalISO(t), cells=[], activeDays=0, total=0;
   for(var k=0;k<ACTIVITY_WEEKS*7;k++){
     var d=new Date(first.getFullYear(), first.getMonth(), first.getDate()+k), key=toLocalISO(d);
-    var future=key>todayKey, e=byDay[key]||{n:0, early:false};
-    if(!future && e.n){ activeDays++; total+=e.n; }
-    cells.push({key:key, dow:d.getDay(), n:future?0:e.n, early:!future&&e.early, future:future});
+    var future=key>todayKey, e=byDay[key]||{n:0, early:false}, n=future?0:e.n;
+    if(n){ activeDays++; total+=n; }
+    cells.push({key:key, dow:d.getDay(), n:n, level:activityLevel(n), early:!future&&e.early, future:future, today:key===todayKey});
   }
   return {cells:cells, weeks:ACTIVITY_WEEKS, activeDays:activeDays, total:total};
+}
+/* 上の「月」の目盛り：月が替わる週の列に月の数字を置く（列は 1 から数える）。
+   最初の列が月の途中で、次の目盛りが近すぎる（3列未満）ときは、最初の目盛りを省く */
+function activityMonthLabels(cells){
+  var labels=[], prev=-1;
+  for(var w=0;w<cells.length/7;w++){
+    var m=new Date(cells[w*7].key+"T00:00:00").getMonth();
+    if(m!==prev){ labels.push({col:w+1, month:m+1}); prev=m; }
+  }
+  if(labels.length>1 && labels[1].col-labels[0].col<3) labels.shift();
+  return labels;
 }
 /* 完了した日の並び（YYYY-MM-DD の昇順・重複なし）から、いちばん長い連続日数 */
 function longestStreak(dayKeys){
@@ -4002,17 +4033,27 @@ function buildBadges(completions, expCarry){
     return {id:b.id, name:b.name, desc:b.desc, goal:b.goal, current:Math.min(cur,b.goal), done:cur>=b.goal};
   });
 }
-/* 完了タブの先頭：直近12週のマス。色は件数の3段階（0・1〜2・3以上）。色だけに頼らず、各マスの title に日付と件数を入れる */
+/* 完了タブの先頭：GitHub の草のような、直近26週のマス。色は件数の5段階。前倒しで終えた日は青い枠。
+   色だけに頼らず、各マスに日付と件数を title に入れ、押すと下に同じ文が出る（スマホでも読める） */
 function achievementGrid(){
   var g=buildActivityGrid(db.completions, new Date());
-  var el=h('<section class="ach" aria-label="達成カレンダー"><div class="ach-head"><b>達成カレンダー</b><span class="note">直近12週・完了した日 '+g.activeDays+' 日／'+g.total+' 件</span></div>'+
-    '<div class="ach-grid" role="img" aria-label="直近12週に完了した日は '+g.activeDays+' 日、合計 '+g.total+' 件"></div>'+
-    '<div class="ach-legend note"><span class="ach-sw g0"></span>0件 <span class="ach-sw g1"></span>1〜2件 <span class="ach-sw g2"></span>3件以上 <span class="ach-sw g1 early"></span>前倒しで完了した日</div></div>');
-  var grid=el.querySelector(".ach-grid");
+  var el=h('<section class="ach" aria-label="達成カレンダー"><div class="ach-head"><b>達成カレンダー</b><span class="note">直近'+g.weeks+'週・完了した日 '+g.activeDays+' 日／'+g.total+' 件</span></div>'+
+    '<div class="ach-board"><span></span><div class="ach-months" aria-hidden="true"></div>'+
+    '<div class="ach-dows" aria-hidden="true"><span>月</span><span>水</span><span>金</span></div>'+
+    '<div class="ach-grid" role="img" aria-label="直近'+g.weeks+'週に完了した日は '+g.activeDays+' 日、合計 '+g.total+' 件"></div></div>'+
+    '<p class="ach-pick note" role="status">マスを押すと、その日の件数が出ます</p>'+
+    '<div class="ach-legend note">少<span class="ach-sw g0"></span><span class="ach-sw g1"></span><span class="ach-sw g2"></span><span class="ach-sw g3"></span><span class="ach-sw g4"></span>多'+
+    '<span class="ach-sw g1 early"></span>前倒しで完了した日</div></section>');
+  var grid=el.querySelector(".ach-grid"), months=el.querySelector(".ach-months"), pick=el.querySelector(".ach-pick");
+  activityMonthLabels(g.cells).forEach(function(l){
+    months.appendChild(h('<span data-st="grid-column:'+l.col+'">'+l.month+'月</span>'));
+  });
   g.cells.forEach(function(c){
     var d=new Date(c.key+"T00:00:00");
     var label=(d.getMonth()+1)+"/"+d.getDate()+"（"+DOW[d.getDay()]+"）"+(c.future?"":" "+c.n+"件"+(c.early?"・前倒し":""));
-    grid.appendChild(h('<i class="'+(c.future?"gf":c.n>=3?"g2":c.n>=1?"g1":"g0")+(c.early?" early":"")+'" title="'+escHtml(label)+'"></i>'));
+    var cell=h('<i class="'+(c.future?"gf":"g"+c.level)+(c.early?" early":"")+(c.today?" now":"")+'" title="'+escHtml(label)+'" data-label="'+escHtml(label)+'"></i>');
+    cell.onclick=function(){ pick.textContent=label; };
+    grid.appendChild(cell);
   });
   return el;
 }

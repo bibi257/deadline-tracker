@@ -7,7 +7,7 @@ import { loadAppFunctions } from '../support/appFns.js';
 
 process.env.TZ = 'Asia/Tokyo';
 
-const FNS = ['pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'levelOf', 'isOwnCompletion', 'buildActivityGrid', 'longestStreak', 'buildBadges'];
+const FNS = ['pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'levelOf', 'isOwnCompletion', 'activityLevel', 'buildActivityGrid', 'activityMonthLabels', 'longestStreak', 'buildBadges'];
 const VARS = ['EXP_PER_LEVEL', 'ACTIVITY_WEEKS', 'BADGE_DEFS'];
 const app = loadAppFunctions(FNS, {}, VARS);
 const plain = (x) => JSON.parse(JSON.stringify(x));
@@ -16,31 +16,50 @@ const plain = (x) => JSON.parse(JSON.stringify(x));
 const done = (at, kind = 'ontime', exp = 10) => ({ id: `c-${at}-${kind}-${Math.random()}`, kind, exp, doneAt: new Date(parseNow(at)).toISOString() });
 const TODAY = new Date(parseNow('2026-01-30 12:00')); // 金曜
 
-test('達成カレンダー: 今日を含む週までの12週・84マス。週ごとに日曜はじまりで並び、今日より先は future', () => {
+test('達成カレンダー: 今日を含む週までの26週・182マス。週ごとに日曜はじまりで並び、今日より先は future。今日には today', () => {
   const g = app.buildActivityGrid([], TODAY);
-  assert.equal(g.cells.length, 84);
-  assert.equal(g.weeks, 12);
-  assert.equal(g.cells[0].key, '2025-11-09', '11週前の日曜');
-  assert.equal(g.cells[83].key, '2026-01-31', '今週の土曜');
+  assert.equal(g.cells.length, 182);
+  assert.equal(g.weeks, 26);
+  assert.equal(g.cells[0].key, '2025-08-03', '25週前の日曜');
+  assert.equal(g.cells[181].key, '2026-01-31', '今週の土曜');
   assert.deepEqual(g.cells.map((c, i) => c.dow === i % 7).filter((x) => !x).length, 0, 'k 番目のマスの曜日は k % 7（日〜土）');
   assert.deepEqual(plain(g.cells.filter((c) => c.future).map((c) => c.key)), ['2026-01-31'], '明日（土曜）だけが未来');
+  assert.deepEqual(plain(g.cells.filter((c) => c.today).map((c) => c.key)), ['2026-01-30']);
   assert.deepEqual([g.activeDays, g.total], [0, 0]);
+});
+
+test('activityLevel: 色の5段階（GitHub の草と同じ）。0件・1件・2件・3〜4件・5件以上', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 20].map(app.activityLevel), [0, 1, 2, 3, 3, 4, 4, 4]);
+});
+
+test('activityMonthLabels: 月が替わる週の列に月を置く。最初が月の途中で次の目印が近いときは省く', () => {
+  const g = app.buildActivityGrid([], TODAY);
+  const labels = plain(app.activityMonthLabels(g.cells));
+  // 2025-08-03（日）から。8月の最初の列(1)と、9月の列(5)は4列離れているので省かない
+  assert.deepEqual(labels.map((l) => l.month), [8, 9, 10, 11, 12, 1]);
+  assert.equal(labels[0].col, 1);
+  // 列は、その月に入って最初の日曜の列（11月は 2025-11-02 が日曜。2025-08-03 から13週目＝14列目）
+  assert.equal(labels.find((l) => l.month === 11).col, 14);
+  // 近すぎる例: 最初の列が月末で、次の列がすぐ翌月なら、最初は省く（2026-01-30 から見て、先頭の週を月初に近い日に動かす）
+  const near = app.buildActivityGrid([], new Date(parseNow('2025-10-08 12:00')));
+  const nl = plain(app.activityMonthLabels(near.cells));
+  assert.ok(nl.every((l, i) => i === 0 || l.col - nl[i - 1].col >= 3), '目印の間は3列以上空く');
 });
 
 test('達成カレンダー: 日ごとの件数と、前倒しの日。自動完了・ボーナス・期間の外・未来は数えない', () => {
   const list = [
     done('2026-01-30 09:00', 'ontime'), done('2026-01-30 23:50', 'early'), done('2026-01-30 10:00', 'auto', 0), done('2026-01-30 10:00', 'bonus', 20),
     done('2026-01-29 08:00', 'late'),
-    done('2025-11-09 00:10', 'ontime'),   // いちばん古いマスの日（範囲の内）
-    done('2025-11-08 23:50', 'ontime'),   // 1日早い（範囲の外）
+    done('2025-08-03 00:10', 'ontime'),   // いちばん古いマスの日（範囲の内）
+    done('2025-08-02 23:50', 'ontime'),   // 1日早い（範囲の外）
     done('2026-01-31 09:00', 'ontime'),   // 未来
   ];
   const g = app.buildActivityGrid(list, TODAY);
   const at = (k) => plain(g.cells.find((c) => c.key === k));
-  assert.deepEqual(at('2026-01-30'), { key: '2026-01-30', dow: 5, n: 2, early: true, future: false }, '自分で完了した2件。前倒しを含む');
-  assert.deepEqual(at('2026-01-29'), { key: '2026-01-29', dow: 4, n: 1, early: false, future: false });
-  assert.equal(at('2025-11-09').n, 1);
-  assert.deepEqual(at('2026-01-31'), { key: '2026-01-31', dow: 6, n: 0, early: false, future: true }, '未来は数えない');
+  assert.deepEqual(at('2026-01-30'), { key: '2026-01-30', dow: 5, n: 2, level: 2, early: true, future: false, today: true }, '自分で完了した2件。前倒しを含む');
+  assert.deepEqual(at('2026-01-29'), { key: '2026-01-29', dow: 4, n: 1, level: 1, early: false, future: false, today: false });
+  assert.equal(at('2025-08-03').n, 1, '期間の先頭のマス');
+  assert.deepEqual(at('2026-01-31'), { key: '2026-01-31', dow: 6, n: 0, level: 0, early: false, future: true, today: false }, '未来は数えない');
   assert.deepEqual([g.activeDays, g.total], [3, 4], '完了した日 3 日・4 件');
 });
 
