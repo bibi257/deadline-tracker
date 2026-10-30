@@ -24,6 +24,16 @@ test('build: web/_headers に CSP（meta と同じ内容 + frame-ancestors）・
   assert.equal(headers, buildHeaders(read('index.html')));
 });
 
+test('CSP: style 属性を許さない（unsafe-inline なし・style-src-attr none）。app.js と index.html に style="..." を書き戻さない', () => {
+  const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(read('index.html'))[1];
+  assert.ok(!csp.includes("'unsafe-inline'"), "'unsafe-inline' を付けない");
+  assert.match(csp, /style-src-attr 'none'/);
+  // 固定の見た目は styles.css のクラス、計算で決まる値は data-st（applyDyn が CSSOM で付ける）。style 属性は CSP で効かない
+  const html = read('index.html').replace(/<!--[\s\S]*?-->/g, '');
+  assert.ok(!/\sstyle=/.test(html), 'index.html に style 属性');
+  assert.deepEqual(read('app.js').match(/\sstyle="/g), null, 'app.js の文字列に style="..." を書かない（data-st か、styles.css のクラスに）');
+});
+
 test('build: CSP の meta が無い index.html ではエラーにする（ヘッダーが黙って消えない）', () => {
   assert.throws(() => buildHeaders('<html></html>'), /Content-Security-Policy/);
 });

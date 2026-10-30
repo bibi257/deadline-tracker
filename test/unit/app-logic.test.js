@@ -13,7 +13,7 @@ const FNS = [
   'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText',
   'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
   'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
-  'headerCount', 'needsKeyCard', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
+  'headerCount', 'needsKeyCard', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
 ];
 const VARS = ['DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
 
@@ -489,4 +489,38 @@ test('dlgMoreActive: 期間・自動完了・この締切だけの色・帯を�
   assert.equal(run({ fRep: 'weekly', fCalShow: false }), true, '繰り返しで帯を隠している');
   assert.equal(run({ fRep: 'none', fCalShow: false }), false, '繰り返さない予定では、帯の設定は効かない');
   assert.equal(run({ fRep: 'weekly', fCalShow: true }), false, '繰り返しでも、帯を出すのは既定');
+});
+
+// ---- 経過メーター（D11: 繰り返しの予定は「前の回から次の回まで」で測る） ----
+
+test('prevOccurrence: nextOccurrence の逆。月・年は基準日を保ち、その月に無い日は月末に丸める', () => {
+  const { app } = load();
+  const t = (d, rep, anchor) => keyTime(app.prevOccurrence(d, rep, anchor));
+  assert.equal(t(new Date(2026, 1, 6, 12), 'weekly'), '2026-01-30 12:00');
+  assert.equal(t(new Date(2026, 1, 6, 12), 'biweekly'), '2026-01-23 12:00');
+  assert.equal(t(new Date(2026, 2, 31, 9), 'monthly', 31), '2026-02-28 09:00', '3/31 の前は 2/28（うるう年でなければ）');
+  assert.equal(t(new Date(2028, 2, 31, 9), 'monthly', 31), '2028-02-29 09:00', 'うるう年');
+  assert.equal(t(new Date(2026, 0, 15, 9), 'monthly', 15), '2025-12-15 09:00', '年をまたぐ');
+  assert.equal(t(new Date(2028, 1, 29, 9), 'yearly', 29), '2027-02-28 09:00', '2/29 の前の年');
+  // nextOccurrence と往復できる
+  const d = new Date(2026, 4, 20, 8, 30);
+  for (const rep of ['weekly', 'biweekly', 'monthly', 'yearly']) {
+    assert.equal(keyTime(app.prevOccurrence(app.nextOccurrence(d, rep, 20), rep, 20)), keyTime(d), rep);
+  }
+});
+
+test('progressOf: 繰り返さない予定は登録日から締切まで（登録日が無ければ14日前）。繰り返す予定は前の回から次の回まで', () => {
+  const { app } = load('2026-02-03 12:00');
+  const it = (extra) => ({ id: 'x', title: 'x', due: iso(2026, 2, 6, 12), rep: 'none', ...extra });
+  // 繰り返さない
+  assert.equal(app.progressOf(it({ created: iso(2026, 1, 24, 12) }), new Date(2026, 1, 3, 12)), 77, '登録から締切まで13日のうち10日が過ぎた（10/13）');
+  assert.equal(app.progressOf(it({}), new Date(2026, 1, 3, 12)), 79, '登録日なし: 14日前から。11/14');
+  // 繰り返す: 毎週の締切 2/6 の前の回は 1/30。2/3 は 7日のうち4日
+  const weekly = it({ rep: 'weekly', created: iso(2025, 6, 1, 12) }); // 登録は何か月も前。ここから測ると毎回ほぼいっぱいになる
+  assert.equal(app.progressOf(weekly, new Date(2026, 1, 3, 12)), 57, '毎週: 4/7');
+  assert.equal(app.progressOf(it({ rep: 'biweekly', created: iso(2025, 6, 1, 12) }), new Date(2026, 1, 3, 12)), 79, '隔週: 11/14');
+  // 範囲外は 0〜100 に収める。完了は 100
+  assert.equal(app.progressOf(weekly, new Date(2026, 1, 7, 12)), 100, '締切を過ぎた');
+  assert.equal(app.progressOf(weekly, new Date(2026, 0, 20, 12)), 0, '前の回より前（カレンダーの先の回）');
+  assert.equal(app.progressOf({ ...weekly, done: true }, new Date(2026, 1, 3, 12)), 100);
 });
