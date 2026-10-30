@@ -4,6 +4,8 @@ on:
     types: [opened, synchronize, ready_for_review, reopened]
 jobs:
   review:
+    # Dependabot の PR には Actions の Secret が渡らず、claude-code-action も人以外の実行者を断るため、動かさない
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

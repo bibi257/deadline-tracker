@@ -131,9 +131,43 @@ test('自動同期: 他の端末の更新があるときは止めて知らせる
   const before = w.log.puts.length;
   A.edit('Aの更新');
   await A.auto();
-  assert.equal(w.log.puts.length, before, '送らない');
+  // 先に読み直さず、手元の rev（1）を If-Match に付けて送る。サーバーは rev 2 なので 409 で断る（上書きされない）
+  assert.equal(w.log.puts.length, before + 1, '送ろうとして、断られる');
+  assert.equal(w.log.puts.at(-1).ifMatch, '1');
   assert.match(A.toasts.join('\n'), /自動同期を止めました/);
   assert.deepEqual(titles(await w.server()), ['Bの更新']);
+  assert.equal((await w.server()).rev, 2);
+});
+
+test('自動同期: 全データを先に読み直さない（通信は PUT の1回だけ）。成功すると新しい rev を保存する', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.edit('最初');
+  await A.sync();
+  const calls = w.log.calls;
+  A.edit('次');
+  await A.auto();
+  assert.equal(w.log.calls, calls + 1, 'GET を挟まず、PUT の1回だけ');
+  assert.equal(A.ctx.cfKnownRev(), '2');
+  assert.deepEqual(titles(await w.server()), ['次']);
+});
+
+test('自動同期: 一度も読み込み・同期していない端末は、サーバーに内容があれば送らない（If-Match: 0 で断られる）。空なら初回として送れる', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.edit('A');
+  await A.sync();                                    // サーバーに内容がある
+  const C = w.device('C', () => '2026-10-26T10:00:00.000Z'); // 一度も読み込んでいない端末
+  C.edit('C');
+  await C.auto();
+  assert.equal(w.log.puts.at(-1).ifMatch, '0');
+  assert.deepEqual(titles(await w.server()), ['A'], '上書きされない');
+  assert.match(C.toasts.join('\n'), /自動同期を止めました/);
+  const w2 = world();                                // サーバーが空なら、初回として送れる
+  const D = w2.device('D', () => '2026-10-26T10:00:00.000Z');
+  D.edit('D');
+  await D.auto();
+  assert.deepEqual(titles(await w2.server()), ['D']);
 });
 
 test('409（確認のあとに他の端末が更新した）のとき、新しい rev で自動的に送り直さない。自動同期は止めて知らせる', async () => {
@@ -145,8 +179,6 @@ test('409（確認のあとに他の端末が更新した）のとき、新し�
   await B.pull();
   B.edit('Bの更新');
   await B.sync(); // サーバーは rev2。A の known は 1
-  // A の「確認」が、更新の前の古い状態を返した場合（確認と送信の間に B が更新した状況）を作る
-  A.ctx.fetchRemoteState = async () => ({ cf: true, sha: '1', updatedAt: null, itemCount: 1 });
   const before = w.log.puts.length;
   A.edit('Aの更新');
   await A.auto();

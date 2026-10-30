@@ -231,12 +231,45 @@ const get = (env, path, { ip = '1.1.1.1', key } = {}) => worker.fetch(new Reques
   headers: { 'CF-Connecting-IP': ip, ...(key ? { Authorization: `Bearer ${key}` } : {}) },
 }), env);
 
-test('/ics/<トークン>.ics は、認証なしでメールなし・メモなしの .ics を返す（Python 版と同じ内容）', async () => {
+// 購読用だけに足す3行（カレンダー名・更新間隔）。それ以外は Python 版の .ics（メモなし）と1文字まで同じ
+const SUBSCRIBE_LINES = 'X-WR-CALNAME:締切トラッカー\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\n';
+const withSubscribeLines = (ics) => ics.replace('METHOD:PUBLISH\r\n', `METHOD:PUBLISH\r\n${SUBSCRIBE_LINES}`);
+
+test('/ics/<トークン>.ics は、認証なしでメールなし・メモなしの .ics を返す（Python 版の内容に、カレンダー名と更新間隔の3行だけを足したもの）', async () => {
   const { env } = await withData();
   const res = await get(env, `/ics/${FEED_TOKEN}.ics`);
   assert.equal(res.status, 200);
   assert.match(res.headers.get('Content-Type'), /^text\/calendar/);
-  assert.equal(await res.text(), expected('deadlines-nomemo.ics'));
+  const body = await res.text();
+  assert.equal(body, withSubscribeLines(expected('deadlines-nomemo.ics')));
+  assert.notEqual(body, expected('deadlines-nomemo.ics'), '3行が足されている');
+});
+
+test('/api/ics（アプリの書き出し）には、購読用の3行を足さない。出力は今までと同じ', async () => {
+  const { env, call } = await withData();
+  const res = await get(env, '/api/ics?memo=0', { key: KEY });
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  assert.doesNotMatch(body, /X-WR-CALNAME|REFRESH-INTERVAL|X-PUBLISHED-TTL/);
+  assert.equal(body, expected('deadlines-nomemo.ics'));
+});
+
+test('GET /api/feed-url: 認証が必要。FEED_TOKEN があれば購読用 URL を返す。未設定・短すぎるときは ok:false', async () => {
+  const { env } = await withData();
+  assert.equal((await get(env, '/api/feed-url')).status, 401, '認証なしは通らない');
+  const res = await get(env, '/api/feed-url', { key: KEY });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('Cache-Control'), 'no-store');
+  assert.deepEqual(await res.json(), { ok: true, url: `https://x.test/ics/${FEED_TOKEN}.ics` });
+  // 返した URL で、実際に購読用の .ics が取れる
+  assert.equal((await get(env, `/ics/${FEED_TOKEN}.ics`)).status, 200);
+  for (const FEED of [undefined, 'short', '   ']) {
+    const s = setup({ FEED_TOKEN: FEED });
+    const r = await get(s.env, '/api/feed-url', { key: KEY });
+    assert.deepEqual(await r.json(), { ok: false }, String(FEED));
+  }
+  const spaced = setup({ FEED_TOKEN: `\n${FEED_TOKEN} ` });
+  assert.equal((await (await get(spaced.env, '/api/feed-url', { key: KEY })).json()).url, `https://x.test/ics/${FEED_TOKEN}.ics`, '前後の空白は取り除く');
 });
 
 test('/ics: 違うトークン・トークン未設定は 404、失敗が続くと 429。正しいトークンも止まる', async () => {
@@ -255,7 +288,9 @@ test('/ics: データが空・未完了が0件でも、空のカレンダーを�
   const empty = setup({ FEED_TOKEN });
   const r1 = await get(empty.env, `/ics/${FEED_TOKEN}.ics`);
   assert.equal(r1.status, 200);
-  assert.match(await r1.text(), /^BEGIN:VCALENDAR\r\n.*END:VCALENDAR\r\n$/s);
+  const empty1 = await r1.text();
+  assert.match(empty1, /^BEGIN:VCALENDAR\r\n.*END:VCALENDAR\r\n$/s);
+  assert.ok(empty1.includes(SUBSCRIBE_LINES), '空でも、カレンダー名と更新間隔は付ける');
 });
 
 test('/ics: トークンの前後の空白は無視する', async () => {
@@ -296,4 +331,29 @@ test('GET /api/ics?dayHour=: 当日リマインドの時刻を指定できる（
   assert.match(eight, /TRIGGER;VALUE=DATE-TIME:20260202T230000Z/, '8 時（UTC 前日 23 時）');
   assert.equal(await (await get('?dayHour=9')).text(), nine, '9 を明示しても同じ');
   for (const bad of ['?dayHour=24', '?dayHour=-1', '?dayHour=x', '?dayHour=', '?dayHour=9.5']) assert.equal((await get(bad)).status, 400, bad);
+});
+
+test('GET /api/data: 保存してある JSON を解析し直さずに返す。中身・rev・時刻は変わらず、記号・絵文字・改行を含んでも壊れない', async () => {
+  const { env, call } = setup();
+  const data = {
+    items: [{ id: 'a', title: '改行\n引用"と\\と</script>と と😀と𠮷', due: '2026-11-01T00:00:00.000Z', memo: '{"入れ子":[1,2,{"x":null}]}' }],
+    categories: ['課題'], catReminders: {}, updatedAt: '2026-10-23T00:00:00.000Z',
+  };
+  assert.equal((await call('PUT', '/api/data', { body: data, headers: { 'If-Match': '0' } })).status, 201);
+  const r = await call('GET', '/api/data');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.data, data);
+  assert.equal(r.body.ok, true);
+  assert.equal(r.body.rev, 1);
+  assert.equal(r.body.updatedAt, '2026-10-23T00:00:00.000Z');
+  assert.ok(r.body.savedAt, '保存した時刻');
+  // JSON の解析・再変換をしない（Worker の CPU 時間のため）。巨大なデータの GET で JSON.parse が呼ばれない
+  const real = JSON.parse;
+  let parsed = 0;
+  JSON.parse = (...a) => { parsed += 1; return real(...a); };
+  try {
+    const res = await worker.fetch(new Request('https://x.test/api/data', { headers: { Authorization: `Bearer ${KEY}`, 'CF-Connecting-IP': '1.1.1.1' } }), env);
+    await res.text(); // 応答の本文を読む（テスト側の解析は含めない）
+  } finally { JSON.parse = real; }
+  assert.equal(parsed, 0, 'GET /api/data は JSON.parse を呼ばない');
 });

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildFeed, expand, feedJson } from '../../worker/src/feed.js';
-import { buildIcs } from '../../worker/src/ics.js';
+import { buildIcs, SUBSCRIBE_HEADERS } from '../../worker/src/ics.js';
 import { addRep } from '../../worker/src/recurrence.js';
 import { fromJst, parseNow, dateStr } from '../../worker/src/time.js';
 
@@ -26,6 +26,15 @@ test('.ics（購読用・メモなし）が Python 版と1文字まで同じ。�
   const { ics } = buildIcs(data, { now: MORNING, dayHour: 9, noMemo: true });
   assert.equal(ics, read('expected/deadlines-nomemo.ics'));
   assert.doesNotMatch(ics, /DESCRIPTION:(?!.*：)/);
+});
+
+test('.ics（購読用: subscribe）は、METHOD の直後にカレンダー名と更新間隔の3行だけが増える。指定しなければ今までと同じ', () => {
+  const base = buildIcs(data, { now: MORNING, dayHour: 9, noMemo: true }).ics;
+  const sub = buildIcs(data, { now: MORNING, dayHour: 9, noMemo: true, subscribe: true }).ics;
+  assert.deepEqual(SUBSCRIBE_HEADERS, ['X-WR-CALNAME:締切トラッカー', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H', 'X-PUBLISHED-TTL:PT1H']);
+  assert.equal(sub, base.replace('METHOD:PUBLISH\r\n', `METHOD:PUBLISH\r\n${SUBSCRIBE_HEADERS.join('\r\n')}\r\n`));
+  assert.equal(base, read('expected/deadlines-nomemo.ics'), '指定しなければ Python 版と同じ');
+  assert.equal(sub.split('\r\n').length - base.split('\r\n').length, 3);
 });
 
 test('未完了が0件なら .ics は作らない（null）', () => {

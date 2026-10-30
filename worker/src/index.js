@@ -7,6 +7,7 @@
 //   GET  /api/feed              未完了の締切の一覧（feed）。?days=14（確認用）
 //   GET  /api/ics               .ics（メモあり。?memo=0 でメモなし。?dayHour=9 は当日リマインドの時刻）
 //   GET  /ics/<FEED_TOKEN>.ics  購読用の .ics（メモなし）。認証は URL の中の長いトークン（シークレット FEED_TOKEN）
+//   GET  /api/feed-url          購読用 URL（FEED_TOKEN から組み立てる。認証つき。未設定なら ok:false）
 //   GET  /api/mail              締切のメールの件名と本文を作る（送らない。確認用）。?target=today|tomorrow|auto
 //   POST /api/mail              締切のメールを今すぐ自分宛てに送る（手動）
 //   GET  /api/digest            Discord に送る文面を作る（送らない。確認用）。?kind=morning（朝の一覧。既定）|evening（夜の再通知）|weekly（週次レビュー）
@@ -19,7 +20,7 @@
 // キーが長いランダム値なので、パスワードのような重いハッシュは使わず（無料プランの CPU 時間 10ms に収める）、定数時間で比べる。
 // 認証の失敗が続いたら、IP ごとに一時的に止める。
 import { buildFeed } from './feed.js';
-import { buildIcs } from './ics.js';
+import { buildIcs, SUBSCRIBE_HEADERS } from './ics.js';
 import { gmailConfig } from './mail.js';
 import { DIGEST_KINDS, previewDigest, previewMail, runScheduled, sendDigest, sendMail } from './jobs.js';
 
@@ -56,7 +57,12 @@ class HttpError extends Error {
 const now = (env) => (env.NOW ? env.NOW() : Math.floor(Date.now() / 1000));
 
 function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
+  return jsonText(JSON.stringify(data), status);
+}
+
+/** すでに JSON の文字列になっているものを、そのまま JSON の応答にする（解析し直さない） */
+function jsonText(body, status = 200) {
+  return new Response(body, {
     status,
     headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS },
   });
@@ -181,7 +187,9 @@ async function readJson(request, maxChars) {
 async function getData(env) {
   const row = await env.DB.prepare('SELECT json, rev, updated_at, saved_at FROM docs WHERE id = ?').bind(DOC_ID).first();
   if (!row) return json({ ok: true, rev: 0, data: null, updatedAt: null, savedAt: null });
-  return json({ ok: true, rev: row.rev, data: JSON.parse(row.json), updatedAt: row.updated_at, savedAt: row.saved_at });
+  // 保存してある JSON の文字列（putData が JSON.stringify したもの）を、解析も再変換もせず応答の中に埋め込む。
+  // 上限に近い大きさでも、Worker の CPU 時間（無料プランは 10ms）を JSON の往復で使わないため
+  return jsonText(`{"ok":true,"rev":${row.rev},"data":${row.json},"updatedAt":${JSON.stringify(row.updated_at)},"savedAt":${JSON.stringify(row.saved_at)}}`);
 }
 
 async function putData(env, request, url) {
@@ -249,6 +257,8 @@ async function loadData(env) {
 
 const EMPTY_CALENDAR = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//deadline-tracker//JP\r\nEND:VCALENDAR\r\n';
 const ICS_TYPE = 'text/calendar; charset=utf-8';
+// 購読用の空のカレンダー（名前と更新間隔は、中身が空でも付ける）
+const EMPTY_FEED = EMPTY_CALENDAR.replace('END:VCALENDAR', `${SUBSCRIBE_HEADERS.join('\r\n')}\r\nEND:VCALENDAR`);
 
 async function getFeed(env, url) {
   const days = Number(url.searchParams.get('days') ?? 14);
@@ -277,8 +287,15 @@ async function serveIcs(env, request, token) {
     await countHit(env, ipKey, AUTH_MISS_WINDOW);
     return notFound();
   }
-  const { ics } = buildIcs(await loadData(env), { now: now(env) * 1000, dayHour: 9, noMemo: true });
-  return text(ics ?? EMPTY_CALENDAR, ICS_TYPE, 200, { 'Content-Disposition': 'inline; filename="deadlines.ics"' });
+  const { ics } = buildIcs(await loadData(env), { now: now(env) * 1000, dayHour: 9, noMemo: true, subscribe: true });
+  return text(ics ?? EMPTY_FEED, ICS_TYPE, 200, { 'Content-Disposition': 'inline; filename="deadlines.ics"' });
+}
+
+/** 購読用 URL（認証つき）。FEED_TOKEN が未設定なら ok:false。URL にトークンが入るので、ログには出さない */
+function getFeedUrl(env, request) {
+  const token = secret(env, 'FEED_TOKEN');
+  if (!token) return json({ ok: false });
+  return json({ ok: true, url: `${new URL(request.url).origin}/ics/${token}.ics` });
 }
 
 function mailMode(url) {
@@ -350,6 +367,7 @@ async function route(env, request) {
   if (path === '/api/digest' && method === 'POST') return postDigest(env, url);
   if (path === '/api/feed' && method === 'GET') return getFeed(env, url);
   if (path === '/api/ics' && method === 'GET') return getIcs(env, url);
+  if (path === '/api/feed-url' && method === 'GET') return getFeedUrl(env, request);
   if (path === '/api/data' && method === 'GET') return getData(env);
   if (path === '/api/data' && method === 'PUT') return putData(env, request, url);
   if (path === '/api/snapshots' && method === 'GET') return listSnapshots(env);

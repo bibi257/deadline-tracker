@@ -737,6 +737,9 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .mt-14{margin-top:14px}
 .mt-18{margin-top:18px}
 .mt-20{margin-top:20px}
+.feed-box{margin:10px 0 0}
+.feed-box input{width:100%;font-size:var(--fs-s);margin-bottom:8px}
+.offscreen{position:fixed;left:-9999px;top:0;opacity:0}
 
 /* ---- 達成カレンダーと実績バッジ（完了の記録から毎回計算する） ---- */
 .ach{margin:14px 0 6px;padding:12px;background:var(--card);border:1px solid var(--rule);border-top:2px solid var(--ink);border-radius:var(--radius)}
