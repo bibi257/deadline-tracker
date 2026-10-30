@@ -56,7 +56,12 @@ class HttpError extends Error {
 const now = (env) => (env.NOW ? env.NOW() : Math.floor(Date.now() / 1000));
 
 function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
+  return jsonText(JSON.stringify(data), status);
+}
+
+/** すでに JSON の文字列になっているものを、そのまま JSON の応答にする（解析し直さない） */
+function jsonText(body, status = 200) {
+  return new Response(body, {
     status,
     headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS },
   });
@@ -181,7 +186,9 @@ async function readJson(request, maxChars) {
 async function getData(env) {
   const row = await env.DB.prepare('SELECT json, rev, updated_at, saved_at FROM docs WHERE id = ?').bind(DOC_ID).first();
   if (!row) return json({ ok: true, rev: 0, data: null, updatedAt: null, savedAt: null });
-  return json({ ok: true, rev: row.rev, data: JSON.parse(row.json), updatedAt: row.updated_at, savedAt: row.saved_at });
+  // 保存してある JSON の文字列（putData が JSON.stringify したもの）を、解析も再変換もせず応答の中に埋め込む。
+  // 上限に近い大きさでも、Worker の CPU 時間（無料プランは 10ms）を JSON の往復で使わないため
+  return jsonText(`{"ok":true,"rev":${row.rev},"data":${row.json},"updatedAt":${JSON.stringify(row.updated_at)},"savedAt":${JSON.stringify(row.saved_at)}}`);
 }
 
 async function putData(env, request, url) {
