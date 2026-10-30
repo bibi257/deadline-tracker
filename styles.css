@@ -737,3 +737,27 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .mt-14{margin-top:14px}
 .mt-18{margin-top:18px}
 .mt-20{margin-top:20px}
+
+/* ---- 達成カレンダーと実績バッジ（完了の記録から毎回計算する） ---- */
+.ach{margin:14px 0 6px;padding:12px;background:var(--card);border:1px solid var(--rule);border-top:2px solid var(--ink);border-radius:var(--radius)}
+.ach-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 10px;margin-bottom:8px}
+.ach-head b{font-size:var(--fs-xl);letter-spacing:.04em}
+.ach-grid{display:grid;grid-template-rows:repeat(7,1fr);grid-auto-flow:column;grid-auto-columns:1fr;gap:3px}
+.ach-grid i,.ach-sw{position:relative;display:block;aspect-ratio:1;border:1px solid var(--rule);border-radius:var(--radius);background:var(--card)}
+.ach-grid i.gf{border-style:dashed;border-color:var(--rule-2);background:transparent}
+.ach .g1{background:color-mix(in srgb,var(--ink) 18%,var(--card))}
+.ach .g2{background:color-mix(in srgb,var(--ink) 48%,var(--card))}
+.early::after{content:"";position:absolute;top:2px;right:2px;width:5px;height:5px;background:var(--blue)}
+.ach-legend{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;margin-top:8px}
+.ach-sw{display:inline-block;width:12px;height:12px;margin-left:6px}
+.ach-sw:first-child{margin-left:0}
+.ach-badges{margin-top:14px;padding-top:12px;border-top:1px dashed var(--rule)}
+.ach-badges ul{list-style:none;margin:8px 0 0;padding:0}
+.ach-badges li{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--rule-2)}
+.ach-badges li>span:nth-child(2){flex:1;min-width:0}
+.ach-badges li b{display:block;font-size:var(--fs-m)}
+.ach-badges li .note{display:block}
+.ach-mark{flex-shrink:0;width:22px;text-align:center;font-size:var(--fs-l)}
+.ach-state{flex-shrink:0;font-size:var(--fs-s);color:var(--ink-3)}
+.ach-badges li.done .ach-mark,.ach-badges li.done .ach-state{color:var(--routine);font-weight:700}
+.ach-badges li.todo b{color:var(--ink-3)}

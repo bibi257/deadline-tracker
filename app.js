@@ -1899,6 +1899,7 @@ function renderRepeat(){
 
 function renderDone(){
   var list=db.items.filter(function(i){ return i.done; }).sort(sortByDue).reverse();
+  main.appendChild(achievementGrid());
   main.appendChild(h('<div class="group-label">完了した締切</div>'));
   if(!list.length){ main.appendChild(h('<div class="empty"><b>まだありません</b>完了にした締切がここに残ります。</div>')); return; }
   list.forEach(function(i){ main.appendChild(cardOf(i)); });
@@ -2331,6 +2332,7 @@ function renderSettings(){
     b.onclick=function(){ db.settings.motion=p[0]; saveRaw(); render(); }; // 設定は同期対象外なのでupdatedAtは進めない
     s3b.querySelector(".row").appendChild(b);
   });
+  s3b.appendChild(achievementBadges());
   put("display",s3b);
 
   // 効果音
@@ -3899,6 +3901,84 @@ function streakInfo(){
   var week=[], t=new Date();
   for(var k=6;k>=0;k--){ var x=new Date(t.getFullYear(),t.getMonth(),t.getDate()-k); week.push({key:toLocalISO(x), on:!!days[toLocalISO(x)]}); }
   return {n:n, doneToday:doneToday, week:week};
+}
+
+/* ---- 達成カレンダーと実績バッジ（完了の記録 db.completions から毎回計算する。データは増やさない） ----
+   数えるのは、自分で完了にした記録だけ（自動完了 kind:"auto" と、全クリアのボーナス kind:"bonus" は数えない） */
+function isOwnCompletion(c){ return c.kind!=="auto" && c.kind!=="bonus"; }
+var ACTIVITY_WEEKS=12;
+/* 達成カレンダー：今日を含む週までの12週（日曜はじまり・84マス）。マスごとに、その日の完了件数と、前倒しで終えた日か。
+   cells は週ごとに7つずつ（日〜土）並ぶ。今日より先のマスは future:true */
+function buildActivityGrid(completions, today){
+  var byDay={};
+  (completions||[]).forEach(function(c){
+    if(!isOwnCompletion(c)) return;
+    var k=toLocalISO(new Date(c.doneAt));
+    var e=byDay[k]||(byDay[k]={n:0, early:false});
+    e.n++; if(c.kind==="early") e.early=true;
+  });
+  var t=startOfDay(today);
+  var first=new Date(t.getFullYear(), t.getMonth(), t.getDate()-t.getDay()-(ACTIVITY_WEEKS-1)*7);
+  var todayKey=toLocalISO(t), cells=[], activeDays=0, total=0;
+  for(var k=0;k<ACTIVITY_WEEKS*7;k++){
+    var d=new Date(first.getFullYear(), first.getMonth(), first.getDate()+k), key=toLocalISO(d);
+    var future=key>todayKey, e=byDay[key]||{n:0, early:false};
+    if(!future && e.n){ activeDays++; total+=e.n; }
+    cells.push({key:key, dow:d.getDay(), n:future?0:e.n, early:!future&&e.early, future:future});
+  }
+  return {cells:cells, weeks:ACTIVITY_WEEKS, activeDays:activeDays, total:total};
+}
+/* 完了した日の並び（YYYY-MM-DD の昇順・重複なし）から、いちばん長い連続日数 */
+function longestStreak(dayKeys){
+  var keys=Array.from(new Set(dayKeys)).sort(), best=0, run=0, prev=null;
+  keys.forEach(function(k){
+    var d=new Date(k+"T00:00:00");
+    run=(prev && daysBetween(prev,d)===1) ? run+1 : 1;
+    if(run>best) best=run;
+    prev=d;
+  });
+  return best;
+}
+/* 実績バッジ。current は今の値、goal は達成の条件、done は達成済みか */
+var BADGE_DEFS=[{id:"streak7", name:"連続7日", desc:"7日続けて、毎日1件以上完了した", goal:7}, {id:"early10", name:"前倒し10回", desc:"締切の24時間以上前に完了した回数", goal:10}, {id:"clear5", name:"全クリア5日", desc:"今日の締切をすべて片付けた日の数", goal:5}, {id:"lv10", name:"Lv.10", desc:"レベル10に到達した", goal:10}];
+function buildBadges(completions, expCarry){
+  var list=completions||[], exp=(expCarry||0);
+  list.forEach(function(c){ exp+=(c.exp||0); });
+  var current={
+    streak7:longestStreak(list.filter(isOwnCompletion).map(function(c){ return toLocalISO(new Date(c.doneAt)); })),
+    early10:list.filter(function(c){ return c.kind==="early"; }).length,
+    clear5:new Set(list.filter(function(c){ return c.kind==="bonus"; }).map(function(c){ return toLocalISO(new Date(c.doneAt)); })).size,
+    lv10:levelOf(exp)
+  };
+  return BADGE_DEFS.map(function(b){
+    var cur=current[b.id];
+    return {id:b.id, name:b.name, desc:b.desc, goal:b.goal, current:Math.min(cur,b.goal), done:cur>=b.goal};
+  });
+}
+/* 完了タブの先頭：直近12週のマス。色は件数の3段階（0・1〜2・3以上）。色だけに頼らず、各マスの title に日付と件数を入れる */
+function achievementGrid(){
+  var g=buildActivityGrid(db.completions, new Date());
+  var el=h('<section class="ach" aria-label="達成カレンダー"><div class="ach-head"><b>達成カレンダー</b><span class="note">直近12週・完了した日 '+g.activeDays+' 日／'+g.total+' 件</span></div>'+
+    '<div class="ach-grid" role="img" aria-label="直近12週に完了した日は '+g.activeDays+' 日、合計 '+g.total+' 件"></div>'+
+    '<div class="ach-legend note"><span class="ach-sw g0"></span>0件 <span class="ach-sw g1"></span>1〜2件 <span class="ach-sw g2"></span>3件以上 <span class="ach-sw g1 early"></span>前倒しで完了した日</div></div>');
+  var grid=el.querySelector(".ach-grid");
+  g.cells.forEach(function(c){
+    var d=new Date(c.key+"T00:00:00");
+    var label=(d.getMonth()+1)+"/"+d.getDate()+"（"+DOW[d.getDay()]+"）"+(c.future?"":" "+c.n+"件"+(c.early?"・前倒し":""));
+    grid.appendChild(h('<i class="'+(c.future?"gf":c.n>=3?"g2":c.n>=1?"g1":"g0")+(c.early?" early":"")+'" title="'+escHtml(label)+'"></i>'));
+  });
+  return el;
+}
+/* 設定の「演出」の節に並べる実績バッジ（未達成は薄く、進み具合を文字で出す） */
+function achievementBadges(){
+  var el=h('<div class="ach-badges"><div class="ach-head"><b>実績バッジ</b></div><ul></ul></div>');
+  var ul=el.querySelector("ul");
+  buildBadges(db.completions, db.expCarry).forEach(function(b){
+    ul.appendChild(h('<li class="'+(b.done?"done":"todo")+'"><span class="ach-mark" aria-hidden="true">'+(b.done?"✓":"◇")+'</span>'+
+      '<span><b>'+escHtml(b.name)+'</b><span class="note">'+escHtml(b.desc)+'</span></span>'+
+      '<span class="ach-state">'+(b.done?"達成":"未達成 "+b.current+"/"+b.goal)+'</span></li>'));
+  });
+  return el;
 }
 
 /* 連続日数の印。ラジオ体操カードのように、直近7日のうち自分で完了した日のマスを塗る（右端が今日） */
