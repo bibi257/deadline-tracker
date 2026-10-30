@@ -231,12 +231,45 @@ const get = (env, path, { ip = '1.1.1.1', key } = {}) => worker.fetch(new Reques
   headers: { 'CF-Connecting-IP': ip, ...(key ? { Authorization: `Bearer ${key}` } : {}) },
 }), env);
 
-test('/ics/<トークン>.ics は、認証なしでメールなし・メモなしの .ics を返す（Python 版と同じ内容）', async () => {
+// 購読用だけに足す3行（カレンダー名・更新間隔）。それ以外は Python 版の .ics（メモなし）と1文字まで同じ
+const SUBSCRIBE_LINES = 'X-WR-CALNAME:締切トラッカー\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\n';
+const withSubscribeLines = (ics) => ics.replace('METHOD:PUBLISH\r\n', `METHOD:PUBLISH\r\n${SUBSCRIBE_LINES}`);
+
+test('/ics/<トークン>.ics は、認証なしでメールなし・メモなしの .ics を返す（Python 版の内容に、カレンダー名と更新間隔の3行だけを足したもの）', async () => {
   const { env } = await withData();
   const res = await get(env, `/ics/${FEED_TOKEN}.ics`);
   assert.equal(res.status, 200);
   assert.match(res.headers.get('Content-Type'), /^text\/calendar/);
-  assert.equal(await res.text(), expected('deadlines-nomemo.ics'));
+  const body = await res.text();
+  assert.equal(body, withSubscribeLines(expected('deadlines-nomemo.ics')));
+  assert.notEqual(body, expected('deadlines-nomemo.ics'), '3行が足されている');
+});
+
+test('/api/ics（アプリの書き出し）には、購読用の3行を足さない。出力は今までと同じ', async () => {
+  const { env, call } = await withData();
+  const res = await get(env, '/api/ics?memo=0', { key: KEY });
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  assert.doesNotMatch(body, /X-WR-CALNAME|REFRESH-INTERVAL|X-PUBLISHED-TTL/);
+  assert.equal(body, expected('deadlines-nomemo.ics'));
+});
+
+test('GET /api/feed-url: 認証が必要。FEED_TOKEN があれば購読用 URL を返す。未設定・短すぎるときは ok:false', async () => {
+  const { env } = await withData();
+  assert.equal((await get(env, '/api/feed-url')).status, 401, '認証なしは通らない');
+  const res = await get(env, '/api/feed-url', { key: KEY });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('Cache-Control'), 'no-store');
+  assert.deepEqual(await res.json(), { ok: true, url: `https://x.test/ics/${FEED_TOKEN}.ics` });
+  // 返した URL で、実際に購読用の .ics が取れる
+  assert.equal((await get(env, `/ics/${FEED_TOKEN}.ics`)).status, 200);
+  for (const FEED of [undefined, 'short', '   ']) {
+    const s = setup({ FEED_TOKEN: FEED });
+    const r = await get(s.env, '/api/feed-url', { key: KEY });
+    assert.deepEqual(await r.json(), { ok: false }, String(FEED));
+  }
+  const spaced = setup({ FEED_TOKEN: `\n${FEED_TOKEN} ` });
+  assert.equal((await (await get(spaced.env, '/api/feed-url', { key: KEY })).json()).url, `https://x.test/ics/${FEED_TOKEN}.ics`, '前後の空白は取り除く');
 });
 
 test('/ics: 違うトークン・トークン未設定は 404、失敗が続くと 429。正しいトークンも止まる', async () => {
@@ -255,7 +288,9 @@ test('/ics: データが空・未完了が0件でも、空のカレンダーを�
   const empty = setup({ FEED_TOKEN });
   const r1 = await get(empty.env, `/ics/${FEED_TOKEN}.ics`);
   assert.equal(r1.status, 200);
-  assert.match(await r1.text(), /^BEGIN:VCALENDAR\r\n.*END:VCALENDAR\r\n$/s);
+  const empty1 = await r1.text();
+  assert.match(empty1, /^BEGIN:VCALENDAR\r\n.*END:VCALENDAR\r\n$/s);
+  assert.ok(empty1.includes(SUBSCRIBE_LINES), '空でも、カレンダー名と更新間隔は付ける');
 });
 
 test('/ics: トークンの前後の空白は無視する', async () => {

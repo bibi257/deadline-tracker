@@ -248,7 +248,8 @@ iPhone では Safari で開いて共有ボタン →「ホーム画面に追加�
 | `GET /api/snapshots/<id>` | 世代バックアップ1件の中身 |
 | `GET /api/feed` | 未完了の締切の一覧。`?days=14` |
 | `GET /api/ics` | `.ics`（メモあり。`?memo=0` でメモなし。`?dayHour=9` は当日リマインドの時刻で、アプリが端末の設定を渡す） |
-| `GET /ics/<FEED_TOKEN>.ics` | 購読用の `.ics`（メモなし）。認証は URL の中のトークン。URL は `https://<Worker>/ics/<FEED_TOKEN>.ics` で、カレンダーアプリで「照会カレンダー」として追加する |
+| `GET /ics/<FEED_TOKEN>.ics` | 購読用の `.ics`（メモなし。カレンダー名「締切トラッカー」と、1時間ごとの更新を指定する）。認証は URL の中のトークン。URL は `https://<Worker>/ics/<FEED_TOKEN>.ics` で、カレンダーアプリで「照会カレンダー」として追加する |
+| `GET /api/feed-url` | 購読用 URL を返す（`FEED_TOKEN` から組み立てる。認証つき。未設定なら `ok:false`）。アプリの設定「カレンダーで購読する」が使う |
 | `GET /api/mail` | 締切のメールの件名と本文を作る（送らない）。`?target=today` `tomorrow` `auto` |
 | `POST /api/mail` | 締切のメールを今すぐ自分宛てに送る |
 | `GET /api/digest` | Discord に送る文面を作る（送らない）。`?kind=morning`（既定）`evening` `weekly` |

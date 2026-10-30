@@ -181,11 +181,15 @@ function vevent(it, dayHour, reminders, { now, noMemo }) {
   return lines;
 }
 
+/** 購読用（/ics/<トークン>.ics）だけに足す行。カレンダーの名前と、更新の間隔（1時間）。
+ *  Python 版・アプリの書き出し（/api/ics）には無いので、そちらの出力は変わらない */
+export const SUBSCRIBE_HEADERS = ['X-WR-CALNAME:締切トラッカー', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H', 'X-PUBLISHED-TTL:PT1H'];
+
 /**
  * data から .ics の本文を作る。now はミリ秒。書き出すものが無ければ null。
  * 読めない締切は除き、その旨を warnings に入れて返す。
  */
-export function buildIcs(data, { now, dayHour = 9, noMemo = false }) {
+export function buildIcs(data, { now, dayHour = 9, noMemo = false, subscribe = false }) {
   const items = [];
   const warnings = [];
   for (let i of Array.isArray(data.items) ? data.items : []) {
@@ -207,6 +211,7 @@ export function buildIcs(data, { now, dayHour = 9, noMemo = false }) {
   // アプリと同じ並び順（期間つきは開始日、同じなら締切の早い順）
   items.sort((a, b) => (parseDt(a.start || a.due) - parseDt(b.start || b.due)) || (parseDt(a.due) - parseDt(b.due)));
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//deadline-tracker//JP', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
+  if (subscribe) lines.push(...SUBSCRIBE_HEADERS);
   const reminders = cleanReminders(data.catReminders);
   for (const it of items) lines.push(...vevent(it, dayHour, reminders, { now, noMemo }));
   lines.push('END:VCALENDAR');

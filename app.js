@@ -2142,6 +2142,50 @@ function settingsAssemble(groups){
     groups[p[0]].forEach(function(el){ main.appendChild(el); });
   });
 }
+/* ---- 購読用 URL（Cloudflare）。押したときだけ Worker から取り、画面に出したままにしない ---- */
+var FEED_URL_SHOW_MS=60000;
+function copyText(text){
+  if(navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+  return new Promise(function(resolve,reject){ // 古い端末向け：見えない入力欄に入れて選択し、コピーする
+    var ta=document.createElement("textarea");
+    ta.value=text; ta.setAttribute("readonly",""); ta.className="offscreen";
+    document.body.appendChild(ta); ta.select();
+    var ok=false; try{ ok=document.execCommand("copy"); }catch(e){}
+    ta.remove(); ok?resolve():reject(new Error("copy"));
+  });
+}
+function feedUrlSection(){
+  var el=h('<div class="sec"><h3>カレンダーで購読する</h3>'+
+    '<p>iPhone の「設定 → カレンダー → アカウント → アカウントを追加 → その他 → 照会カレンダーを追加」に購読用 URL を入れると、締切が標準カレンダーに自動で並びます（メモは含みません。約1時間ごとに更新されます）。</p>'+
+    '<p class="note">この URL を知っている人は、締切（メモを除く）を見られます。画面に出したままにせず、共有しないでください。</p>'+
+    '<div class="row"></div><div class="feed-box" hidden><input type="text" readonly aria-label="購読用 URL"><div class="row"></div></div>'+
+    '<p class="mt-8" role="status"></p></div>');
+  var msg=el.querySelector("p[role=status]"), box=el.querySelector(".feed-box"), input=box.querySelector("input"), timer=null;
+  function hide(){ clearTimeout(timer); input.value=""; box.hidden=true; }
+  var bShow=h('<button class="btn">購読用 URL を表示</button>');
+  var bCopy=h('<button class="btn fill">コピー</button>'), bHide=h('<button class="btn">隠す</button>');
+  box.querySelector(".row").append(bCopy,bHide);
+  bHide.onclick=function(){ hide(); msg.textContent=""; };
+  bCopy.onclick=function(){
+    copyText(input.value).then(function(){ msg.textContent="コピーしました。"; }, function(){ input.select(); msg.textContent="コピーできませんでした。選択したので、手でコピーしてください。"; });
+  };
+  bShow.onclick=function(){
+    msg.textContent="確認しています…";
+    getStoredCfConfig().then(function(cfg){
+      if(!cfg){ msg.textContent="先に「同期とアクセスキー」でアクセスキーを入れてください。"; return; }
+      return cfGetJson(cfg, cfg.api.replace(/\/data$/,"/feed-url")).then(function(j){
+        if(!j || !j.ok){ msg.textContent="購読用のトークン（FEED_TOKEN）が Cloudflare に登録されていません。"; return; }
+        input.value=j.url; box.hidden=false; msg.textContent="";
+        clearTimeout(timer); timer=setTimeout(function(){ hide(); msg.textContent="安全のため、購読用 URL を隠しました。"; }, FEED_URL_SHOW_MS);
+      });
+    }).catch(function(err){
+      msg.textContent=(err && err.status===401) ? "アクセスキーが違います。" : "取得できませんでした："+((err && err.message)||"");
+    });
+  };
+  el.querySelector(".row").appendChild(bShow);
+  return el;
+}
+
 function renderSettings(){
   // 節は、よく使う・困ったときに見る順のグループに並べる（作る順番は変えず、置き先だけを決める）
   var groups={sync:[],notify:[],cat:[],display:[],data:[],about:[]};
@@ -2526,6 +2570,7 @@ function renderSettings(){
 
   put("notify",h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p>'+
     '<p><b>iPhoneで取り込むときの注意：</b>Discordなどの添付ファイルを直接タップすると「照会カレンダー」として登録され、更新がすぐ反映されません。長押しして「ファイルに保存」してから開き、「カレンダーに追加」を選んでください。このアプリの「カレンダーへ」ボタンから書き出したファイルは、その心配がありません。</p></div>'));
+  if(CF===true) put("notify", feedUrlSection());
   settingsAssemble(groups);
 
 }
