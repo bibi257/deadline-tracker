@@ -83,6 +83,8 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
     return hasStart ? `${diff} 日後に開始` : `${diff} 日後`;
   };
 
+  const todayKey = dateStr(nowS * 1000);
+
   // 未完了で、締切の日時が読める項目。開始日時だけが壊れているものは、開始なしとして扱う
   const items = [];
   const broken = [];
@@ -111,6 +113,7 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
     allDay: alt(r.it.allDay, false) === true,
     id: clean(alt(r.it.id, '')),
     auto: alt(r.it.autoComplete, false) === true, // 自動完了の予定は、見出しの件数に数えない（一覧には出す）
+    picked: r.it.pick === todayKey, // 今日の一手の印（JST の今日と一致するときだけ。過ぎた日付の印は無視する）
   });
 
   // 未完了かつ「期限切れ」または「N日以内」。繰り返しは「定期予定」で扱うが、自動完了でなく締切が過ぎていれば「期限切れ」にも入れる
@@ -159,6 +162,21 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
     if (laterRows.length > LATER_MAX) laterSection += `-# ほか ${laterRows.length - LATER_MAX} 件\n`;
   }
 
+  // 今日の一手（印は締切1件に1つ。印の無い日は節ごと出さない＝今までの文面と変わらない）
+  const pickRows = rows.filter((r) => r.it.pick === todayKey).map((r) => ({ ...base(r), rep: r.rep, refep: r.rep === 'none' ? (r.startS ?? r.epoch) : r.epoch })).sort((a, b) => a.epoch - b.epoch);
+  let pickSection = '';
+  if (pickRows.length) {
+    pickSection = `\n## ◎ 今日の一手（${pickRows.length}件）\n`;
+    for (const r of pickRows) {
+      let jdate = fmtWhen(Date.parse(r.due), r.allDay);
+      if (r.start) {
+        const sdate = fmtWhen(Date.parse(r.start), r.allDay);
+        if (sdate !== jdate) jdate = `${sdate} 〜 ${jdate}`;
+      }
+      pickSection += `- ${r.rep !== 'none' ? '🔁 ' : ''}**${r.title}**　\`${r.cat}\`${doneLink(r.id)}\n  ${jdate}　── ${remain(r.refep, r.epoch, r.start)}\n`;
+    }
+  }
+
   const todayJst = `${jstParts(nowS * 1000).mo}月${jstParts(nowS * 1000).d}日（${DOW[jstDow(nowS * 1000)]}）`;
   // リンクは <> で囲む（囲まないと Discord がリンク先のプレビューカードを表示する）
   const linkSection = appUrl
@@ -167,7 +185,7 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
 
   if (!main.length) {
     return {
-      content: `# 📋 締切トラッカー\n### ${todayJst}の連絡\n\n## ⏳ ${windowDays}日以内の締切\n-# 予定はありません\n${repSection}${laterSection}${linkSection}`,
+      content: `# 📋 締切トラッカー\n### ${todayJst}の連絡\n${pickSection}\n## ⏳ ${windowDays}日以内の締切\n-# 予定はありません\n${repSection}${laterSection}${linkSection}`,
       warnings,
     };
   }
@@ -191,7 +209,7 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
       if (sdate !== jdate) jdate = `${sdate} 〜 ${jdate}`;
     }
     const rem = remain(r.refep, r.epoch, r.start);
-    const mark = r.rep !== 'none' ? '🔁 ' : '';
+    const mark = (r.picked ? '◎ ' : '') + (r.rep !== 'none' ? '🔁 ' : '');
     // 期限切れ・今日が締切の行だけ、完了リンクを付ける（文字数の上限があるため）
     const link = daysFromToday(r.epoch) <= 0 ? doneLink(r.id) : '';
     const entry = `- ${mark}**${r.title}**　\`${r.cat}\`${link}\n  ${jdate}　── ${rem}\n`;
@@ -218,7 +236,7 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
   }
 
   const mention = mentionUserId ? `<@${mentionUserId}> \n` : '';
-  let content = `${mention}# 📋 締切トラッカー\n### ${todayJst}の連絡\n`;
+  let content = `${mention}# 📋 締切トラッカー\n### ${todayJst}の連絡\n${pickSection}`;
   if (stale > 0) {
     content += `\n## ⚠️ 長く残っています（${stale}件）\n${staleLines}`;
     if (stale > 3) content += `-# ほか ${stale - 3} 件\n`;

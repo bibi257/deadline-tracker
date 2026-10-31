@@ -174,3 +174,37 @@ test('期限切れ: 自動完了の予定は件数に数えず、「長く残っ
   assert.match(content, /## ⚠️ 長く残っています（1件）/);
   assert.doesNotMatch(content.split('## 🔴')[0], /予定o2/, '警告の欄に自動完了を入れない');
 });
+
+// ---- 今日の一手（項目17） ----
+const withPick = (pick, extra = {}) => ({
+  items: [
+    { id: 'p1', title: '入稿データ', cat: '部活A', due: '2026-02-03T08:00:00.000Z', pick, ...extra },
+    { id: 'p2', title: 'シフト提出', cat: 'バイト', due: '2026-01-30T08:00:00.000Z' },
+  ],
+});
+
+test('今日の一手：今日の印がある締切は、見出しのすぐ後の節に出て、完了リンクが付く。下の節の行の頭には ◎ が付く', () => {
+  const { content } = buildDigest(withPick('2026-01-30'), { now: parseNow('2026-01-30 06:47'), ...cfg });
+  assert.match(content, /### 1月30日（金）の連絡\n\n## ◎ 今日の一手（1件）\n- \*\*入稿データ\*\*　`部活A`　\[✅完了\]\(<https:\/\/example\.com\/app\/\?done=p1>\)\n  2\/3（火） 17:00　── 4 日後\n/);
+  assert.ok(content.indexOf('◎ 今日の一手') < content.indexOf('今日が締切'), '最上段に出る');
+  assert.match(content, /\n- ◎ \*\*入稿データ\*\*　`部活A`\n/, '下の節の行（7日以内）の頭に ◎');
+  assert.doesNotMatch(content, /- ◎ \*\*シフト提出/, '印の無い行には付かない');
+});
+
+test('今日の一手：昨日の日付・明日の日付の印は朝の一覧に出ない。印が無ければ今までの文面と1文字も変わらない', () => {
+  const now = parseNow('2026-01-30 06:47');
+  const base = buildDigest(withPick(undefined), { now, ...cfg }).content;
+  for (const day of ['2026-01-29', '2026-01-31']) {
+    assert.equal(buildDigest(withPick(day), { now, ...cfg }).content, base, day);
+  }
+  assert.doesNotMatch(base, /今日の一手|◎/);
+  // 完了済みの締切の印も出さない
+  assert.equal(buildDigest(withPick('2026-01-30', { done: true }), { now, ...cfg }).content.includes('今日の一手'), false);
+});
+
+test('今日の一手：予定が1件も無い日でも、印があれば節が出る（締切が7日より先で、他に予定が無い場合）', () => {
+  const data = { items: [{ id: 'f1', title: '合宿申込', cat: '部活B', due: '2026-03-20T03:00:00.000Z', pick: '2026-01-30' }] };
+  const { content } = buildDigest(data, { now: parseNow('2026-01-30 06:47'), ...cfg });
+  assert.match(content, /## ◎ 今日の一手（1件）\n- \*\*合宿申込\*\*/);
+  assert.match(content, /## ⏳ 7日以内の締切\n-# 予定はありません/);
+});

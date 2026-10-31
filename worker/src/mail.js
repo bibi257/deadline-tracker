@@ -97,6 +97,13 @@ export function buildMailBody(feed, target) {
   const soon = items.filter((e) => target < e.due_date && e.due_date <= week && !during.includes(e));
 
   const out = [`${jp(target)}の締切（締切トラッカーより自動送信）`, ''];
+  // 今日の一手（印の付いた締切。印が無ければ何も足さない＝今までの本文と変わらない）
+  const picks = items.filter((e) => e.pick === target);
+  if (picks.length) {
+    out.push(`■ 今日の一手（${picks.length}件）`);
+    out.push(...picks.map((e) => line(e, target)));
+    out.push('');
+  }
   out.push(...prioritySection(items, target));
   // 件数には、自動完了の予定（締切を過ぎると自動で完了になる）を数えない。あれば「＋自動完了N件」と分けて書く
   const section = (title, rows) => {
