@@ -786,3 +786,26 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .sec.acc.open>h3::after{content:"▴"}
 .sec.acc>h3:focus-visible{outline:2px solid var(--mark);outline-offset:3px}
 .sec.acc:not(.open)>:not(h3){display:none}
+
+/* ---- 今日の一手：一覧の最上段の欄（手帳の「本日の要件」欄）。罫線3行。影・角丸は使わない ---- */
+.picks{margin:12px 0 0;border-top:1px solid var(--ink)}
+.pk-head{display:flex;align-items:baseline;gap:10px;padding:6px 0}
+.pk-head b{font-weight:700;font-size:var(--fs-m);letter-spacing:.06em}
+.pk-n{font-size:var(--fs-s);color:var(--ink-3)}
+.pk-hint{font-size:var(--fs-s);color:var(--ink-3)}
+.picks.slim{border-top:0;border-bottom:1px solid var(--rule);padding:0}
+.pk-list{list-style:none;margin:0;padding:0}
+.pk-row{display:flex;align-items:center;gap:8px;min-height:34px;border-bottom:1px solid var(--rule);font-size:var(--fs-m)}
+.pk-row.blank{color:var(--ink-3)}
+.pk-go{display:flex;align-items:center;gap:8px;flex:1;min-width:0;min-height:34px;border:0;background:none;padding:0;text-align:left;color:var(--ink);font:inherit}
+.pk-go:hover .pk-title{text-decoration:underline;text-underline-offset:3px}
+.pk-mark{color:var(--blue);font-weight:700;flex:none}
+.pk-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pk-when{flex:none;font-size:var(--fs-s);color:var(--ink-3)}
+.pk-row.done .pk-title{text-decoration:line-through;text-decoration-color:var(--ink-3);color:var(--ink-3)}
+.pk-stamp{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1.5px solid var(--red);border-radius:50%;
+  color:var(--red);font-size:var(--fs-s);font-weight:700;line-height:1;transform:rotate(-14deg);opacity:.8}
+.pk-tm{margin:4px 0 0;font-size:var(--fs-s);color:var(--ink-3)}
+.badge.pk{border-color:var(--blue)}
+.badge.pk i{color:var(--blue)}
+@media (pointer:coarse){ .pk-go,.pk-row{min-height:44px} }

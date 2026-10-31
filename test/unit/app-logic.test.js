@@ -13,9 +13,9 @@ const FNS = [
   'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText',
   'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
   'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
-  'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
+  'picksFor', 'canPick', 'addPickDay', 'pickDaysIn', 'sanitizeIncomingItems', 'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
 ];
-const VARS = ['DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
+const VARS = ['PICK_MAX', 'DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
 
 /** 「今」を固定した Date（引数なしの new Date() と Date.now() だけが固定される） */
 function fixedDate(nowMs) {
@@ -544,4 +544,61 @@ test('metaContent: HTML の meta の値を取り出す（サーバー上の版�
   assert.equal(app.metaContent(html, 'app-version'), '3.1');
   assert.equal(app.metaContent(html, 'build-stamp'), '2026-10-31 08:00 [abc]');
   assert.equal(app.metaContent(html, 'nothing'), '');
+});
+
+// ---- 今日の一手（項目17・19） ----
+
+test('picksFor / canPick: その日の印の付いた未完了だけを締切の早い順に返す。昨日の印・完了済みは数えない。1日3件まで', () => {
+  const { app } = load();
+  const items = [
+    { id: 'a', title: 'a', due: iso(2026, 2, 5, 10), pick: '2026-01-30' },
+    { id: 'b', title: 'b', due: iso(2026, 2, 1, 10), pick: '2026-01-30' },
+    { id: 'c', title: 'c', due: iso(2026, 2, 2, 10), pick: '2026-01-29' },   // 昨日の印は無視
+    { id: 'd', title: 'd', due: iso(2026, 2, 3, 10), pick: '2026-01-30', done: true }, // 完了済み
+    { id: 'e', title: 'e', due: iso(2026, 2, 4, 10) },
+  ];
+  assert.deepEqual(plain(app.picksFor(items, '2026-01-30')).map((i) => i.id), ['b', 'a']);
+  assert.deepEqual(plain(app.picksFor(items, '2026-01-31')), []);
+  assert.deepEqual(plain(app.picksFor(undefined, '2026-01-30')), []);
+  assert.equal(app.canPick(items, '2026-01-30'), true, '2件なので、あと1件');
+  assert.equal(app.canPick(items.concat({ id: 'f', title: 'f', due: iso(2026, 2, 6), pick: '2026-01-30' }), '2026-01-30'), false, '3件で上限');
+  assert.equal(app.canPick(items, '2026-01-30', 1), false, '済んだ一手1件を数えると上限');
+  assert.equal(app.canPick(items, '2026-01-29'), true);
+});
+
+test('addPickDay / pickDaysIn: 印の日付を重ねず足し、新しい60日分だけ残す。直近n日（今日を含む）の日数を数える', () => {
+  const { app } = load();
+  assert.deepEqual(plain(app.addPickDay(['2026-01-28'], '2026-01-30', 60)), ['2026-01-28', '2026-01-30']);
+  assert.deepEqual(plain(app.addPickDay(['2026-01-30'], '2026-01-30', 60)), ['2026-01-30'], '同じ日は重ねない');
+  const many = Array.from({ length: 70 }, (_, i) => `2025-${String(1 + Math.floor(i / 28)).padStart(2, '0')}-${String(1 + (i % 28)).padStart(2, '0')}`);
+  const kept = plain(app.addPickDay(many, '2026-01-30', 60));
+  assert.equal(kept.length, 60);
+  assert.equal(kept[59], '2026-01-30');
+  assert.equal(kept[0] > many[0], true, '古いものから捨てる');
+  const days = ['2026-01-16', '2026-01-18', '2026-01-30', '2026-01-31', '2026-01-30', 'x'];
+  assert.equal(app.pickDaysIn(days, '2026-01-30', 14), 2, '16日は14日の外（30日から13日前の17日までが入る）。明日の31日・重複・壊れた値は数えない');
+  assert.equal(app.pickDaysIn(['2026-01-17'], '2026-01-30', 14), 1, '13日前は入る');
+  assert.equal(app.pickDaysIn([], '2026-01-30', 14), 0);
+  assert.equal(app.pickDaysIn(undefined, '2026-01-30', 14), 0);
+});
+
+test('sanitizeIncomingItems: pick は "YYYY-MM-DD" の文字列だけ残す', () => {
+  const { app } = load();
+  const base = { id: 'x', title: 't', due: iso(2026, 2, 1, 10) };
+  const keep = (pick) => plain(app.sanitizeIncomingItems([{ ...base, pick }]).kept[0]).pick;
+  assert.equal(keep('2026-01-30'), '2026-01-30');
+  for (const bad of [5, '', 'あした', '2026-1-3', ['2026-01-30'], null]) assert.equal(keep(bad), undefined, String(bad));
+});
+
+test('applyCompletionCore: 完了・繰り返しで次の回へ進んだときは、今日の一手の印を消す', () => {
+  const { app } = load();
+  const one = { id: 'a', title: 'a', due: iso(2026, 2, 1, 10), pick: '2026-01-30' };
+  app.applyCompletionCore(one);
+  assert.equal(one.done, true);
+  assert.equal('pick' in one, false);
+  const rep = { id: 'b', title: 'b', due: iso(2026, 2, 1, 10), rep: 'weekly', pick: '2026-01-30' };
+  const r = app.applyCompletionCore(rep);
+  assert.equal(r.repeating, true);
+  assert.equal(rep.done, false);
+  assert.equal('pick' in rep, false);
 });
