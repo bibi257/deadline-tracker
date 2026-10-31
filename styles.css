@@ -809,3 +809,21 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .badge.pk{border-color:var(--blue)}
 .badge.pk i{color:var(--blue)}
 @media (pointer:coarse){ .pk-go,.pk-row{min-height:44px} }
+
+/* ---- メモ内チェックリスト：帳簿の点検欄。四角は罫線1px・角2px、済んだら ✓ と薄い文字（色は使わない） ---- */
+.memo-list{white-space:normal}
+.memo-line{min-height:1.4em;white-space:pre-wrap;overflow-wrap:anywhere}
+.chk-row{position:relative;display:flex;align-items:flex-start;gap:8px;padding:3px 0;cursor:pointer}
+.chk-in{position:absolute;left:0;top:4px;width:18px;height:18px;margin:0;opacity:0}
+.chk-box{flex:none;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:18px;height:18px;margin-top:1px;
+  border:1px solid var(--ink-2);border-radius:2px;background:var(--card);color:var(--ink);font-size:var(--fs-l);line-height:1}
+.chk-in:checked+.chk-box::after{content:"✓";font-weight:700}
+.chk-in:checked~.chk-text{color:var(--ink-3)}
+.chk-in:focus-visible+.chk-box{outline:2px solid var(--ink);outline-offset:2px}
+.chk-text{min-width:0;overflow-wrap:anywhere}
+.locked .chk-row{cursor:default;opacity:.55}
+.memo-more{border:0;background:none;padding:4px 0;font-size:var(--fs-s);color:var(--ink-3);text-decoration:underline;text-underline-offset:3px}
+.memo-more:hover{color:var(--ink)}
+.chk-prog{font-size:var(--fs-xs);color:var(--ink-3);letter-spacing:.04em}
+.chk-prog.all{border:1px solid var(--ink-3);border-radius:var(--radius);padding:0 5px;font-weight:700;color:var(--ink);letter-spacing:.06em;line-height:1.6}
+@media (pointer:coarse){ .chk-row{min-height:44px;align-items:center} .chk-in{top:50%;margin-top:-9px} .chk-box{margin-top:0} }
