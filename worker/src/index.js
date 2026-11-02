@@ -23,6 +23,7 @@ import { buildFeed } from './feed.js';
 import { buildIcs, SUBSCRIBE_HEADERS } from './ics.js';
 import { gmailConfig } from './mail.js';
 import { DIGEST_KINDS, previewDigest, previewMail, runScheduled, sendDigest, sendMail } from './jobs.js';
+import { zonedData } from './time.js';
 
 const MIN_KEY_LENGTH = 24;
 // D1 の1行の上限は 2,000,000 バイト。日本語は1文字3バイトなので、文字数ではなくバイト数で測る（余裕を残した値）
@@ -252,7 +253,7 @@ async function getSnapshot(env, id) {
 
 async function loadData(env) {
   const row = await env.DB.prepare('SELECT json FROM docs WHERE id = ?').bind(DOC_ID).first();
-  return row ? JSON.parse(row.json) : { items: [] };
+  return row ? zonedData(JSON.parse(row.json)) : { items: [] };
 }
 
 const EMPTY_CALENDAR = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//deadline-tracker//JP\r\nEND:VCALENDAR\r\n';

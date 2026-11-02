@@ -192,9 +192,12 @@ function sanitizeIncomingItems(rawItems){
     if(typeof it.due!=="string" || isNaN(due.getTime())){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"締切日(due)が不正な日付：「"+it.due+"」", raw:it}); return; }
     // ここから先は軽微な不正。項目ごと隔離せず、既定値に補正して使う
     var fixed=Object.assign({}, it);
+    // Z の無い日時は、この端末では端末の時刻（JST）として読まれる。Worker も同じ時刻に読めるよう、Z の付いた形で残す
+    fixed.due=due.toISOString();
     if(fixed.start){
       var s=new Date(fixed.start);
       if(typeof fixed.start!=="string" || isNaN(s.getTime())) delete fixed.start; // 開始日が壊れていれば無かったことにする
+      else fixed.start=s.toISOString();
     }
     if(fixed.memo!==undefined && typeof fixed.memo!=="string") delete fixed.memo; // 文字列でないメモ・カテゴリは、Worker（保存・メール・.ics）が読めないため補正する
     if(fixed.cat!==undefined && typeof fixed.cat!=="string") fixed.cat="その他";

@@ -358,3 +358,17 @@ test('GET /api/data: 保存してある JSON を解析し直さずに返す。�
   } finally { JSON.parse = real; }
   assert.equal(parsed, 0, 'GET /api/data は JSON.parse を呼ばない');
 });
+
+test('Z の無い日時（端末の時刻＝JST で書かれたもの）は JST として数える。feed・.ics・朝の一覧が9時間ずれない', async () => {
+  const { env, call, clock } = setup();
+  clock.t = Date.parse('2026-10-24T00:00:00.000Z') / 1000; // JST の 10/24 9:00
+  const data = { items: [{ id: 'z1', title: 'Z無し', due: '2026-10-25T09:00', cat: '仕事' }], categories: ['仕事'], catReminders: {}, updatedAt: '2026-10-24T00:00:00.000Z' };
+  assert.equal((await call('PUT', '/api/data', { body: data, headers: { 'If-Match': '0' } })).status, 201);
+  const feed = await call('GET', '/api/feed?days=14');
+  assert.deepEqual([feed.body.feed.items[0].due_date, feed.body.feed.items[0].due_time], ['2026-10-25', '09:00']);
+  const digest = await call('GET', '/api/digest?kind=morning');
+  assert.ok(digest.body.chunks.join('\n').includes('Z無し'), '朝の一覧に出る');
+  assert.deepEqual(digest.body.warnings, [], '読めない項目として外さない');
+  const ics = await worker.fetch(new Request('https://x.test/api/ics', { headers: { Authorization: `Bearer ${KEY}`, 'CF-Connecting-IP': '1.1.1.1' } }), env);
+  assert.match(await ics.text(), /DTEND:20261025T000000Z/, '締切 9:00 JST は 0:00Z');
+});

@@ -673,3 +673,11 @@ test('編集の保存: 開いたあとに項目が別の更新（版 seq が進�
   assert.equal(editConflict(items, 'b', 0), false, '版の無い項目は 0 と同じ扱い');
   assert.equal(editConflict(items, 'x', 1), false, '項目が無いのは「削除された」の扱い（別の処理）');
 });
+
+test('取り込み: Z の無い締切日時は端末の時刻（JST）として読み、Z の付いた形にそろえて残す', () => {
+  const { sanitizeIncomingItems } = loadAppFunctions(['sanitizeIncomingItems']);
+  const { kept, quarantined } = sanitizeIncomingItems([{ id: 'a', title: 't', due: '2026-10-25T09:00', start: '2026-10-24T10:00' }]);
+  assert.equal(quarantined.length, 0);
+  assert.equal(kept[0].due, '2026-10-25T00:00:00.000Z');
+  assert.equal(kept[0].start, '2026-10-24T01:00:00.000Z');
+});
