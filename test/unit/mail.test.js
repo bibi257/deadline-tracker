@@ -167,3 +167,16 @@ test('メール: 自動完了の予定は、見出しの件数に数えない。
   assert.match(body, /英語演習/);
   assert.match(body, /大学休み/);
 });
+
+test('メール本文：今日の一手の印があれば先頭に節が出る。印が無ければ今までの本文と変わらない', () => {
+  const target = '2026-01-30';
+  const mk = (pick) => ({ items: [
+    { title: '入稿データ', due_date: '2026-02-03', due_time: '17:00', category: '部活A', recurring: false, ...(pick ? { pick } : {}) },
+    { title: 'シフト提出', due_date: '2026-01-30', due_time: '17:00', category: 'バイト', recurring: false },
+  ], source_updated_at: null });
+  const plain = buildMailBody(mk(null), target);
+  assert.doesNotMatch(plain, /今日の一手/);
+  assert.equal(buildMailBody(mk('2026-01-29'), target), plain, '昨日の印は無視する');
+  const body = buildMailBody(mk(target), target);
+  assert.match(body, /\n\n■ 今日の一手（1件）\n- 入稿データ ［部活A］ 2\/3（火） 17:00（あと4日）\n\n■ おすすめの順番/);
+});

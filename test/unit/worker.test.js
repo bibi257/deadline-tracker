@@ -163,6 +163,7 @@ test('壊れた形・id の重複・大きすぎるデータは拒否する', as
   assert.equal((await put({ items: [{ id: 'a' }, { id: 'a' }] })).status, 400);
   assert.equal((await put({ items: [], catColors: [] })).status, 400);
   assert.equal((await put({ items: [], trash: 'x' })).status, 400);
+  assert.equal((await put({ items: [{ id: 'a', pick: 5 }] })).status, 400, '今日の一手の印が文字列でない');
   assert.equal((await put({ items: [{ id: 'a', memo: 'x'.repeat(2_000_000) }] })).status, 413);
   assert.equal((await call('GET', '/api/data')).body.data, null, '拒否したデータは保存されない');
 });

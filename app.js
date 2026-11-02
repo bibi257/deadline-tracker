@@ -202,6 +202,7 @@ function sanitizeIncomingItems(rawItems){
     if(fixed.rep && ["weekly","biweekly","monthly","yearly"].indexOf(fixed.rep)<0) fixed.rep="none";
     if(fixed.rep && fixed.rep!=="none" && typeof fixed.repCount!=="number") fixed.repCount=0;
     if(fixed.skip && !Array.isArray(fixed.skip)) delete fixed.skip;
+    if(fixed.pick!==undefined && (typeof fixed.pick!=="string" || !/^\d{4}-\d{2}-\d{2}$/.test(fixed.pick))) delete fixed.pick; // 今日の一手の印は "YYYY-MM-DD" だけ
     if(typeof fixed.done!=="boolean") fixed.done=!!fixed.done;
     kept.push(fixed);
   });
@@ -593,6 +594,65 @@ function sortByDue(a,b){
   return d!==0?d:(parseItemDate(a)-parseItemDate(b));
 }
 
+/* ========== 今日の一手（項目17） ==========
+   締切1件に任意の pick（"YYYY-MM-DD"）を持たせ、「この日に手を付ける」印にする。日付が過ぎた印は無視するだけなので、持ち越しの山はできない。
+   1日 PICK_MAX 件まで。完了・延期・この回は休み・繰り返しで次の回へ進んだときは印を消す */
+var PICK_MAX=3;
+function picksFor(items, dateKey){
+  return (items||[]).filter(function(i){ return !i.done && i.pick===dateKey; }).sort(function(a,b){ return parseItemDate(a)-parseItemDate(b); });
+}
+/* もう1件付けられるか。doneN は、その日にすでに済んだ一手の件数（欄の「N/3」に数える分） */
+function canPick(items, dateKey, doneN){ return picksFor(items, dateKey).length+(doneN||0)<PICK_MAX; }
+/* 印を付けた日付を端末内に残す（項目19。同期しない）。重ねず足し、新しい60日分だけ残す */
+function addPickDay(days, dateKey, max){
+  var out=(days||[]).filter(function(d){ return typeof d==="string" && d!==dateKey; });
+  out.push(dateKey); out.sort();
+  return out.slice(-(max||60));
+}
+/* 今日から数えて直近 n 日（今日を含む）のうち、印を付けた日が何日あるか */
+function pickDaysIn(days, todayKey, n){
+  var t=new Date(todayKey+"T00:00:00"), seen={}, c=0;
+  (days||[]).forEach(function(d){
+    if(seen[d]) return; seen[d]=1;
+    var diff=Math.round((t-new Date(d+"T00:00:00"))/86400000);
+    if(diff>=0 && diff<n) c++;
+  });
+  return c;
+}
+function tomorrowKey(){ var n=new Date(); return toLocalISO(new Date(n.getFullYear(),n.getMonth(),n.getDate()+1)); }
+function pickDays(){ try{ var a=JSON.parse(store.get("pick-days")||"[]"); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
+/* 済んだ一手：その日のうちは欄に残す。完了すると印は消えるので、端末内に覚えておく（同期しない） */
+function pickDoneList(){
+  try{ var o=JSON.parse(store.get("pick-done")||"null"); if(o && o.d===toLocalISO(new Date()) && Array.isArray(o.a)) return o.a; }catch(e){}
+  return [];
+}
+function notePickDone(it){
+  var k=toLocalISO(new Date());
+  if(it.pick!==k) return;
+  var a=pickDoneList().filter(function(x){ return x.id!==it.id; });
+  a.push({id:it.id, t:it.title, w:fmtDue(parseItemDate(it), it.allDay)});
+  store.set("pick-done", JSON.stringify({d:k, a:a}));
+}
+function unnotePickDone(id){
+  var a=pickDoneList(); if(!a.length) return;
+  store.set("pick-done", JSON.stringify({d:toLocalISO(new Date()), a:a.filter(function(x){ return x.id!==id; })}));
+}
+function setPick(id, dateKey){
+  var it=db.items.find(function(x){ return x.id===id; });
+  if(!it || it.done){ render(); return; }
+  var tk=toLocalISO(new Date());
+  if(it.pick!==dateKey && !canPick(db.items, dateKey, dateKey===tk?pickDoneList().length:0)){ toast("一手は1日"+PICK_MAX+"件までです"); return; }
+  it.pick=dateKey;
+  store.set("pick-days", JSON.stringify(addPickDay(pickDays(), dateKey, 60)));
+  save(); render(); scheduleAutoSync();
+  toast("「"+it.title+"」を"+(dateKey===tk?"今日":"明日")+"の一手にしました");
+}
+function clearPick(id){
+  var it=db.items.find(function(x){ return x.id===id; });
+  if(!it || !it.pick) return;
+  delete it.pick; save(); render(); scheduleAutoSync();
+}
+
 function h(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); var el=t.content.firstElementChild; applyDyn(el); return el; }
 /* 計算で決まる見た目（色・幅・位置）は、style 属性では書かず data-st="プロパティ:値;…" で渡し、要素ができてから CSSOM で付ける。
    CSP で style 属性を許さない（style-src-attr 'none'）ため。固定の見た目は styles.css のクラスに置く */
@@ -919,6 +979,8 @@ function cardOf(it){
       '<h3 class="title">'+escHtml(it.title)+'</h3>'+
       // 1行目は「いつ」（状態の判子と日時）、2行目は属性。日時がどのカードでも同じ位置に来る
       '<div class="meta meta-when">'+(badge?'<span class="badge '+badge[2]+'"><i aria-hidden="true">'+badge[0]+'</i>'+badge[1]+'</span>':'')+
+      (!isCopy&&!it.done&&it.pick===toLocalISO(new Date())?'<span class="badge pk"><i aria-hidden="true">◎</i>一手</span>':'')+
+      (!isCopy&&!it.done&&it.pick===tomorrowKey()?'<span class="badge pk"><i aria-hidden="true">◎</i>明日の一手</span>':'')+
       '<span class="num">'+
       escHtml(it.start?(fmtDue(new Date(it.start),it.allDay)+" 〜 "+fmtDue(d,it.allDay)):fmtDue(d,it.allDay))+'</span></div>'+
       '<div class="meta meta-attr">'+(isRepeating(it)&&!it.done?'<span class="badge rt"><i aria-hidden="true">↻</i>定期</span>':'')+
@@ -947,6 +1009,10 @@ function cardOf(it){
       el.querySelector(".body").appendChild(note);
     } else {
       add("完了にする","main",function(){ complete(it, el); });
+      var tkP=toLocalISO(new Date()), tmP=tomorrowKey();
+      if(it.pick===tkP||it.pick===tmP) add("一手から外す","",function(){ clearPick(it.id); });
+      if(it.pick!==tkP) add("今日の一手にする","",function(){ setPick(it.id, tkP); });
+      if(it.pick!==tmP) add("明日の一手にする","",function(){ setPick(it.id, tmP); });
       if(st==="over" && !isRepeating(it)){
         add("明日に延期","",function(){ animateCardOut(el, "postponing", "延期", function(){ postpone(it); }); });
       }
@@ -964,7 +1030,7 @@ function cardOf(it){
     add("戻す","",function(){
       // 完了の記録とEXPも取り消す（同じ締切を何度も完了→戻すでEXPが増えないように）
       if(it.doneLog) db.completions=db.completions.filter(function(c){ return c.id!==it.doneLog; });
-      it.done=false; delete it.doneAt; delete it.doneLog; save(); render(); scheduleAutoSync();
+      it.done=false; delete it.doneAt; delete it.doneLog; unnotePickDone(it.id); save(); render(); scheduleAutoSync();
     });
   }
   add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ animateCardOut(el, "deleting", "", function(){ deleteItem(it); }); } });
@@ -1260,8 +1326,9 @@ function postpone(it){
   if(!it){ render(); return; }
   var due=parseItemDate(it), t=new Date();
   var nd=new Date(t.getFullYear(),t.getMonth(),t.getDate()+1,due.getHours(),due.getMinutes());
-  var before={due:it.due, start:it.start};
+  var before={due:it.due, start:it.start, pick:it.pick};
   var shift=nd-due;
+  delete it.pick; // 今日の一手の印は、延期したら外す
   it.due=nd.toISOString();
   if(it.start) it.start=new Date(new Date(it.start).getTime()+shift).toISOString();
   it.seq=(it.seq||0)+1;
@@ -1269,6 +1336,7 @@ function postpone(it){
   toast("締切を "+fmtDue(nd,it.allDay)+" に延期しました", "元に戻す", function(){
     it.due=before.due;
     if(before.start) it.start=before.start; else delete it.start;
+    if(before.pick) it.pick=before.pick;
     it.seq=(it.seq||0)+1;
     save(); render(); scheduleAutoSync();
   });
@@ -1380,6 +1448,7 @@ function matchesSearch(it){
 function renderList(){
   if(needsKeyCard(CF, !!store.get("cf-key"), _cfAuthStopped, _cfKeyOk)) main.appendChild(keyCard());
   main.appendChild(quickBar());
+  main.appendChild(picksSection());
   main.appendChild(todaySummary());
   main.appendChild(listFilterRow());
   if(searchOpen||searchKw.trim()) main.appendChild(searchBar());
@@ -1525,6 +1594,46 @@ function openQuickDialog(r){
   if(r.cat){ document.getElementById("fCat").value=r.cat; refreshDlgColor(); }
   syncDialogRows();
   if(!document.getElementById("fTitle").value) document.getElementById("fTitle").focus();
+}
+
+/* 一覧の最上段の「今日の一手」の欄（手帳の「本日の要件」欄）。罫線3行。
+   印の付いた締切（締切の早い順）と、今日済んだ一手（打ち消し線と「済」）を入れる。
+   今日も明日も印が無いときは、見出しと案内の1行に縮める */
+function picksSection(){
+  var tk=toLocalISO(new Date());
+  var list=picksFor(db.items, tk), done=pickDoneList(), tm=picksFor(db.items, tomorrowKey()).length;
+  var n=list.length+done.length;
+  var slim=!n && !tm;
+  var el=h('<section class="picks'+(slim?" slim":"")+'" aria-label="今日の一手"><div class="pk-head"><b>今日の一手</b>'+
+    '<span class="num pk-n">'+n+'/'+PICK_MAX+'</span>'+
+    (slim?'<span class="pk-hint">カードの「…」から一手を選ぶ</span>':'')+'</div></section>');
+  if(slim) return el;
+  var ol=h('<ol class="pk-list"></ol>');
+  list.forEach(function(i){
+    var li=h('<li class="pk-row"><button type="button" class="pk-go"><span class="pk-mark" aria-hidden="true">◎</span>'+
+      '<span class="pk-title">'+escHtml(i.title)+'</span><span class="pk-when num">'+escHtml(fmtDue(parseItemDate(i), i.allDay))+'</span></button></li>');
+    li.querySelector("button").onclick=function(){ goToCard(i.id); };
+    ol.appendChild(li);
+  });
+  done.forEach(function(x){
+    ol.appendChild(h('<li class="pk-row done"><span class="pk-mark" aria-hidden="true">◎</span><span class="pk-title">'+escHtml(x.t)+'</span>'+
+      '<span class="pk-when num">'+escHtml(x.w)+'</span><span class="pk-stamp" aria-label="済">済</span></li>'));
+  });
+  for(var k=n;k<PICK_MAX;k++){
+    ol.appendChild(h('<li class="pk-row blank">'+(k===0?'<span class="pk-hint">カードの「…」から一手を選ぶ</span>':'')+'</li>'));
+  }
+  el.appendChild(ol);
+  if(tm) el.appendChild(h('<p class="pk-tm">明日：'+tm+'件</p>'));
+  return el;
+}
+/* 一覧の中のそのカードまでスクロールして、一瞬強調する。絞り込みで隠れていれば絞り込みを外す */
+function goToCard(id){
+  function find(){ return document.querySelector('.card[data-id="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]'); }
+  var card=find();
+  if(!card){ filter="ALL"; searchKw=""; render(); card=find(); }
+  if(!card) return;
+  try{ card.scrollIntoView({block:"center", behavior:motionOn()?"smooth":"auto"}); }catch(e){}
+  if(motionOn()){ card.classList.add("fresh"); setTimeout(function(){ card.classList.remove("fresh"); }, 2200); }
 }
 
 /* 一覧の最上部に出す「今日のサマリー」。開いた瞬間に今日やることだけが分かるようにする。
@@ -2224,6 +2333,7 @@ function renderSettings(){
   var myStamp=(document.querySelector('meta[name="build-stamp"]')||{}).content||"不明";
   var s0=h('<div class="sec"><h3>バージョン</h3>'+
     '<p>この画面が読み込んでいる版：'+versionBadge(versionInfo(myStamp, (document.querySelector('meta[name="app-version"]')||{}).content))+'</p>'+
+    '<p class="note">今日の一手：直近14日のうち '+pickDaysIn(pickDays(), toLocalISO(new Date()), 14)+'日で使用（この端末だけの数）</p>'+
     '<p id="verCheck" class="c-ink3">サーバー上の版を確認しています…</p>'+
     '<div class="row"></div></div>');
   var bCheck=h('<button class="btn">今すぐ確認する</button>');
@@ -3695,6 +3805,7 @@ dlgForm.addEventListener("submit",function(e){
 });
 
 function applyCompletion(it, source){
+  if(source!=="auto") notePickDone(it); // 済んだ一手を、その日の欄に残すために覚える
   var log=logCompletion(it, source||"manual");
   var r=applyCompletionCore(it);
   r.log=log;
@@ -3717,6 +3828,7 @@ function logCompletion(it, source){
   return c;
 }
 function applyCompletionCore(it){
+  delete it.pick; // 今日の一手の印は、完了（繰り返しなら次の回へ進む）で外す
   it.done=true; it.doneAt=new Date().toISOString();
   if(it.rep&&it.rep!=="none"){
     // 繰り返しはカレンダー側で先の回まで展開しているため、ここでは複製しない。
@@ -4328,6 +4440,7 @@ function skipOccurrence(id, dateKey){
     if(i.id!==id) return;
     if((i.skip||[]).indexOf(dateKey)<0) i.skip=(i.skip||[]).concat([dateKey]);
     if(toLocalISO(parseItemDate(i))===dateKey){
+      delete i.pick;
       if(!advanceRepeating(i)){ i.done=true; i.doneAt=new Date().toISOString(); ended=true; }
     } else {
       i.seq=(i.seq||0)+1;
