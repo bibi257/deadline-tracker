@@ -583,7 +583,7 @@ function downloadIcsPreferWorker(list,name){
 }
 
 /* ========== 状態 ========== */
-var view="list", filter="ALL", calRef=new Date(), selDay=null, editingId=null, searchKw="";
+var view="list", filter="ALL", calRef=new Date(), selDay=null, editingId=null, editingSeq=0, searchKw="";
 var main=document.getElementById("main");
 
 function activeItems(){ return db.items.filter(function(i){ return !i.done; }); }
@@ -3633,6 +3633,7 @@ dlg.addEventListener("close",function(){
 });
 function openDialog(item){
   editingId=item?item.id:null;
+  editingSeq=item?(item.seq||0):0; // 開いた時点の版。保存の前に、他の端末や自動処理で変わっていないか確かめる
   document.getElementById("dlgTitle").textContent=item?"締切を編集":"締切を登録";
   var catSel=document.getElementById("fCat");
   catSel.innerHTML="";
@@ -3801,6 +3802,11 @@ dlgForm.addEventListener("click",function(e){
   var b=e.target.closest?e.target.closest("button"):null;
   lastSubmitBtn=(b&&b.type==="submit"&&b.form===dlgForm)?b:null;
 });
+/* 編集を始めたときの版（seq）と、いまの版が違うか。違えば、取り込みや自動処理で項目が変わっているので、古い内容で上書きしない */
+function editConflict(items, id, seqAtOpen){
+  var cur=items.filter(function(i){ return i.id===id; })[0];
+  return !!cur && (cur.seq||0)!==(seqAtOpen||0);
+}
 dlgForm.addEventListener("submit",function(e){
   var btn=e.submitter||lastSubmitBtn; lastSubmitBtn=null;
   if(!btn||btn.value!=="save") return;
@@ -3832,6 +3838,11 @@ dlgForm.addEventListener("submit",function(e){
   var calHide=(rep!=="none") && !document.getElementById("fCalShow").checked;
 
   if(editingId){
+    if(editConflict(db.items, editingId, editingSeq)){
+      e.preventDefault(); // ダイアログは開いたまま（入力内容は残る）。上書きはしない
+      toast("この締切は、開いたあとに別の更新で変わりました。いったんやめて開き直し、内容を確かめてから保存してください");
+      return;
+    }
     var found=false;
     db.items.forEach(function(i){
       if(i.id!==editingId) return;

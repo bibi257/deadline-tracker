@@ -664,3 +664,12 @@ test('チェックを押しても、他の行のメモの文字は変わらな�
     assert.notEqual(after[r.line], before[r.line]);
   }
 });
+
+test('編集の保存: 開いたあとに項目が別の更新（版 seq が進んだ）で変わっていたら上書きしない。同じ版・版の無い項目は保存してよい', () => {
+  const { editConflict } = loadAppFunctions(['editConflict']);
+  const items = [{ id: 'a', seq: 3 }, { id: 'b' }];
+  assert.equal(editConflict(items, 'a', 3), false, '開いたときと同じ版なら、保存してよい');
+  assert.equal(editConflict(items, 'a', 2), true, '開いたあとに版が進んでいれば、古い内容で上書きしない');
+  assert.equal(editConflict(items, 'b', 0), false, '版の無い項目は 0 と同じ扱い');
+  assert.equal(editConflict(items, 'x', 1), false, '項目が無いのは「削除された」の扱い（別の処理）');
+});
