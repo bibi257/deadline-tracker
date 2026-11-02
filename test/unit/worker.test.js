@@ -372,3 +372,23 @@ test('Z の無い日時（端末の時刻＝JST で書かれたもの）は JST 
   const ics = await worker.fetch(new Request('https://x.test/api/ics', { headers: { Authorization: `Bearer ${KEY}`, 'CF-Connecting-IP': '1.1.1.1' } }), env);
   assert.match(await ics.text(), /DTEND:20261025T000000Z/, '締切 9:00 JST は 0:00Z');
 });
+
+test('保存: 繰り返し・回数・基準日・取りやめ・完了などの型が合わないものは 400 で保存しない。アプリが書く正しい形は通る', async () => {
+  const { call } = setup();
+  const data = (extra) => ({ items: [{ id: 'a', title: 't', due: '2026-11-01T00:00:00.000Z', cat: '仕事', ...extra }], categories: ['仕事'], catReminders: {}, updatedAt: '2026-10-23T00:00:00.000Z' });
+  const bad = [{ rep: 'daily' }, { repCount: '3' }, { repDay: '15' }, { seq: 1.5 }, { skip: ['2026/10/25'] }, { skip: 'x' }, { pick: '10/25' }, { done: 'yes' }, { allDay: 1 }, { autoComplete: 'true' }, { calHide: 0 }];
+  for (const extra of bad) {
+    assert.equal((await call('PUT', '/api/data', { body: data(extra), headers: { 'If-Match': '0' } })).status, 400, JSON.stringify(extra));
+  }
+  const good = { rep: 'monthly', repCount: 4, repDay: 15, seq: 2, skip: ['2026-10-25'], pick: '2026-10-25', done: false, allDay: true, autoComplete: true, calHide: false };
+  assert.equal((await call('PUT', '/api/data', { body: data(good), headers: { 'If-Match': '0' } })).status, 201);
+});
+
+test('保存: 既存のデータの形（テスト用のフィクスチャ）は、すべて保存できる', async () => {
+  const { readFileSync } = await import('node:fs');
+  for (const f of ['data.json', 'data-old.json', 'data-long.json', 'data-ties.json']) {
+    const { call } = setup();
+    const body = JSON.parse(readFileSync(new URL(`../fixtures/${f}`, import.meta.url), 'utf8'));
+    assert.equal((await call('PUT', '/api/data', { body, headers: { 'If-Match': '0' } })).status, 201, f);
+  }
+});

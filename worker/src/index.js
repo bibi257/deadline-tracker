@@ -165,7 +165,22 @@ function checkData(data) {
         throw new HttpError(400, `締切の ${k} は文字列にしてください（${it.id.slice(0, 20)}）`);
       }
     }
+    checkItemValues(it);
   }
+}
+
+const REP_KINDS = ['none', 'weekly', 'biweekly', 'monthly', 'yearly'];
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const unset = (v) => v === undefined || v === null;
+
+/** 項目の型と形を確かめる（アプリが書く形だけを許す）。繰り返し・回数・基準日・取りやめた回・今日の一手・完了など。値の範囲は見ない */
+function checkItemValues(it) {
+  const bad = (k) => new HttpError(400, `締切の ${k} の形が正しくありません（${it.id.slice(0, 20)}）`);
+  if (!unset(it.rep) && !REP_KINDS.includes(it.rep)) throw bad('rep');
+  for (const k of ['repCount', 'repDay', 'seq']) if (!unset(it[k]) && !Number.isInteger(it[k])) throw bad(k);
+  if (!unset(it.skip) && (!Array.isArray(it.skip) || it.skip.some((s) => typeof s !== 'string' || !DAY_KEY.test(s)))) throw bad('skip');
+  if (!unset(it.pick) && (typeof it.pick !== 'string' || !DAY_KEY.test(it.pick))) throw bad('pick');
+  for (const k of ['done', 'allDay', 'autoComplete', 'calHide']) if (!unset(it[k]) && typeof it[k] !== 'boolean') throw bad(k);
 }
 
 /** 文字列の UTF-8 でのバイト数。3倍しても上限以下なら、数えずに済ませる（CPU 時間の節約） */
