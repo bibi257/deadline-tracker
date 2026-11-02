@@ -13,9 +13,9 @@ const FNS = [
   'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText',
   'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
   'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
-  'picksFor', 'canPick', 'addPickDay', 'pickDaysIn', 'sanitizeIncomingItems', 'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
+  'parseChecklist', 'toggleChecklist', 'checklistProgress', 'picksFor', 'canPick', 'addPickDay', 'pickDaysIn', 'sanitizeIncomingItems', 'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
 ];
-const VARS = ['PICK_MAX', 'DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
+const VARS = ['CHECK_RE', 'PICK_MAX', 'DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
 
 /** 「今」を固定した Date（引数なしの new Date() と Date.now() だけが固定される） */
 function fixedDate(nowMs) {
@@ -601,4 +601,66 @@ test('applyCompletionCore: 完了・繰り返しで次の回へ進んだとき�
   assert.equal(r.repeating, true);
   assert.equal(rep.done, false);
   assert.equal('pick' in rep, false);
+});
+
+// ---- メモ内チェックリスト（項目18） ----
+
+test('parseChecklist: チェックの行（- / * の箇条・[ ] [x] [X]・行頭の空白）を見つけ、ふつうの行はそのまま返す', () => {
+  const { app } = load();
+  const p = (m) => plain(app.parseChecklist(m));
+  assert.deepEqual(p('提出先：職員室\n- [ ] 写真のクレジット\n- [x] 見出しの字数\n  * [X] PDF の書き出し\n終わり'), [
+    { line: 0, check: false, text: '提出先：職員室' },
+    { line: 1, check: true, checked: false, text: '写真のクレジット' },
+    { line: 2, check: true, checked: true, text: '見出しの字数' },
+    { line: 3, check: true, checked: true, text: 'PDF の書き出し' },
+    { line: 4, check: false, text: '終わり' },
+  ]);
+  // チェックの行ではないもの：箇条が無い・カッコの中が空白でも x でもない・] の後に空白が無い・文の途中
+  for (const memo of ['[ ] 手順', '- [] 手順', '- [-] 手順', '- [ ]手順', '- [ ]', '文の途中に - [ ] がある', '- [xx] 手順']) {
+    assert.equal(p(memo).some((r) => r.check), false, memo);
+  }
+  assert.deepEqual(p('- [ ] a\r\n- [x] b\r\n'), [
+    { line: 0, check: true, checked: false, text: 'a' },
+    { line: 1, check: true, checked: true, text: 'b' },
+    { line: 2, check: false, text: '' },
+  ], '\\r\\n でも本文に \\r が混ざらない');
+  for (const bad of ['', undefined, null, 5, ['- [ ] a'], {}]) assert.deepEqual(p(bad), [], String(bad));
+});
+
+test('toggleChecklist: その行の [ ] と [x] だけを入れ替える。他の行・空白・改行コードは1文字も変えない', () => {
+  const { app } = load();
+  const memo = '手順\n- [ ] a\n  * [x] b  \n\n- [X] c\nおわり';
+  assert.equal(app.toggleChecklist(memo, 1), '手順\n- [x] a\n  * [x] b  \n\n- [X] c\nおわり');
+  assert.equal(app.toggleChecklist(memo, 2), '手順\n- [ ] a\n  * [ ] b  \n\n- [X] c\nおわり', '末尾の空白も保つ');
+  assert.equal(app.toggleChecklist(memo, 4), '手順\n- [ ] a\n  * [x] b  \n\n- [ ] c\nおわり', '大文字 X は外す');
+  // 2回押すと元に戻る（大文字 X は小文字になるので、小文字の [x] で確かめる）
+  assert.equal(app.toggleChecklist(app.toggleChecklist(memo, 1), 1), memo);
+  // チェックの行でない・範囲外・メモが文字列でないときは何もしない
+  for (const line of [0, 3, 5, 99, -1]) assert.equal(app.toggleChecklist(memo, line), memo, String(line));
+  assert.equal(app.toggleChecklist(undefined, 0), undefined);
+  assert.equal(app.toggleChecklist(5, 0), 5);
+  assert.equal(app.toggleChecklist('', 0), '');
+  // 改行コード \r\n は保つ
+  assert.equal(app.toggleChecklist('- [ ] a\r\n- [ ] b\r\n', 1), '- [ ] a\r\n- [x] b\r\n');
+});
+
+test('checklistProgress: {done, total}。チェックの行が無ければ null', () => {
+  const { app } = load();
+  const p = (m) => { const r = app.checklistProgress(m); return r && plain(r); };
+  assert.deepEqual(p('- [x] a\n- [ ] b\n- [X] c\n普通の文'), { done: 2, total: 3 });
+  assert.deepEqual(p('- [x] a'), { done: 1, total: 1 });
+  for (const m of ['', '普通のメモ', undefined, null, 5, '- 箇条書きだけ']) assert.equal(p(m), null, String(m));
+});
+
+test('チェックを押しても、他の行のメモの文字は変わらない（全行を順に押して確かめる）', () => {
+  const { app } = load();
+  const memo = '見出し\n- [ ] a\n- [x] b\n途中の文\n- [ ] c\n  - [ ] d\n';
+  const rows = plain(app.parseChecklist(memo)).filter((r) => r.check);
+  for (const r of rows) {
+    const next = app.toggleChecklist(memo, r.line);
+    const before = memo.split('\n'), after = next.split('\n');
+    assert.equal(after.length, before.length);
+    after.forEach((l, i) => { if (i !== r.line) assert.equal(l, before[i], `行 ${i}`); });
+    assert.notEqual(after[r.line], before[r.line]);
+  }
 });

@@ -653,6 +653,34 @@ function clearPick(id){
   delete it.pick; save(); render(); scheduleAutoSync();
 }
 
+/* ========== メモ内チェックリスト（項目18） ==========
+   メモの「- [ ] 手順」「- [x] 手順」の行を、カードの上でチェックできるようにする。データの形（メモは文字列）は変えない。
+   押すとメモの `[ ]` と `[x]` だけを入れ替える（他の行・空白・改行コードは1文字も変えない） */
+var CHECK_RE=/^([ \t]*[-*][ \t]\[)( |x|X)(\][ \t]+)(.*?)(\r?)$/;
+/* メモを行ごとに分ける。チェックの行は {line, check:true, checked, text}、ふつうの行は {line, check:false, text}。メモが文字列でなければ空 */
+function parseChecklist(memo){
+  if(typeof memo!=="string" || !memo) return [];
+  return memo.split("\n").map(function(raw, line){
+    var m=CHECK_RE.exec(raw);
+    return m ? {line:line, check:true, checked:m[2]!==" ", text:m[4]} : {line:line, check:false, text:raw.replace(/\r$/,"")};
+  });
+}
+/* line 行目のチェックを入れ替えた新しい文字列。その行がチェックの行でなければメモをそのまま返す */
+function toggleChecklist(memo, line){
+  if(typeof memo!=="string") return memo;
+  var lines=memo.split("\n"), m=lines[line]!==undefined ? CHECK_RE.exec(lines[line]) : null;
+  if(!m) return memo;
+  lines[line]=m[1]+(m[2]===" "?"x":" ")+m[3]+m[4]+m[5];
+  return lines.join("\n");
+}
+/* 進み具合 {done, total}。チェックの行が無ければ null */
+function checklistProgress(memo){
+  var rows=parseChecklist(memo).filter(function(r){ return r.check; });
+  if(!rows.length) return null;
+  return {done:rows.filter(function(r){ return r.checked; }).length, total:rows.length};
+}
+var CHECK_SHOW=5; // これより多いチェックの行は畳んで「ほか N 件」にする
+
 function h(html){ var t=document.createElement("template"); t.innerHTML=html.trim(); var el=t.content.firstElementChild; applyDyn(el); return el; }
 /* 計算で決まる見た目（色・幅・位置）は、style 属性では書かず data-st="プロパティ:値;…" で渡し、要素ができてから CSSOM で付ける。
    CSP で style 属性を許さない（style-src-attr 'none'）ため。固定の見た目は styles.css のクラスに置く */
@@ -985,16 +1013,18 @@ function cardOf(it){
       escHtml(it.start?(fmtDue(new Date(it.start),it.allDay)+" 〜 "+fmtDue(d,it.allDay)):fmtDue(d,it.allDay))+'</span></div>'+
       '<div class="meta meta-attr">'+(isRepeating(it)&&!it.done?'<span class="badge rt"><i aria-hidden="true">↻</i>定期</span>':'')+
       '<span class="cat catg">'+swatch(itemColor(it))+escHtml(it.cat||"その他")+'</span>'+
+      (checklistProgress(it.memo)?'<span class="chk-prog num"></span>':"")+
       (it.allDay?'<span class="cat">終日</span>':"")+
       (it.autoComplete?'<span class="cat">自動完了</span>':"")+
       (isRepeating(it)&&it.calHide?'<span class="cat">カレンダー非表示</span>':"")+
       (it.rep&&it.rep!=="none"?'<span class="cat">'+({weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"}[it.rep])+
         (it.repCount>0?" 残"+it.repCount+"回":"")+'</span>':"")+'</div>'+
-      (it.memo?'<p class="memo">'+escHtml(it.memo)+'</p>':"")+
+      (checklistProgress(it.memo)?memoChecklistHtml(it.memo, it.done||isCopy):(it.memo?'<p class="memo">'+escHtml(it.memo)+'</p>':""))+
       (isStale(it)&&!it.done?'<p class="stale-note">⚠️ '+overdueDays(it)+'日が過ぎています。まだ必要ですか？完了か削除をおすすめします。</p>':"")+
       '<div class="rail"><i data-st="width:'+pct+'%"></i></div>'+
       '<div class="acts"></div>'+
     '</div></article>');
+  wireChecklist(el, it);
   var acts=el.querySelector(".acts");
   function add(label,cls,fn){ var b=h('<button class="act '+(cls||"")+'">'+label+'</button>'); b.onclick=fn; acts.appendChild(b); }
   if(!it.done){
@@ -1044,6 +1074,51 @@ function cardOf(it){
     acts.parentNode.appendChild(more);
   }
   return el;
+}
+
+/* チェックの行を持つメモの HTML。ふつうの行はそのまま、チェックの行は押せる行（label）にする。
+   完了済みのカードと繰り返しの複製は押せない（disabled）。チェックの行が CHECK_SHOW を超えたら、残りは畳んで「ほか N 件」にする */
+function memoChecklistHtml(memo, locked){
+  var rows=parseChecklist(memo), n=0, out='<div class="memo memo-list'+(locked?' locked':'')+'">', more='', hidden=0;
+  var total=rows.filter(function(r){ return r.check; }).length, fold=total>CHECK_SHOW; // 畳むのは、チェックの行が上限より多いときだけ
+  rows.forEach(function(r){
+    var html;
+    if(r.check){
+      n++;
+      html='<label class="chk-row"><input type="checkbox" class="chk-in" data-line="'+r.line+'"'+(r.checked?' checked':'')+(locked?' disabled':'')+'>'+
+        '<span class="chk-box" aria-hidden="true"></span><span class="chk-text">'+escHtml(r.text)+'</span></label>';
+    } else {
+      html='<div class="memo-line">'+escHtml(r.text)+'</div>';
+    }
+    if(fold && (n>CHECK_SHOW || (n===CHECK_SHOW && !r.check))){ more+=html; if(r.check) hidden++; } else out+=html;
+  });
+  if(hidden) out+='<button type="button" class="memo-more">ほか '+hidden+' 件</button><div class="memo-rest" hidden>'+more+'</div>';
+  return out+'</div>';
+}
+/* カードのチェック欄を動くようにし、進み具合（☑ 3/7）を出す。押したらメモを書き換えて保存・同期する（描き直しはせず、その場で表示を直す） */
+function wireChecklist(el, it){
+  var prog=el.querySelector(".chk-prog");
+  if(!prog) return;
+  function showProgress(memo){
+    var p=checklistProgress(memo); if(!p) return;
+    var all=p.done===p.total;
+    prog.className="chk-prog num"+(all?" all":"");
+    prog.textContent="☑ "+p.done+"/"+p.total+(all?" 済":"");
+  }
+  showProgress(it.memo);
+  var more=el.querySelector(".memo-more");
+  if(more) more.onclick=function(){ el.querySelector(".memo-rest").hidden=false; more.hidden=true; };
+  Array.prototype.forEach.call(el.querySelectorAll("input.chk-in"), function(cb){
+    cb.onchange=function(){
+      // 同期で一覧が差し替わっていると、渡された項目は古いことがある。いまの項目のメモを書き換える
+      var cur=db.items.find(function(x){ return x.id===it.id; });
+      var line=parseInt(cb.getAttribute("data-line"),10);
+      var next=cur?toggleChecklist(cur.memo, line):null;
+      if(!cur || next===cur.memo){ cb.checked=!cb.checked; render(); return; }
+      cur.memo=next; save(); scheduleAutoSync();
+      showProgress(next);
+    };
+  });
 }
 
 /* 締切を登録・編集したとき、設定が揃っていれば自動で同期する。
