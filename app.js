@@ -205,6 +205,10 @@ function sanitizeIncomingItems(rawItems){
     if(fixed.rep && ["weekly","biweekly","monthly","yearly"].indexOf(fixed.rep)<0) fixed.rep="none";
     if(fixed.rep && fixed.rep!=="none" && typeof fixed.repCount!=="number") fixed.repCount=0;
     if(fixed.skip && !Array.isArray(fixed.skip)) delete fixed.skip;
+    // 保存（Worker）の検査と同じ形にそろえる。1件の古い型が残ると、全体の保存が止まるため
+    if(Array.isArray(fixed.skip)) fixed.skip=fixed.skip.filter(function(s){ return typeof s==="string" && /^\d{4}-\d{2}-\d{2}$/.test(s); });
+    ["repCount","repDay","seq"].forEach(function(k){ if(fixed[k]!==undefined && fixed[k]!==null && !(typeof fixed[k]==="number" && isFinite(fixed[k]) && Math.floor(fixed[k])===fixed[k])) delete fixed[k]; });
+    ["allDay","autoComplete","calHide"].forEach(function(k){ if(fixed[k]!==undefined && fixed[k]!==null && typeof fixed[k]!=="boolean") delete fixed[k]; });
     if(fixed.pick!==undefined && (typeof fixed.pick!=="string" || !/^\d{4}-\d{2}-\d{2}$/.test(fixed.pick))) delete fixed.pick; // 今日の一手の印は "YYYY-MM-DD" だけ
     if(typeof fixed.done!=="boolean") fixed.done=!!fixed.done;
     kept.push(fixed);

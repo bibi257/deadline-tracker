@@ -681,3 +681,15 @@ test('取り込み: Z の無い締切日時は端末の時刻（JST）として�
   assert.equal(kept[0].due, '2026-10-25T00:00:00.000Z');
   assert.equal(kept[0].start, '2026-10-24T01:00:00.000Z');
 });
+
+test('取り込み: 保存の検査に合わない古い型の項目は、直して残す（1件の型のずれで全体の保存が止まらないように）', () => {
+  const { sanitizeIncomingItems } = loadAppFunctions(['sanitizeIncomingItems']);
+  const { kept } = sanitizeIncomingItems([{ id: 'a', title: 't', due: '2026-11-01T00:00:00.000Z', seq: '2', repCount: '3', repDay: 1.5, skip: ['2026/1/1', '2026-01-02'], allDay: 1, autoComplete: 'true', calHide: true }]);
+  assert.equal(kept[0].seq, undefined);
+  assert.equal(kept[0].repCount, undefined);
+  assert.equal(kept[0].repDay, undefined);
+  assert.deepEqual(kept[0].skip, ['2026-01-02']);
+  assert.equal(kept[0].allDay, undefined);
+  assert.equal(kept[0].autoComplete, undefined);
+  assert.equal(kept[0].calHide, true);
+});
