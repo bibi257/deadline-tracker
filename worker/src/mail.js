@@ -184,6 +184,8 @@ export function buildRawMessage({ from, to, subject, body, date, messageId }) {
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
 const RETRY_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+// 送信（POST）は、処理されなかったとわかる 429 だけやり直す。5xx や通信エラーは届いた可能性があり、やり直すと同じメールを2通送るため
+const SEND_RETRY_STATUS = new Set([429]);
 
 /** 設定（シークレット）を読む。そろっていなければ ok が false */
 export function gmailConfig(env) {
@@ -196,15 +198,17 @@ export function gmailConfig(env) {
   return { ...cfg, ok: !!(cfg.clientId && cfg.clientSecret && cfg.refreshToken && to), anySet: !!(cfg.clientId || cfg.clientSecret || cfg.refreshToken || get('MAIL_TO')) };
 }
 
-async function withRetry(fn, { sleep, retries }) {
+/** 一時的な失敗をやり直す。statuses に入る状態と、通信エラー（onError）だけをやり直す */
+async function withRetry(fn, { sleep, retries, statuses = RETRY_STATUS, onError = true }) {
   let last;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) await sleep(2000);
     try {
       const res = await fn();
-      if (!RETRY_STATUS.has(res.status)) return res;
+      if (!statuses.has(res.status)) return res;
       last = new Error(`HTTP ${res.status}`);
     } catch (e) {
+      if (!onError) throw e;
       last = e;
     }
   }
@@ -247,7 +251,7 @@ export async function sendGmail(cfg, { subject, body, nowMs, messageId }, { fetc
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ raw }),
-  }), { sleep, retries }).catch(() => { throw new Error('Gmail に接続できませんでした'); });
+  }), { sleep, retries, statuses: SEND_RETRY_STATUS, onError: false }).catch(() => { throw new Error('Gmail に接続できませんでした'); });
   const j = await readJson(res);
   if (!res.ok) {
     const msg = typeof j?.error?.message === 'string' ? j.error.message.slice(0, 150) : '';

@@ -180,3 +180,15 @@ test('メール本文：今日の一手の印があれば先頭に節が出る�
   const body = buildMailBody(mk(target), target);
   assert.match(body, /\n\n■ 今日の一手（1件）\n- 入稿データ ［部活A］ 2\/3（火） 17:00（あと4日）\n\n■ おすすめの順番/);
 });
+
+test('送信（POST）は、処理されなかったとわかる 429 だけやり直す。5xx や通信エラーは届いた可能性があるので、やり直さない（二重送信を防ぐ）', async () => {
+  const sends = (g) => g.calls.filter((c) => c.kind === 'send').length;
+  const g5 = fakeGoogle({ send: [{ status: 503 }, { id: 'gm-3' }] });
+  const e5 = await sendGmail(CFG, { subject: 's', body: 'b', nowMs: 0, messageId: 'm' }, { fetchFn: g5.fetchFn, ...quick }).catch((x) => x);
+  assert.match(e5.message, /HTTP 503/);
+  assert.equal(sends(g5), 1, '503 の後に成功していても、送信は1回だけ');
+  const gn = fakeGoogle({ send: [new Error('reset'), { id: 'gm-4' }] });
+  const en = await sendGmail(CFG, { subject: 's', body: 'b', nowMs: 0, messageId: 'm' }, { fetchFn: gn.fetchFn, ...quick }).catch((x) => x);
+  assert.match(en.message, /Gmail に接続できませんでした/);
+  assert.equal(sends(gn), 1, '通信エラーでも、送信は1回だけ');
+});
