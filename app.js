@@ -3552,10 +3552,15 @@ function doSync(cfg,statusEl,backedUp){
   if(!db.updatedAt) db.updatedAt=new Date().toISOString();
   var pushedAt=db.updatedAt; // 送信中の編集に影響されないよう、送った時点の値を捕捉
   var payload=syncPayload(); // 自動同期と同じ内容を送る（以前は catReminders が抜けていた）
+  // 送る内容を作った時点の版。確認と送信の間に自動の取り込みで版が進んでも、この版で送る（新しい版を古い内容で上書きしない）
+  var baseRev=cfKnownRev();
   var content=cfg.kind==="cf" ? "" : utf8ToBase64(JSON.stringify(payload,null,2));
 
   function put(sha){
-    if(cfg.kind==="cf") return cfPut(cfg,payload);
+    if(cfg.kind==="cf"){
+      if(cfg.ifMatch===undefined||cfg.ifMatch===null) cfg.ifMatch=baseRev||"0"; // 上書きを承知したときは、確認した版（cfg.ifMatch）を優先する
+      return cfPut(cfg,payload);
+    }
     var body={ message:"締切データを同期（"+new Date().toLocaleString("ja-JP")+"）",
                content:content, branch:branch };
     if(sha) body.sha=sha;
