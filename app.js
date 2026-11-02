@@ -1067,7 +1067,7 @@ function cardOf(it){
     add("戻す","",function(){
       // 完了の記録とEXPも取り消す（同じ締切を何度も完了→戻すでEXPが増えないように）
       if(it.doneLog) db.completions=db.completions.filter(function(c){ return c.id!==it.doneLog; });
-      it.done=false; delete it.doneAt; delete it.doneLog; unnotePickDone(it.id); save(); render(); scheduleAutoSync();
+      it.done=false; delete it.doneAt; delete it.doneLog; it.seq=(it.seq||0)+1; unnotePickDone(it.id); save(); render(); scheduleAutoSync();
     });
   }
   add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ animateCardOut(el, "deleting", "", function(){ deleteItem(it); }); } });
@@ -3928,6 +3928,7 @@ function logCompletion(it, source){
 function applyCompletionCore(it){
   delete it.pick; // 今日の一手の印は、完了（繰り返しなら次の回へ進む）で外す
   it.done=true; it.doneAt=new Date().toISOString();
+  it.seq=(it.seq||0)+1; // 編集中の別の操作（開いたままの編集ダイアログ）と区別できるよう、版を進める
   if(it.rep&&it.rep!=="none"){
     // 繰り返しはカレンダー側で先の回まで展開しているため、ここでは複製しない。
     // 「この回だけ完了」にすると次回以降が消えるので、締切日を次回へ進める。
@@ -4540,9 +4541,8 @@ function skipOccurrence(id, dateKey){
     if(toLocalISO(parseItemDate(i))===dateKey){
       delete i.pick;
       if(!advanceRepeating(i)){ i.done=true; i.doneAt=new Date().toISOString(); ended=true; }
-    } else {
-      i.seq=(i.seq||0)+1;
     }
+    i.seq=(i.seq||0)+1;
   });
   save(); render();
   toast(ended?dateKey+" の回を取りやめました（これが最終回でした）":dateKey+" の回を取りやめました");

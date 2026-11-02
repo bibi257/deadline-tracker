@@ -257,7 +257,7 @@ test('applyCompletionCore: 自動完了の繰り返しは、しばらく開か�
   const it = { id: 'a', rep: 'weekly', autoComplete: true, due: iso(2026, 1, 2, 9, 0), seq: 0 };
   const r = app.applyCompletionCore(it);
   assert.equal(keyTime(r.next), '2026-02-06 09:00');
-  assert.equal(it.seq, 5, '1/9・1/16・1/23・1/30・2/6 と5回進む');
+  assert.equal(it.seq, 6, '1/9・1/16・1/23・1/30・2/6 と5回進み、完了で版も1つ進む');
   // 自動完了でなければ、1回分だけ（過ぎたままの回が残る）
   const manual = { id: 'm', rep: 'weekly', due: iso(2026, 1, 2, 9, 0) };
   app.applyCompletionCore(manual);
