@@ -26,7 +26,8 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((names) =>
       Promise.all(
-        names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n))
+        // このアプリの古いキャッシュだけを消す（同じオリジンの他のアプリのキャッシュは残す）
+        names.filter((n) => n.startsWith("deadline-tracker-") && n !== CACHE_NAME).map((n) => caches.delete(n))
       )
     )
   );
