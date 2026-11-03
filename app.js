@@ -192,9 +192,12 @@ function sanitizeIncomingItems(rawItems){
     if(typeof it.due!=="string" || isNaN(due.getTime())){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"締切日(due)が不正な日付：「"+it.due+"」", raw:it}); return; }
     // ここから先は軽微な不正。項目ごと隔離せず、既定値に補正して使う
     var fixed=Object.assign({}, it);
+    // Z の無い日時は、この端末では端末の時刻（JST）として読まれる。Worker も同じ時刻に読めるよう、Z の付いた形で残す
+    fixed.due=due.toISOString();
     if(fixed.start){
       var s=new Date(fixed.start);
       if(typeof fixed.start!=="string" || isNaN(s.getTime())) delete fixed.start; // 開始日が壊れていれば無かったことにする
+      else fixed.start=s.toISOString();
     }
     if(fixed.memo!==undefined && typeof fixed.memo!=="string") delete fixed.memo; // 文字列でないメモ・カテゴリは、Worker（保存・メール・.ics）が読めないため補正する
     if(fixed.cat!==undefined && typeof fixed.cat!=="string") fixed.cat="その他";
@@ -202,6 +205,10 @@ function sanitizeIncomingItems(rawItems){
     if(fixed.rep && ["weekly","biweekly","monthly","yearly"].indexOf(fixed.rep)<0) fixed.rep="none";
     if(fixed.rep && fixed.rep!=="none" && typeof fixed.repCount!=="number") fixed.repCount=0;
     if(fixed.skip && !Array.isArray(fixed.skip)) delete fixed.skip;
+    // 保存（Worker）の検査と同じ形にそろえる。1件の古い型が残ると、全体の保存が止まるため
+    if(Array.isArray(fixed.skip)) fixed.skip=fixed.skip.filter(function(s){ return typeof s==="string" && /^\d{4}-\d{2}-\d{2}$/.test(s); });
+    ["repCount","repDay","seq"].forEach(function(k){ if(fixed[k]!==undefined && fixed[k]!==null && !(typeof fixed[k]==="number" && isFinite(fixed[k]) && Math.floor(fixed[k])===fixed[k])) delete fixed[k]; });
+    ["allDay","autoComplete","calHide"].forEach(function(k){ if(fixed[k]!==undefined && fixed[k]!==null && typeof fixed[k]!=="boolean") delete fixed[k]; });
     if(fixed.pick!==undefined && (typeof fixed.pick!=="string" || !/^\d{4}-\d{2}-\d{2}$/.test(fixed.pick))) delete fixed.pick; // 今日の一手の印は "YYYY-MM-DD" だけ
     if(typeof fixed.done!=="boolean") fixed.done=!!fixed.done;
     kept.push(fixed);
@@ -583,7 +590,7 @@ function downloadIcsPreferWorker(list,name){
 }
 
 /* ========== 状態 ========== */
-var view="list", filter="ALL", calRef=new Date(), selDay=null, editingId=null, searchKw="";
+var view="list", filter="ALL", calRef=new Date(), selDay=null, editingId=null, editingSeq=0, searchKw="";
 var main=document.getElementById("main");
 
 function activeItems(){ return db.items.filter(function(i){ return !i.done; }); }
@@ -1060,7 +1067,7 @@ function cardOf(it){
     add("戻す","",function(){
       // 完了の記録とEXPも取り消す（同じ締切を何度も完了→戻すでEXPが増えないように）
       if(it.doneLog) db.completions=db.completions.filter(function(c){ return c.id!==it.doneLog; });
-      it.done=false; delete it.doneAt; delete it.doneLog; unnotePickDone(it.id); save(); render(); scheduleAutoSync();
+      it.done=false; delete it.doneAt; delete it.doneLog; it.seq=(it.seq||0)+1; unnotePickDone(it.id); save(); render(); scheduleAutoSync();
     });
   }
   add("削除","danger",function(){ if(confirm("「"+it.title+"」を削除します。よろしいですか？")){ animateCardOut(el, "deleting", "", function(){ deleteItem(it); }); } });
@@ -3552,10 +3559,15 @@ function doSync(cfg,statusEl,backedUp){
   if(!db.updatedAt) db.updatedAt=new Date().toISOString();
   var pushedAt=db.updatedAt; // 送信中の編集に影響されないよう、送った時点の値を捕捉
   var payload=syncPayload(); // 自動同期と同じ内容を送る（以前は catReminders が抜けていた）
+  // 送る内容を作った時点の版。確認と送信の間に自動の取り込みで版が進んでも、この版で送る（新しい版を古い内容で上書きしない）
+  var baseRev=cfKnownRev();
   var content=cfg.kind==="cf" ? "" : utf8ToBase64(JSON.stringify(payload,null,2));
 
   function put(sha){
-    if(cfg.kind==="cf") return cfPut(cfg,payload);
+    if(cfg.kind==="cf"){
+      if(cfg.ifMatch===undefined||cfg.ifMatch===null) cfg.ifMatch=baseRev||"0"; // 上書きを承知したときは、確認した版（cfg.ifMatch）を優先する
+      return cfPut(cfg,payload);
+    }
     var body={ message:"締切データを同期（"+new Date().toLocaleString("ja-JP")+"）",
                content:content, branch:branch };
     if(sha) body.sha=sha;
@@ -3628,6 +3640,7 @@ dlg.addEventListener("close",function(){
 });
 function openDialog(item){
   editingId=item?item.id:null;
+  editingSeq=item?(item.seq||0):0; // 開いた時点の版。保存の前に、他の端末や自動処理で変わっていないか確かめる
   document.getElementById("dlgTitle").textContent=item?"締切を編集":"締切を登録";
   var catSel=document.getElementById("fCat");
   catSel.innerHTML="";
@@ -3796,6 +3809,11 @@ dlgForm.addEventListener("click",function(e){
   var b=e.target.closest?e.target.closest("button"):null;
   lastSubmitBtn=(b&&b.type==="submit"&&b.form===dlgForm)?b:null;
 });
+/* 編集を始めたときの版（seq）と、いまの版が違うか。違えば、取り込みや自動処理で項目が変わっているので、古い内容で上書きしない */
+function editConflict(items, id, seqAtOpen){
+  var cur=items.filter(function(i){ return i.id===id; })[0];
+  return !!cur && (cur.seq||0)!==(seqAtOpen||0);
+}
 dlgForm.addEventListener("submit",function(e){
   var btn=e.submitter||lastSubmitBtn; lastSubmitBtn=null;
   if(!btn||btn.value!=="save") return;
@@ -3827,6 +3845,11 @@ dlgForm.addEventListener("submit",function(e){
   var calHide=(rep!=="none") && !document.getElementById("fCalShow").checked;
 
   if(editingId){
+    if(editConflict(db.items, editingId, editingSeq)){
+      e.preventDefault(); // ダイアログは開いたまま（入力内容は残る）。上書きはしない
+      toast("この締切は、開いたあとに別の更新で変わりました。いったんやめて開き直し、内容を確かめてから保存してください");
+      return;
+    }
     var found=false;
     db.items.forEach(function(i){
       if(i.id!==editingId) return;
@@ -3905,6 +3928,7 @@ function logCompletion(it, source){
 function applyCompletionCore(it){
   delete it.pick; // 今日の一手の印は、完了（繰り返しなら次の回へ進む）で外す
   it.done=true; it.doneAt=new Date().toISOString();
+  it.seq=(it.seq||0)+1; // 編集中の別の操作（開いたままの編集ダイアログ）と区別できるよう、版を進める
   if(it.rep&&it.rep!=="none"){
     // 繰り返しはカレンダー側で先の回まで展開しているため、ここでは複製しない。
     // 「この回だけ完了」にすると次回以降が消えるので、締切日を次回へ進める。
@@ -4517,9 +4541,8 @@ function skipOccurrence(id, dateKey){
     if(toLocalISO(parseItemDate(i))===dateKey){
       delete i.pick;
       if(!advanceRepeating(i)){ i.done=true; i.doneAt=new Date().toISOString(); ended=true; }
-    } else {
-      i.seq=(i.seq||0)+1;
     }
+    i.seq=(i.seq||0)+1;
   });
   save(); render();
   toast(ended?dateKey+" の回を取りやめました（これが最終回でした）":dateKey+" の回を取りやめました");

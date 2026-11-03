@@ -82,3 +82,25 @@ export function cmpStr(a, b) {
 }
 
 export const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/** Z もオフセットも無い日時（例 2026-10-25T09:00）は、端末の時刻（JST）として読み、UTC の ISO 文字列にする。それ以外は変えない */
+export function withZone(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) return s;
+  const ms = Date.parse(`${s}+09:00`);
+  return Number.isNaN(ms) ? s : new Date(ms).toISOString();
+}
+
+/** 締切データの日時を、読むたびに Z の付いた形にそろえる（保存された中身は変えない）。アプリは端末の時刻で読むので、Worker も同じ解釈にする */
+export function zonedData(data) {
+  if (!isObj(data) || !Array.isArray(data.items)) return data;
+  return {
+    ...data,
+    items: data.items.map((it) => {
+      if (!isObj(it)) return it;
+      const out = { ...it };
+      if (typeof it.due === 'string') out.due = withZone(it.due);
+      if (typeof it.start === 'string') out.start = withZone(it.start);
+      return out;
+    }),
+  };
+}

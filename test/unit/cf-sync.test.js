@@ -462,3 +462,29 @@ test('.ics の書き出し（Cloudflare）: 条件がそろわないとき・失
   await w.env.DB.prepare('DELETE FROM docs').run(); // Worker のデータが空 → 中身の無いカレンダーが返る
   await check('Worker の .ics に予定が無い', () => A.ctx.downloadIcsPreferWorker(all(), 'x'));
 });
+
+test('同期の確認と送信の間に、自動の取り込みで版が進んでも、準備したときの版（If-Match）で送る。他の端末の更新を消さない', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  const B = w.device('B', () => '2026-10-26T10:00:00.000Z');
+  A.edit('A最初');
+  await A.sync(); // rev 1
+  await B.pull();
+  const realFetch = A.ctx.fetch;
+  let raced = false;
+  A.ctx.fetch = async (url, opts = {}) => {
+    // A が同期の確認の GET を送る直前に、B が更新し（rev 2）、A が自動の取り込みで rev 2 を受け取る
+    if (!raced && (opts.method || 'GET') === 'GET' && String(url).startsWith('https://x.test/api/data?')) {
+      raced = true;
+      B.edit('Bの更新');
+      await B.sync();
+      await A.autoPull();
+    }
+    return realFetch(url, opts);
+  };
+  await A.sync(); // A は内容を変えていない（rev 1 の内容を送ろうとする）
+  await sleep(500); // フックの中の B の同期と A の取り込みが終わり、A の送信まで済むのを待つ
+  assert.equal(w.log.puts.at(-1).ifMatch, '1', '準備したとき（rev 1）の版で送る');
+  assert.deepEqual(titles(await w.server()), ['Bの更新'], 'B の更新は残っている');
+  assert.equal((await w.server()).rev, 2);
+});

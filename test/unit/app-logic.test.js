@@ -257,7 +257,7 @@ test('applyCompletionCore: 自動完了の繰り返しは、しばらく開か�
   const it = { id: 'a', rep: 'weekly', autoComplete: true, due: iso(2026, 1, 2, 9, 0), seq: 0 };
   const r = app.applyCompletionCore(it);
   assert.equal(keyTime(r.next), '2026-02-06 09:00');
-  assert.equal(it.seq, 5, '1/9・1/16・1/23・1/30・2/6 と5回進む');
+  assert.equal(it.seq, 6, '1/9・1/16・1/23・1/30・2/6 と5回進み、完了で版も1つ進む');
   // 自動完了でなければ、1回分だけ（過ぎたままの回が残る）
   const manual = { id: 'm', rep: 'weekly', due: iso(2026, 1, 2, 9, 0) };
   app.applyCompletionCore(manual);
@@ -663,4 +663,33 @@ test('チェックを押しても、他の行のメモの文字は変わらな�
     after.forEach((l, i) => { if (i !== r.line) assert.equal(l, before[i], `行 ${i}`); });
     assert.notEqual(after[r.line], before[r.line]);
   }
+});
+
+test('編集の保存: 開いたあとに項目が別の更新（版 seq が進んだ）で変わっていたら上書きしない。同じ版・版の無い項目は保存してよい', () => {
+  const { editConflict } = loadAppFunctions(['editConflict']);
+  const items = [{ id: 'a', seq: 3 }, { id: 'b' }];
+  assert.equal(editConflict(items, 'a', 3), false, '開いたときと同じ版なら、保存してよい');
+  assert.equal(editConflict(items, 'a', 2), true, '開いたあとに版が進んでいれば、古い内容で上書きしない');
+  assert.equal(editConflict(items, 'b', 0), false, '版の無い項目は 0 と同じ扱い');
+  assert.equal(editConflict(items, 'x', 1), false, '項目が無いのは「削除された」の扱い（別の処理）');
+});
+
+test('取り込み: Z の無い締切日時は端末の時刻（JST）として読み、Z の付いた形にそろえて残す', () => {
+  const { sanitizeIncomingItems } = loadAppFunctions(['sanitizeIncomingItems']);
+  const { kept, quarantined } = sanitizeIncomingItems([{ id: 'a', title: 't', due: '2026-10-25T09:00', start: '2026-10-24T10:00' }]);
+  assert.equal(quarantined.length, 0);
+  assert.equal(kept[0].due, '2026-10-25T00:00:00.000Z');
+  assert.equal(kept[0].start, '2026-10-24T01:00:00.000Z');
+});
+
+test('取り込み: 保存の検査に合わない古い型の項目は、直して残す（1件の型のずれで全体の保存が止まらないように）', () => {
+  const { sanitizeIncomingItems } = loadAppFunctions(['sanitizeIncomingItems']);
+  const { kept } = sanitizeIncomingItems([{ id: 'a', title: 't', due: '2026-11-01T00:00:00.000Z', seq: '2', repCount: '3', repDay: 1.5, skip: ['2026/1/1', '2026-01-02'], allDay: 1, autoComplete: 'true', calHide: true }]);
+  assert.equal(kept[0].seq, undefined);
+  assert.equal(kept[0].repCount, undefined);
+  assert.equal(kept[0].repDay, undefined);
+  assert.deepEqual(kept[0].skip, ['2026-01-02']);
+  assert.equal(kept[0].allDay, undefined);
+  assert.equal(kept[0].autoComplete, undefined);
+  assert.equal(kept[0].calHide, true);
 });

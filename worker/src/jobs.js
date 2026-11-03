@@ -1,7 +1,7 @@
 // 定時の処理（Cron Triggers）と、手動で試すための入口。
 import { buildDigest, discordBodies, postDiscord } from './digest.js';
 import { buildEvening, buildWeekly } from './review.js';
-import { jstDow } from './time.js';
+import { jstDow, zonedData } from './time.js';
 import { buildFeed } from './feed.js';
 import { gmailConfig, sendGmail, subjectFor, targetDate, buildMailBody } from './mail.js';
 import { runMaintenance } from './maintenance.js';
@@ -31,7 +31,7 @@ export function readConfig(env) {
 
 async function loadData(env) {
   const row = await env.DB.prepare('SELECT json FROM docs WHERE id = ?').bind('main').first();
-  return row ? JSON.parse(row.json) : null;
+  return row ? zonedData(JSON.parse(row.json)) : null;
 }
 
 export const DIGEST_KINDS = ['morning', 'evening', 'weekly'];
