@@ -13,7 +13,7 @@ const FNS = [
   'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText',
   'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
   'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
-  'parseChecklist', 'toggleChecklist', 'checklistProgress', 'picksFor', 'canPick', 'addPickDay', 'pickDaysIn', 'sanitizeIncomingItems', 'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
+  'normalizeItemTypes', 'parseChecklist', 'toggleChecklist', 'checklistProgress', 'picksFor', 'canPick', 'addPickDay', 'pickDaysIn', 'sanitizeIncomingItems', 'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
 ];
 const VARS = ['CHECK_RE', 'PICK_MAX', 'DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
 
@@ -675,7 +675,7 @@ test('編集の保存: 開いたあとに項目が別の更新（版 seq が進�
 });
 
 test('取り込み: Z の無い締切日時は端末の時刻（JST）として読み、Z の付いた形にそろえて残す', () => {
-  const { sanitizeIncomingItems } = loadAppFunctions(['sanitizeIncomingItems']);
+  const { sanitizeIncomingItems } = loadAppFunctions(['sanitizeIncomingItems', 'normalizeItemTypes']);
   const { kept, quarantined } = sanitizeIncomingItems([{ id: 'a', title: 't', due: '2026-10-25T09:00', start: '2026-10-24T10:00' }]);
   assert.equal(quarantined.length, 0);
   assert.equal(kept[0].due, '2026-10-25T00:00:00.000Z');
@@ -683,7 +683,7 @@ test('取り込み: Z の無い締切日時は端末の時刻（JST）として�
 });
 
 test('取り込み: 保存の検査に合わない古い型の項目は、直して残す（1件の型のずれで全体の保存が止まらないように）', () => {
-  const { sanitizeIncomingItems } = loadAppFunctions(['sanitizeIncomingItems']);
+  const { sanitizeIncomingItems } = loadAppFunctions(['sanitizeIncomingItems', 'normalizeItemTypes']);
   const { kept } = sanitizeIncomingItems([{ id: 'a', title: 't', due: '2026-11-01T00:00:00.000Z', seq: '2', repCount: '3', repDay: 1.5, skip: ['2026/1/1', '2026-01-02'], allDay: 1, autoComplete: 'true', calHide: true }]);
   assert.equal(kept[0].seq, undefined);
   assert.equal(kept[0].repCount, undefined);
@@ -718,4 +718,28 @@ test('繰り返しの次の回: アプリ（advanceRepeating）と Worker（addR
   }
   assert.deepEqual(diffs.slice(0, 5), [], '食い違い');
   assert.equal(compared, 4 * 731 * 12);
+});
+
+// ---- 端末内の古い型の項目（項目21） ----
+
+test('normalizeItemTypes: 保存（Worker）の検査に通る形にそろえる。項目は消さず、id・title・due は見ない。元のオブジェクトは変えない', () => {
+  const { app } = load();
+  const old = { id: 'a', title: 't', due: '2026-02-01T00:00:00.000Z', seq: '3', repCount: 1.5, repDay: '15', skip: ['x', '2026-01-05', 5], allDay: 'true', autoComplete: 1, calHide: 'no', pick: 7, rep: 'daily', done: undefined, memo: 5, cat: 9 };
+  const copy = JSON.stringify(old);
+  const f = plain(app.normalizeItemTypes(old));
+  assert.equal(JSON.stringify(old), copy, '元のオブジェクトは変えない');
+  assert.deepEqual(f, { id: 'a', title: 't', due: '2026-02-01T00:00:00.000Z', skip: ['2026-01-05'], rep: 'none', done: false, cat: 'その他' });
+  // 正しい形のものは変えない（done が無い古い項目だけ、done:false が足される）
+  const ok = { id: 'b', title: 't', due: '2026-02-01T00:00:00.000Z', rep: 'weekly', repCount: 3, repDay: 15, seq: 2, skip: ['2026-01-05'], allDay: true, done: false, pick: '2026-01-30', memo: 'm', cat: 'c' };
+  assert.deepEqual(plain(app.normalizeItemTypes(ok)), ok);
+  // id・title・due が壊れていても、ここでは消さない（隔離は取り込みのときだけ）
+  assert.deepEqual(plain(app.normalizeItemTypes({ id: 5, title: null, due: 'x' })), { id: 5, title: null, due: 'x', done: false });
+});
+
+test('sanitizeIncomingItems は、normalizeItemTypes と同じ補正をした上で、壊れた項目を隔離する（動きは変わらない）', () => {
+  const { app } = load();
+  const r = app.sanitizeIncomingItems([{ id: 'a', title: 't', due: '2026-02-01T00:00:00.000Z', seq: '3', skip: ['x'], allDay: 'true' }, { id: 'b', title: '', due: '2026-02-01T00:00:00.000Z' }]);
+  assert.equal(r.kept.length, 1);
+  assert.equal(r.quarantined.length, 1);
+  assert.deepEqual(plain(r.kept[0]), { id: 'a', title: 't', due: '2026-02-01T00:00:00.000Z', skip: [], done: false });
 });
