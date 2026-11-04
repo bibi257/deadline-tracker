@@ -392,3 +392,54 @@ test('保存: 既存のデータの形（テスト用のフィクスチャ）は
     assert.equal((await call('PUT', '/api/data', { body, headers: { 'If-Match': '0' } })).status, 201, f);
   }
 });
+
+test('GET /api/snapshots/:id: 保存してある JSON を解析し直さずに返す。中身・版・時刻は変わらず、記号・絵文字・改行も壊れない', async () => {
+  const { call, env, clock } = setup();
+  const data = { ...sample(1), items: [{ id: 'a', title: '日本語🎌 "引用" \\ \u2028 </script>', due: '2026-11-01T00:00:00.000Z', memo: 'a\nb\tc' }] };
+  await call('PUT', '/api/data', { body: data, headers: { 'If-Match': '0' } });
+  clock.t += 3600;
+  await call('PUT', '/api/data', { body: sample(2), headers: { 'If-Match': '1' } }); // 1回目の内容が世代バックアップに残る
+  const list = (await call('GET', '/api/snapshots')).body.snapshots;
+  assert.equal(list.length, 1);
+  const r = await call('GET', `/api/snapshots/${list[0].id}`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, { ok: true, id: list[0].id, at: list[0].at, rev: 1, data });
+  const res = await worker.fetch(new Request(`https://x.test/api/snapshots/${list[0].id}`, { headers: { Authorization: `Bearer ${KEY}`, 'CF-Connecting-IP': '1.1.1.1' } }), env);
+  assert.match(res.headers.get('Content-Type'), /^application\/json/);
+  assert.equal(res.headers.get('Cache-Control'), 'no-store');
+  assert.equal((await call('GET', '/api/snapshots/99999')).status, 404);
+});
+
+/** D1 の各操作の前に他の処理へ順番を譲る（同時に届いた2つの要求が、確認と書き込みの間で本当に割り込み合うようにする） */
+function yielding(db) {
+  const tick = () => new Promise((r) => setImmediate(r));
+  const wrap = (st) => ({
+    _inner: st,
+    bind: (...p) => wrap(st.bind(...p)),
+    first: async (c) => { await tick(); return st.first(c); },
+    all: async () => { await tick(); return st.all(); },
+    run: async () => { await tick(); return st.run(); },
+  });
+  return { prepare: (sql) => wrap(db.prepare(sql)), batch: async (l) => { await tick(); return db.batch(l.map((s) => s._inner)); } };
+}
+
+test('同時保存: 同じ rev を If-Match に付けた2つの保存が確認と書き込みの間で割り込み合っても、片方だけ通り、もう片方は 409。版は1つだけ進む', async () => {
+  const { call } = setup({ DB: yielding(createD1()) });
+  await call('PUT', '/api/data', { body: sample(1), headers: { 'If-Match': '0' } });
+  const [a, b] = await Promise.all([
+    call('PUT', '/api/data', { body: sample(2), headers: { 'If-Match': '1' } }),
+    call('PUT', '/api/data', { body: sample(3), headers: { 'If-Match': '1' } }),
+  ]);
+  assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+  const s = (await call('GET', '/api/data')).body;
+  assert.equal(s.rev, 2, '版は1つだけ進む');
+  assert.equal(s.data.items.length, a.status === 200 ? 2 : 3, '通った側の内容が残る（もう片方に上書きされない）');
+  // 初回（If-Match: 0）の同時保存も、片方だけ
+  const w = setup({ DB: yielding(createD1()) });
+  const [c, d] = await Promise.all([
+    w.call('PUT', '/api/data', { body: sample(1), headers: { 'If-Match': '0' } }),
+    w.call('PUT', '/api/data', { body: sample(2), headers: { 'If-Match': '0' } }),
+  ]);
+  assert.deepEqual([c.status, d.status].sort(), [201, 409]);
+  assert.equal((await w.call('GET', '/api/data')).body.rev, 1);
+});
