@@ -35,3 +35,10 @@ test/support/ テスト用の D1 互換シム（node:sqlite）
 
 - 作業ブランチで開発し、`main` へは PR でマージする。PR は下書き（Draft）ではなく、通常の PR として作る
 - コミットメッセージは `種別: 要約`（`feat:` `fix:` `docs:` `test:` `build:` `ci:`）
+
+## 自動レビュー（Claude Code）
+
+- PR を作成したら、作成した直後に、同じセッションで `pr-review` スキルを実行する。
+- すでに Open の PR があるブランチに追加のコミットをプッシュしたら、プッシュした直後に `pr-review` スキルを実行する（差分レビュー）。
+- レビューで見つかった指摘を、利用者の確認なしに自分で修正しない。修正は利用者が指示したときだけ行う。
+- 手順は `.claude/skills/pr-review/SKILL.md`、視点は `.claude/agents/pr-review-*.md` を参照。
