@@ -82,7 +82,7 @@ function secretGet(name){
   if(raw.indexOf("enc1:")!==0){
     _secretCache[name]=raw;
     if(hasLS) secretSet(name, raw).then(function(ok){ // 暗号化できればその場で置き換える。できなければ平文は残さず消す（今回の起動中は使える）
-      if(!ok) toast("この端末では暗号化して保存できないため、保存してあったトークン・Webhook URLを消しました。次回は入力し直してください");
+      if(!ok) toast("この端末では暗号化して保存できないため、保存してあったアクセスキーを消しました。次回は入力し直してください");
     });
     return Promise.resolve(raw);
   }
@@ -769,7 +769,7 @@ function render(){
   document.getElementById("fabAdd").style.display = (view==="set")?"none":"";
 
   main.innerHTML="";
-  if(!hasLS) main.appendChild(h('<div class="notice">この画面ではブラウザの保存領域が使えないため、入力内容は再読み込みで消えます。GitHub Pages に置けば端末内に保存されます。</div>'));
+  if(!hasLS) main.appendChild(h('<div class="notice">この画面ではブラウザの保存領域が使えないため、入力内容は再読み込みで消えます。プライベートブラウズを使っているときは、通常のウィンドウで開いてください。</div>'));
   if(view==="list") renderList();
   else if(view==="week") renderWeek();
   else if(view==="day") renderDay();
@@ -2586,11 +2586,11 @@ function renderSettings(){
   // 端末間の同期（Cloudflare の Worker）。Worker から配信されているアプリでだけ使える
   if(CF===null) cfDetect().then(function(){ if(CF!==null && view==="set") render(); }); // 保存先の判定が終わったら描き直す
   if(CF!==true){
-    put("sync",h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+(CF===null
+    put("sync",h('<div class="sec"><h3>端末間の同期</h3>'+(CF===null
       ? '<p class="c-ink3">保存先を確認しています…</p>'
       : '<p>この画面では同期できません。Cloudflare から配信されているアプリ（Worker の URL）を開いてください。</p>')+'</div>'));
   } else {
-  var s5=h('<div class="sec"><h3>端末間の同期とDiscord通知</h3>'+
+  var s5=h('<div class="sec"><h3>端末間の同期</h3>'+
     '<p>締切データをCloudflareに保存し、端末間で受け渡します。<b>同期する</b>でこの端末の内容を送り、<b>読み込む</b>で他の端末から送られた内容を取り込みます。毎朝のDiscord送信とメールも同じデータを見ています。</p>'+
     '<p class="note">アクセスキーを保存している端末では、この端末に未同期の変更が無いときに限り、Cloudflare上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
     '<label class="field"><span>アクセスキー</span><input type="password" id="syncKey" placeholder="Cloudflare に登録したアクセスキー（APP_KEY）" autocomplete="off"></label>'+
