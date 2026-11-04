@@ -399,3 +399,115 @@ test('GET/POST /api/digest?kind=: 夜の再通知・週次レビューの文面�
   assert.equal(t.discord.calls.length, 2);
   assert.equal((await t.call('POST', '/api/digest?kind=other')).status, 400);
 });
+
+// ---- Cron の読み込みと CPU 時間（項目25） ----
+
+/** D1 の「docs」を読む SQL の回数を数える包み（本物と同じように動かす） */
+function countingDb(db) {
+  const reads = [];
+  return { reads, prepare: (sql) => { if (/FROM docs/.test(sql)) reads.push(sql); return db.prepare(sql); }, batch: (l) => db.batch(l), _raw: db._raw };
+}
+
+test('夜の Cron（20:23）は、締切データを D1 から1回だけ読み、メールと夜の通知（日曜は週次レビュー）で共有する', async () => {
+  for (const at of [THU, SUN]) {
+    const db = countingDb(createD1());
+    const net = fakeNet();
+    const { env, discord } = await setup({ ...GOOGLE, DB: db, FETCH: net.fetchFn });
+    db.reads.length = 0; // 準備（保存）で読んだ分は数えない
+    const out = await runScheduled(CRON_MAIL_EVENING, env, parseNow(at) / 1000);
+    assert.equal(db.reads.length, 1, `${at}: docs を読むのは1回`);
+    assert.ok(out.mail.subject && out.review >= 1, 'メールも夜の通知も送られる');
+    assert.ok(net.calls.some((c) => c.kind === 'send'));
+    assert.equal(discord.calls.length, 0, '送信先は fakeNet（setup の Discord ではない）');
+  }
+});
+
+test('夜の Cron: 締切データの読み込みに失敗しても、メールの失敗も夜の通知の失敗も、それぞれ Discord に知らせて例外にする（共有しても握りつぶさない）', async () => {
+  const net = fakeNet();
+  const { env } = await setup({ ...GOOGLE, FETCH: net.fetchFn });
+  await env.DB.prepare('UPDATE docs SET json = ? WHERE id = ?').bind('{壊れた JSON', 'main').run();
+  await assert.rejects(() => runScheduled(CRON_MAIL_EVENING, env, parseNow(THU) / 1000), (e) => e instanceof AggregateError && e.errors.length === 2);
+  const texts = net.calls.filter((c) => c.kind === 'discord').map((c) => JSON.parse(c.init.body).content);
+  assert.ok(texts.some((t) => /メールを送れませんでした/.test(t)), 'メールの失敗を知らせる');
+  assert.ok(texts.some((t) => /夜の再通知を作れませんでした/.test(t)), '夜の通知の失敗を知らせる');
+});
+
+test('メール・朝の一覧・夜の通知・週次レビューは、受け取ったデータを書き換えない（共有しても、互いに影響しない）', async () => {
+  const { buildFeed } = await import('../../worker/src/feed.js');
+  const { buildDigest } = await import('../../worker/src/digest.js');
+  const { buildEvening, buildWeekly } = await import('../../worker/src/review.js');
+  const { buildMailBody } = await import('../../worker/src/mail.js');
+  const { zonedData } = await import('../../worker/src/time.js');
+  const freeze = (o) => { if (o && typeof o === 'object' && !Object.isFrozen(o)) { Object.freeze(o); Object.values(o).forEach(freeze); } return o; };
+  for (const f of ['fixtures/data.json', 'fixtures/data-long.json', 'fixtures/data-ties.json', 'fixtures/data-old.json']) {
+    const data = freeze(zonedData(JSON.parse(read(f))));
+    const now = parseNow('2026-01-30 20:23');
+    const opts = { now, appUrl: 'https://example.com/app/', mentionUserId: UID, doneLinks: true };
+    // 凍結したデータに書き込むと TypeError になる（ES モジュールは strict）。どれも落ちなければ、書き換えていない
+    buildDigest(data, opts);
+    buildEvening(data, opts);
+    buildWeekly(data, opts);
+    buildMailBody(buildFeed(data, { now }).feed, '2026-01-31');
+  }
+});
+
+/** 架空の大きめのデータ（締切300件〔うち繰り返し50件〕・完了の記録500件）。実在の名前は使わない */
+function largeData(nowMs) {
+  const cats = ['課題', '委員会A', 'バイト', '考査', '部活A', 'サブスクなど', 'その他'];
+  const reps = ['weekly', 'biweekly', 'monthly', 'yearly'];
+  const day = 86400000;
+  const items = Array.from({ length: 300 }, (_, i) => {
+    const it = {
+      id: `i${i}`, title: `架空の課題${i}`, cat: cats[i % cats.length], due: new Date(nowMs + ((i % 60) - 20) * day + (i % 12) * 3600000).toISOString(),
+      memo: i % 3 === 0 ? `メモ${i}\n¥${1000 + i}` : '', done: false, created: new Date(nowMs - 30 * day).toISOString(), seq: 1, repCount: 0, rep: 'none',
+    };
+    if (i < 50) { it.rep = reps[i % 4]; it.repDay = 1 + (i % 28); }
+    if (i % 7 === 0) it.allDay = true;
+    return it;
+  });
+  const completions = Array.from({ length: 500 }, (_, i) => ({
+    id: `c${i}`, itemId: `i${i % 300}`, title: `架空の課題${i % 300}`, cat: cats[i % cats.length], due: new Date(nowMs - (i % 90) * day).toISOString(),
+    doneAt: new Date(nowMs - (i % 90) * day + 3600000).toISOString(), lead: i % 40, kind: ['early', 'ontime', 'late'][i % 3], exp: 10, src: 'manual',
+  }));
+  return { items, templates: [], trash: [], categories: cats, catReminders: {}, catColors: {}, completions, expCarry: 0, updatedAt: new Date(nowMs).toISOString() };
+}
+
+test('大きめのデータ（締切300件・繰り返し50件・完了500件）で、通知の文面づくりの時間を測る（目安を超えたら警告するだけ。失敗にはしない）', async (t) => {
+  const { buildFeed } = await import('../../worker/src/feed.js');
+  const { buildDigest } = await import('../../worker/src/digest.js');
+  const { buildEvening, buildWeekly } = await import('../../worker/src/review.js');
+  const { buildMailBody } = await import('../../worker/src/mail.js');
+  const { zonedData } = await import('../../worker/src/time.js');
+  const now = parseNow('2026-01-25 20:23'); // 日曜（週次レビューが走る日）
+  const data = zonedData(largeData(now));
+  const opts = { now, appUrl: 'https://example.com/app/', mentionUserId: UID, doneLinks: true };
+  const jobs = {
+    朝の一覧: () => buildDigest(data, opts).content,
+    夜の再通知: () => buildEvening(data, opts),
+    週次レビュー: () => buildWeekly(data, opts).join('\n'),
+    メール本文: () => buildMailBody(buildFeed(data, { now }).feed, '2026-01-26'),
+  };
+  const RUNS = 10, LIMIT_MS = 5;
+  const first = {}, warm = {};
+  for (const [name, fn] of Object.entries(jobs)) {
+    assert.ok(String(fn()).length > 100, `${name}: 文面ができる`); // 同時に、最初の1回の時間も測る（Cron は毎回新しい実行なので、慣れていない1回目が実際に近い）
+    let t0 = performance.now();
+    fn();
+    first[name] = performance.now() - t0;
+    t0 = performance.now();
+    for (let i = 0; i < RUNS; i++) fn();
+    warm[name] = (performance.now() - t0) / RUNS;
+    t.diagnostic(`${name}: 1回あたり ${warm[name].toFixed(2)}ms（続けて${RUNS}回の平均）／ もう1回 ${first[name].toFixed(2)}ms`);
+  }
+  // Cron 1回ぶん（それぞれ別の実行で、CPU 時間の上限 10ms も別々に当たる）。D1 の読み込みと JSON の解析は含まない
+  const crons = {
+    '朝 6:47（朝の一覧）': ['朝の一覧'],
+    '夜 20:23 月〜土（メール＋夜の再通知）': ['メール本文', '夜の再通知'],
+    '夜 20:23 日曜（メール＋週次レビュー）': ['メール本文', '週次レビュー'],
+  };
+  for (const [name, list] of Object.entries(crons)) {
+    const sum = list.reduce((n, k) => n + warm[k], 0);
+    t.diagnostic(`${name}: 合計 ${sum.toFixed(2)}ms（目安 ${LIMIT_MS}ms。Node と Workers の速さは同じではない）`);
+    if (sum > LIMIT_MS) t.diagnostic(`⚠️ ${name} は目安（${LIMIT_MS}ms）を超えました。無料プランの CPU 時間の上限は 10ms です`);
+  }
+});
