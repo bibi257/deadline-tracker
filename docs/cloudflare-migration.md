@@ -36,7 +36,7 @@ GitHub Pages + 非公開リポジトリ（`deadline-data`）の構成から、Cl
      - 端末に残った旧設定（`gh-token`・`dc-hook`・`gh-sync`・`gh-public-acked`、設定 `autoNotify`）は、起動時に `forgetLegacySettings` が消す
      - CSP の `connect-src` から `api.github.com`・`discord.com` を外した（このアプリは同じオリジンの Worker にだけ通信する）
 
-### 5b の手作業（コードでは行えない。マージ後に持ち主が行う）
+### 5b の手作業（コードでは行えない。マージ後に持ち主が行う）— 済（2026-11-04 に持ち主が「終わった」と報告。移行はこれで完了）
 
 1. `deadline-tracker` の Settings → Pages で、公開（Source）を止める。止める前に、Worker の URL でアプリが開くこと、設定の「同期」でキーを入れて読み込めることを確かめる
 2. `deadline-data`: ワークフロー `try-cloudflare.yml` を削除し、Secrets `APP_URL`・`APP_KEY` を消す
