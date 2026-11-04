@@ -527,3 +527,21 @@ test('端末内の古い型の項目は、normalizeItemTypes を通すと、Work
   assert.equal(await put(old), 400, '補正しないと断られる');
   assert.equal(await put(Array.from(old, (it) => A.ctx.normalizeItemTypes(it))), 201, '補正すると保存できる');
 });
+
+test('自動同期の失敗の表示は、手動の同期・読み込みが成功したときにも消える', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.edit('課題1');
+  A.db.items[0].seq = '3';
+  await A.auto();
+  assert.ok(A.ctx._lastAutoSyncError, '失敗が記録される');
+  A.db.items = Array.from(A.db.items, (it) => A.ctx.normalizeItemTypes(it));
+  await A.sync(); // 手動の同期が成功
+  assert.equal(A.ctx._lastAutoSyncError, null, '手動の同期の成功で消える');
+  A.db.items[0].seq = 'x';
+  await A.auto();
+  assert.ok(A.ctx._lastAutoSyncError);
+  A.answers = [true]; // 「この端末の締切を置き換えます」の確認に、はいと答える
+  await A.pull(); // 読み込みが成功
+  assert.equal(A.ctx._lastAutoSyncError, null, '読み込みの成功で消える');
+});

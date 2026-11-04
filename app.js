@@ -3050,6 +3050,7 @@ function proceedPull(cfg,statusEl){
       saveRaw(); render();
       markSynced("読み込み");
       markPulled();
+      _autoSyncFailShown=""; _lastAutoSyncError=null; // 読み込めたので、自動同期の失敗の表示は消す
       store.set("gh-known-updatedAt", db.updatedAt); // 保存先もこの時刻の内容と一致した
       cfSaveRev(cfg.rev);
       statusEl.textContent="読み込みました（"+n+"件）。"+(check.quarantined.length?(" "+check.quarantined.length+"件は形式が不正のため隔離しました（設定で確認できます）。"):"");
@@ -3147,6 +3148,7 @@ function doSync(cfg,statusEl,backedUp){
       if(!res.ok) return res.json().then(function(e){ throw new Error(e.message||e.error||("HTTP "+res.status)); });
       markSynced("同期");
       markPulled(); // 自分が今アップロードした内容＝この端末の最新状態、として扱う
+      _autoSyncFailShown=""; _lastAutoSyncError=null; // 手動の同期が通ったので、自動同期の失敗の表示は消す
       store.set("gh-known-updatedAt", pushedAt); // 保存先もこの時刻の内容と一致した
       statusEl.textContent="同期しました。次の朝のダイジェストから反映されます。";
       toast("Cloudflareに同期しました");
