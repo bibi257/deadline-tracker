@@ -46,6 +46,17 @@ test('版番号の自動化: app.js・styles.css の内容のハッシュで ?v=
   assert.equal(versionServiceWorker('const CACHE_NAME = "deadline-tracker-v17";\nx', 'ffffffffff'), 'const CACHE_NAME = "deadline-tracker-ffffffffff";\nx');
 });
 
+test('ルートの index.html・service-worker.js の版は dev のまま（手で更新しない）。書き換えるのはビルドだけ', () => {
+  const html = read('index.html');
+  assert.match(html, /<script src="app\.js\?v=dev"><\/script>/);
+  assert.match(html, /<link rel="stylesheet" href="styles\.css\?v=dev">/);
+  assert.match(html, /<meta name="build-stamp" content="dev">/);
+  assert.match(read('service-worker.js'), /const CACHE_NAME = "deadline-tracker-dev";/);
+  // dev からでも、ビルドは本当の値に置き換える（説明の無い「日時 [ハッシュ]」になる）
+  const out = versionIndexHtml('<meta name="build-stamp" content="dev">\n<link rel="stylesheet" href="styles.css?v=dev">\n<script src="app.js?v=dev"></script>', { app: 'aaaaaaaaaa', css: 'cccccccccc', all: 'ffffffffff', date: '2026-11-04 12:00' });
+  assert.equal(out, '<meta name="build-stamp" content="2026-11-04 12:00 [ffffffffff]">\n<link rel="stylesheet" href="styles.css?v=cccccccccc">\n<script src="app.js?v=aaaaaaaaaa"></script>');
+});
+
 test('版番号の自動化: 置き換え対象が見つからなければ失敗する（古い値のまま出さない）', () => {
   const all = { app: 'a', css: 'c', all: 'f', date: '2026-10-30 09:15' };
   const ok = '<meta name="build-stamp" content="x">\n<link rel="stylesheet" href="styles.css?v=1">\n<script src="app.js?v=1"></script>';
@@ -71,8 +82,9 @@ test('build: web/ の index.html と service-worker.js に、ファイルの内�
   assert.ok(web.includes(`<script src="app.js?v=${hash10(read('app.js'))}"></script>`), '実際の script タグ');
   assert.ok(web.includes(`<link rel="stylesheet" href="styles.css?v=${hash10(read('styles.css'))}">`), '実際の link タグ');
   assert.doesNotMatch(web, /(?:app\.js|styles\.css)\?v=\d{8}-\d{4}/, '手書きの日時の版番号が残っていない');
+  assert.doesNotMatch(web, /\?v=dev|content="dev"/, 'web/ には、ルートの dev が残らない');
   const all = hash10(rootIndex, read('app.js'), read('styles.css'), rootSw);
-  assert.match(web, new RegExp(`<meta name="build-stamp" content="\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} \\[${all}\\] [^"]+">`), '日時・ハッシュ・説明');
+  assert.match(web, new RegExp(`<meta name="build-stamp" content="\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} \\[${all}\\]">`), '日時とハッシュ（ルートの dev は説明として残さない）');
   assert.match(read('web/service-worker.js'), new RegExp(`const CACHE_NAME = "deadline-tracker-${all}";`));
   assert.equal(read('index.html'), rootIndex, 'ルートの index.html は書き換えない');
   assert.equal(read('service-worker.js'), rootSw, 'ルートの service-worker.js は書き換えない');

@@ -16,10 +16,11 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う）。
-     app.js / styles.css を変えたときは、<script src="app.js?v=..."> / <link href="styles.css?v=..."> の v も同じ日時（例 20261009-1019）に変える。
-     Worker から配信する web/ は、ビルド（scripts/build.mjs）が v・スタンプ・キャッシュ名をハッシュで自動で書き換える（GitHub Pages の旧環境は終了したので、この手作業は必須ではない。ルートのファイルを直接開くときの目安として残している） -->
-<meta name="build-stamp" content="2026-11-04 12:00 旧環境（GitHub 同期・Discord の直接送信）のコードを削除">
+<!-- 版の日時の印（設定タブに表示され、最新版かの判断に使う）。ここは `dev` のまま、手で更新しない。
+     app.js?v=・styles.css?v= も同じ（`dev` のまま）。Worker から配信する web/ は、ビルド（scripts/build.mjs）が、
+     v を内容のハッシュに、build-stamp を「画面のファイルを最後に変えたコミットの日時 ＋ 全体のハッシュ」に自動で書き換える。
+     ルートのファイルを直接開いたときは、`dev` のまま表示される -->
+<meta name="build-stamp" content="dev">
 <!-- アプリの版番号（設定の「バージョン」に「2026-11-04 12:00 v4.0」のように出る）。大きな変更のときに手で上げる。決め方は docs/VERSIONS.md。
      package.json の version（4.0.0）と major.minor をそろえる（テストで確かめる） -->
 <meta name="app-version" content="4.0">
@@ -35,7 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20261104-1200">
+<link rel="stylesheet" href="styles.css?v=dev">
 </head>
 <body>
 
@@ -115,6 +116,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261104-1200"></script>
+<script src="app.js?v=dev"></script>
 </body>
 </html>
