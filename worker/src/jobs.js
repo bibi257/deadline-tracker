@@ -38,9 +38,9 @@ export const DIGEST_KINDS = ['morning', 'evening', 'weekly'];
 const KIND_LABEL = { morning: '締切一覧', evening: '夜の再通知', weekly: '週次レビュー' };
 
 /** Discord に送る文面を作る（送らない）。kind は morning（朝の一覧）・evening（夜の再通知）・weekly（週次レビュー）。確認用の API と、送信の両方が使う */
-export async function previewDigest(env, nowMs, kind = 'morning') {
+export async function previewDigest(env, nowMs, kind = 'morning', loaded) {
   const cfg = readConfig(env);
-  const data = await loadData(env);
+  const data = await (loaded === undefined ? loadData(env) : loaded); // loaded（読み込み済みのデータ。Promise でもよい）があれば、D1 を読み直さない
   if (!data) {
     // 朝だけ、保存されていないことを知らせる（夜の再通知・週次レビューは、何も送らない）
     const bodies = kind === 'morning' ? [{ content: '⚠️ 締切データがまだ保存されていません。アプリで同期してください。' }] : [];
@@ -61,7 +61,7 @@ export async function previewDigest(env, nowMs, kind = 'morning') {
 const sendOpts = (env) => ({ fetchFn: env.FETCH ?? fetch, ...(env.SLEEP ? { sleep: env.SLEEP } : {}) });
 
 /** Discord に送る。送った通数を返す（夜の再通知で対象が0件なら 0）。Webhook が未設定なら何もしない（null） */
-export async function sendDigest(env, nowMs, kind = 'morning') {
+export async function sendDigest(env, nowMs, kind = 'morning', loaded) {
   const cfg = readConfig(env);
   if (!cfg.webhook) {
     console.log(cfg.webhookSet ? 'DISCORD_WEBHOOK_URL が Discord の URL の形ではないため送りません' : 'DISCORD_WEBHOOK_URL が未設定のため送りません');
@@ -69,7 +69,7 @@ export async function sendDigest(env, nowMs, kind = 'morning') {
   }
   let bodies;
   try {
-    ({ bodies } = await previewDigest(env, nowMs, kind));
+    ({ bodies } = await previewDigest(env, nowMs, kind, loaded));
   } catch (e) {
     console.error(`${KIND_LABEL[kind]}を作れませんでした`, e);
     // 何も届かないと「今日は締切が無い」と見分けがつかないため、失敗したことを知らせる（作る側の失敗のときだけ）
@@ -83,9 +83,9 @@ export async function sendDigest(env, nowMs, kind = 'morning') {
 // ---- 締切のメール（Claude のルーティンが Gmail から読む） ----
 
 /** メールの件名と本文を作る（送らない）。データが無ければ body は null */
-export async function previewMail(env, nowMs, mode = 'auto') {
+export async function previewMail(env, nowMs, mode = 'auto', loaded) {
   const target = targetDate(nowMs, mode);
-  const data = await loadData(env);
+  const data = await (loaded === undefined ? loadData(env) : loaded);
   const subject = subjectFor(target);
   if (!data) return { target, subject, body: null, warnings: [] };
   const { feed, warnings } = buildFeed(data, { now: nowMs });
@@ -93,13 +93,13 @@ export async function previewMail(env, nowMs, mode = 'auto') {
 }
 
 /** メールを1通送る。Google の認証情報が未設定、またはデータが無いときは何もしない（null） */
-export async function sendMail(env, nowMs, mode = 'auto') {
+export async function sendMail(env, nowMs, mode = 'auto', loaded) {
   const cfg = gmailConfig(env);
   if (!cfg.ok) {
     console.log('Gmail の設定（GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN / MAIL_TO）が未設定のため、メールは送りません');
     return null;
   }
-  const { subject, body } = await previewMail(env, nowMs, mode);
+  const { subject, body } = await previewMail(env, nowMs, mode, loaded);
   if (body === null) {
     console.log('締切データがまだ保存されていないため、メールは送りません');
     return null;
@@ -109,9 +109,9 @@ export async function sendMail(env, nowMs, mode = 'auto') {
 }
 
 /** Cron のメール。失敗したら、Discord が使えるときは知らせてから例外にする（届かない日に気づけるように） */
-async function runMail(env, nowMs) {
+async function runMail(env, nowMs, loaded) {
   try {
-    return await sendMail(env, nowMs, 'auto');
+    return await sendMail(env, nowMs, 'auto', loaded);
   } catch (e) {
     console.error('メールを送れませんでした', e.message);
     const hook = readConfig(env).webhook;
@@ -145,7 +145,11 @@ export async function runScheduled(cron, env, nowSec) {
   if (cron === CRON_DIGEST) return { digest: await sendDigest(env, nowMs) };
   if (cron === CRON_MAIL_EVENING) {
     // 日曜(JST)は週次レビュー、それ以外は夜の再通知
-    return runAll({ mail: () => runMail(env, nowMs), review: () => sendDigest(env, nowMs, jstDow(nowMs) === 0 ? 'weekly' : 'evening') });
+    // 締切データは1回だけ読み、メールと夜の通知で共有する（D1 の読み込みと JSON の解析を、1回の実行で2回しないため）。
+    // 読み込みの失敗は、それぞれの仕事の中で受ける（メールの失敗も、夜の通知の失敗も、今までどおり Discord に知らせる）
+    const data = loadData(env);
+    data.catch(() => {}); // どちらの仕事も受け取るが、受け取る前に失敗しても未処理の失敗にしない
+    return runAll({ mail: () => runMail(env, nowMs, data), review: () => sendDigest(env, nowMs, jstDow(nowMs) === 0 ? 'weekly' : 'evening', data) });
   }
   if (cron === CRON_MAIL_MORNING) {
     return runAll({ mail: () => runMail(env, nowMs), maintenance: () => runMaintenance(env, nowSec) });
