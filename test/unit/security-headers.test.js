@@ -61,7 +61,7 @@ test('Worker: JSON・テキスト・エラー・OPTIONS の応答に X-Content-T
 test('GitHub Actions: 第三者のアクションはすべてコミット SHA で固定し、コメントにタグ名を残す', () => {
   const dir = new URL('.github/workflows/', root);
   const files = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f));
-  assert.ok(files.length >= 3);
+  assert.ok(files.length >= 2); // ci.yml・merge-mail.yml（Claude Code Review は 2026-11-04 に廃止）
   let n = 0;
   for (const f of files) {
     for (const line of read(`.github/workflows/${f}`).split('\n')) {
@@ -72,7 +72,7 @@ test('GitHub Actions: 第三者のアクションはすべてコミット SHA �
       assert.match(m[2], /^\s+#\s*v\d/, `${f}: ${m[1]} のコメントにタグ名（例: # v4.4.0）を残す`);
     }
   }
-  assert.ok(n >= 5, '確認したアクションの数');
+  assert.ok(n >= 3, '確認したアクションの数（ci.yml に2つ、merge-mail.yml に1つ）');
 });
 
 test('Dependabot: github-actions を週次で更新する', () => {
