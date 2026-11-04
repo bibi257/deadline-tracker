@@ -693,3 +693,29 @@ test('取り込み: 保存の検査に合わない古い型の項目は、直し
   assert.equal(kept[0].autoComplete, undefined);
   assert.equal(kept[0].calHide, true);
 });
+
+// ---- アプリと Worker の繰り返しの計算が、月末・うるう年でも同じになること（旧: 別々に実装されている） ----
+
+test('繰り返しの次の回: アプリ（advanceRepeating）と Worker（addRep）が、2024〜2025 年の毎日を起点に、12回先まで同じ日時になる（月末・2/29・隔週・毎年を含む）', async () => {
+  const { addRep } = await import('../../worker/src/recurrence.js');
+  const { dateStr, timeStr } = await import('../../worker/src/time.js');
+  const { app } = load();
+  const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const diffs = [];
+  let compared = 0;
+  for (const rep of ['weekly', 'biweekly', 'monthly', 'yearly']) {
+    for (let day = 0; day < 366 + 365; day++) {
+      const start = new Date(2024, 0, 1 + day, 9, 30);
+      const it = { id: 'x', title: 't', due: start.toISOString(), rep, repCount: 0, seq: 0 };
+      const baseMs = Date.parse(it.due);
+      for (let n = 1; n <= 12; n++) {
+        assert.equal(app.advanceRepeating(it), true);
+        const w = addRep(baseMs, rep, n, it.repDay || start.getDate());
+        compared++;
+        if (key(app.parseItemDate(it)) !== `${dateStr(w)} ${timeStr(w)}`) diffs.push(`${rep} ${key(start)} n=${n}`);
+      }
+    }
+  }
+  assert.deepEqual(diffs.slice(0, 5), [], '食い違い');
+  assert.equal(compared, 4 * 731 * 12);
+});

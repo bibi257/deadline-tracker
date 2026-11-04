@@ -263,7 +263,9 @@ async function listSnapshots(env) {
 async function getSnapshot(env, id) {
   const row = await env.DB.prepare('SELECT id, at, rev, json FROM snapshots WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, '見つかりません');
-  return json({ ok: true, id: row.id, at: row.at, rev: row.rev, data: JSON.parse(row.json) });
+  // GET /api/data と同じく、保存してある JSON の文字列（putData が JSON.stringify したもの）をそのまま埋め込む。
+  // 上限に近い大きさの世代バックアップでも、解析と再変換で Worker の CPU 時間（無料プランは 10ms）を使わないため
+  return jsonText(`{"ok":true,"id":${row.id},"at":${row.at},"rev":${row.rev},"data":${row.json}}`);
 }
 
 async function loadData(env) {
