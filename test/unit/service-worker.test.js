@@ -47,3 +47,54 @@ test('締切データ（/api/）と購読用の .ics（/ics/）は、Service Wor
   handlers.fetch({ request: { method: 'GET', url: 'https://x.test/index.html' }, respondWith: () => { responded = true; } });
   assert.equal(responded, true, '画面の殻（index.html）は取り扱う');
 });
+
+/** fetch ハンドラを動かし、{ response, cached }（cache.put された [キー, 応答]）を返す。net は fetch の挙動、hit は caches.match の結果 */
+async function runFetch(url, { net, hit } = {}) {
+  const handlers = {};
+  const cached = [];
+  const ctx = vm.createContext({
+    self: { addEventListener: (type, fn) => { handlers[type] = fn; }, clients: { claim() {} } },
+    caches: {
+      keys: async () => [], delete: async () => true,
+      open: async () => ({ put: async (k, v) => { cached.push([k, v]); }, addAll: async () => {} }),
+      match: async (req, opts) => { ctx.__matchArgs = { url: req.url, opts }; return hit; },
+    },
+    location: { origin: 'https://x.test' },
+    fetch: net,
+    URL, Request, Response, Promise, Math, Date, Object, Array, String, JSON,
+  });
+  vm.runInContext(SRC, ctx);
+  let response; const waits = [];
+  handlers.fetch({ request: { method: 'GET', url }, respondWith: (p) => { response = p; }, waitUntil: (p) => waits.push(p) });
+  const res = await response;
+  await Promise.all(waits);
+  return { res, cached, ctx };
+}
+
+test('オンライン: 正常な応答だけを保存する。クエリ（?_=時刻）は外した1件として保存し、404 などは保存しない', async () => {
+  let r = await runFetch('https://x.test/index.html?_=123', { net: async () => new Response('<html>', { status: 200 }) });
+  assert.equal(await r.res.text(), '<html>');
+  assert.deepEqual(r.cached.map(([k]) => k), ['https://x.test/index.html'], 'クエリを外した1件');
+  r = await runFetch('https://x.test/nothing.js', { net: async () => new Response('nf', { status: 404 }) });
+  assert.equal(r.res.status, 404, '404 はそのまま返す');
+  assert.deepEqual(r.cached, [], '404 は保存しない');
+});
+
+test('オフライン: 通信できないときは、保存済みの殻を（クエリを無視して）返す。無ければ、白紙にせず理由を 503 で返す', async () => {
+  const cachedPage = new Response('cached', { status: 200 });
+  let r = await runFetch('https://x.test/?export=all', { net: async () => { throw new TypeError('offline'); }, hit: cachedPage });
+  assert.equal(await r.res.text(), 'cached');
+  assert.equal(r.ctx.__matchArgs.opts.ignoreSearch, true, '?export=all などクエリ付きでも同じページを返す');
+  r = await runFetch('https://x.test/never-opened.html', { net: async () => { throw new TypeError('offline'); }, hit: undefined });
+  assert.equal(r.res.status, 503);
+  assert.match(await r.res.text(), /オフライン/);
+  assert.match(r.res.headers.get('Content-Type'), /^text\/plain/);
+});
+
+test('POST など GET 以外・別オリジン（フォントなど）には関与しない', () => {
+  const { handlers } = load([]);
+  let responded = false;
+  handlers.fetch({ request: { method: 'POST', url: 'https://x.test/index.html' }, respondWith: () => { responded = true; } });
+  handlers.fetch({ request: { method: 'GET', url: 'https://fonts.gstatic.com/x.woff2' }, respondWith: () => { responded = true; } });
+  assert.equal(responded, false);
+});
