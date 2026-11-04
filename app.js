@@ -111,7 +111,16 @@ function load(){
     var d=JSON.parse(raw);
     // ここ(自分自身のlocalStorage)は検証しない。既存の表示が急に消えて驚かせないため。
     // 壊れたデータの検証は、外部由来のCloudflareからの取り込み口(proceedPull / autoPullWith)で行う
-    if(d&&Array.isArray(d.items)) db.items=d.items;
+    if(d&&Array.isArray(d.items)){
+      // 型だけは、保存（Worker）の検査に通る形にそろえる（項目は消さない・隔離しない）。変えたときだけ保存し直す（updatedAt は変えない）
+      var typeFixed=false;
+      db.items=d.items.map(function(it){
+        if(!it || typeof it!=="object" || Array.isArray(it)) return it;
+        var f=normalizeItemTypes(it);
+        if(JSON.stringify(f)!==JSON.stringify(it)) typeFixed=true;
+        return f;
+      });
+    }
     // templates は後から追加した項目。古いデータには無いので空配列で補う
     if(d&&Array.isArray(d.templates)) db.templates=d.templates;
     // trash も同様に後から追加した項目
@@ -135,6 +144,7 @@ function load(){
   var cutoff=Date.now()-30*86400000;
   db.trash=db.trash.filter(function(t){ return new Date(t.deletedAt).getTime()>=cutoff; });
   if(db.trash.length>30) db.trash=db.trash.slice(db.trash.length-30);
+  if(typeFixed) writeDb(); // 型を直した項目があれば、保存し直す（updatedAt は変えない）
 }
 /* 通常の保存。呼ぶたびに「この端末で今変更した」時刻を刻む */
 function save(){ db.updatedAt=new Date().toISOString(); writeDb(); }
@@ -185,6 +195,25 @@ function totalExp(){
   return (db.expCarry||0)+db.completions.reduce(function(a,c){ return a+(c.exp||0); },0);
 }
 
+/* 項目1件の型を、保存（Worker）の検査に通る形にそろえた新しいオブジェクトを返す。隔離はしない（id・title・due は見ない）。
+   取り込み（sanitizeIncomingItems）と、起動時の端末内データ（load）の両方で使う。端末内に古い型の項目が残っていると、
+   Worker が全体の保存を 400 で断り、自動同期が止まるため */
+function normalizeItemTypes(it){
+  var fixed=Object.assign({}, it);
+  if(fixed.memo!==undefined && typeof fixed.memo!=="string") delete fixed.memo; // 文字列でないメモ・カテゴリは、Worker（保存・メール・.ics）が読めないため補正する
+  if(fixed.cat!==undefined && typeof fixed.cat!=="string") fixed.cat="その他";
+  if(fixed.rep!==undefined && typeof fixed.rep!=="string") fixed.rep="none";
+  if(fixed.rep && ["weekly","biweekly","monthly","yearly"].indexOf(fixed.rep)<0) fixed.rep="none";
+  if(fixed.rep && fixed.rep!=="none" && typeof fixed.repCount!=="number") fixed.repCount=0;
+  if(fixed.skip && !Array.isArray(fixed.skip)) delete fixed.skip;
+  // 保存（Worker）の検査と同じ形にそろえる。1件の古い型が残ると、全体の保存が止まるため
+  if(Array.isArray(fixed.skip)) fixed.skip=fixed.skip.filter(function(s){ return typeof s==="string" && /^\d{4}-\d{2}-\d{2}$/.test(s); });
+  ["repCount","repDay","seq"].forEach(function(k){ if(fixed[k]!==undefined && fixed[k]!==null && !(typeof fixed[k]==="number" && isFinite(fixed[k]) && Math.floor(fixed[k])===fixed[k])) delete fixed[k]; });
+  ["allDay","autoComplete","calHide"].forEach(function(k){ if(fixed[k]!==undefined && fixed[k]!==null && typeof fixed[k]!=="boolean") delete fixed[k]; });
+  if(fixed.pick!==undefined && (typeof fixed.pick!=="string" || !/^\d{4}-\d{2}-\d{2}$/.test(fixed.pick))) delete fixed.pick; // 今日の一手の印は "YYYY-MM-DD" だけ
+  if(typeof fixed.done!=="boolean") fixed.done=!!fixed.done;
+  return fixed;
+}
 /* 取り込んだ項目を検証する。取り込み口(load/proceedPull/autoPullWith)でのみ使う。
    必須(id・title・有効なdue)が壊れている項目は隔離し、それ以外の軽微な不正値は
    既定値に補正して使い続けられるようにする */
@@ -197,7 +226,7 @@ function sanitizeIncomingItems(rawItems){
     var due=new Date(it.due);
     if(typeof it.due!=="string" || isNaN(due.getTime())){ quarantined.push({qid:"q"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), reason:"締切日(due)が不正な日付：「"+it.due+"」", raw:it}); return; }
     // ここから先は軽微な不正。項目ごと隔離せず、既定値に補正して使う
-    var fixed=Object.assign({}, it);
+    var fixed=normalizeItemTypes(it);
     // Z の無い日時は、この端末では端末の時刻（JST）として読まれる。Worker も同じ時刻に読めるよう、Z の付いた形で残す
     fixed.due=due.toISOString();
     if(fixed.start){
@@ -205,18 +234,6 @@ function sanitizeIncomingItems(rawItems){
       if(typeof fixed.start!=="string" || isNaN(s.getTime())) delete fixed.start; // 開始日が壊れていれば無かったことにする
       else fixed.start=s.toISOString();
     }
-    if(fixed.memo!==undefined && typeof fixed.memo!=="string") delete fixed.memo; // 文字列でないメモ・カテゴリは、Worker（保存・メール・.ics）が読めないため補正する
-    if(fixed.cat!==undefined && typeof fixed.cat!=="string") fixed.cat="その他";
-    if(fixed.rep!==undefined && typeof fixed.rep!=="string") fixed.rep="none";
-    if(fixed.rep && ["weekly","biweekly","monthly","yearly"].indexOf(fixed.rep)<0) fixed.rep="none";
-    if(fixed.rep && fixed.rep!=="none" && typeof fixed.repCount!=="number") fixed.repCount=0;
-    if(fixed.skip && !Array.isArray(fixed.skip)) delete fixed.skip;
-    // 保存（Worker）の検査と同じ形にそろえる。1件の古い型が残ると、全体の保存が止まるため
-    if(Array.isArray(fixed.skip)) fixed.skip=fixed.skip.filter(function(s){ return typeof s==="string" && /^\d{4}-\d{2}-\d{2}$/.test(s); });
-    ["repCount","repDay","seq"].forEach(function(k){ if(fixed[k]!==undefined && fixed[k]!==null && !(typeof fixed[k]==="number" && isFinite(fixed[k]) && Math.floor(fixed[k])===fixed[k])) delete fixed[k]; });
-    ["allDay","autoComplete","calHide"].forEach(function(k){ if(fixed[k]!==undefined && fixed[k]!==null && typeof fixed[k]!=="boolean") delete fixed[k]; });
-    if(fixed.pick!==undefined && (typeof fixed.pick!=="string" || !/^\d{4}-\d{2}-\d{2}$/.test(fixed.pick))) delete fixed.pick; // 今日の一手の印は "YYYY-MM-DD" だけ
-    if(typeof fixed.done!=="boolean") fixed.done=!!fixed.done;
     kept.push(fixed);
   });
   return {kept:kept, quarantined:quarantined};
@@ -1166,10 +1183,26 @@ function runAutoSync(cfg){
         markPulled(); // 送った内容＝この端末の最新状態としてよい
         store.set("gh-known-updatedAt", pushedAt); // 保存先ともこの時点で一致した
         _autoSyncBlockedShown=false;
+        _autoSyncFailShown=""; _lastAutoSyncError=null;
         toast("Cloudflareに自動同期しました");
+      } else if(res && res.status!==409 && res.status!==401 && res.status!==429){
+        return noteAutoSyncFailure(res); // 400・413・5xx など。黙って止まらず、理由を知らせる
       }
     })
     .catch(function(e){ cfNoteAuthFailure(e); /* 自動処理なので、ほかの失敗は通知しない */ });
+}
+/* 自動同期が 400・413・5xx などで断られたとき、Worker が返す理由を1回だけトーストで出し、設定の同期の節にも残す。
+   同じ理由の失敗が続く間は、トーストを繰り返さない（成功したら記録を消す） */
+var _autoSyncFailShown="", _lastAutoSyncError=null;
+function noteAutoSyncFailure(res){
+  return res.json().catch(function(){ return {}; }).then(function(j){
+    var reason=String((j&&(j.error||j.message))||("HTTP "+res.status)).slice(0,150);
+    _lastAutoSyncError={reason:reason, at:Date.now()};
+    if(_autoSyncFailShown!==reason){
+      _autoSyncFailShown=reason;
+      toast("自動同期に失敗しました："+reason+"。設定（右上のメニュー（☰））の同期から送り直せます");
+    }
+  });
 }
 /* 完了・削除などの操作は続けて行うことが多いので、少し待ってからまとめて1回だけ自動同期する。
    画面を閉じる(アプリを切り替える)ときは待たずにすぐ送る */
@@ -2616,6 +2649,7 @@ function renderSettings(){
          +(ls.stale?'<br>しばらく同期されていません。登録した内容が毎朝の連絡に反映されていない可能性があります。':''))
         :'まだ一度も同期していません。')+'</p>');
   s5.insertBefore(lsEl, s5.querySelector(".field"));
+  if(_lastAutoSyncError) lsEl.after(h('<p class="c-red">最後の自動同期は失敗しました：'+escHtml(_lastAutoSyncError.reason)+'</p>'));
   // この端末の締切が0件なら、先にすることは読み込み（別の端末で初めて設定したときの上書き事故を防ぐ）
   var emptyHere=!db.items.length;
   var bSync=h('<button class="btn'+(emptyHere?'':' fill')+'">Cloudflareに同期する</button>');

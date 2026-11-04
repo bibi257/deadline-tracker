@@ -17,7 +17,7 @@ const FNS = [
   'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'syncHint',
   'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems', 'cfAutoBlocked', 'cfNoteAuthFailure',
   'cfSnapUrl', 'cfGetJson', 'cfFetchSnapshots', 'cfReadSnapshot', 'fmtSnapAt', 'cfRestoreSnapshot',
-  'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker',
+  'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker', 'noteAutoSyncFailure', 'normalizeItemTypes',
 ];
 
 /** 共有の Worker（1つの D1）と、複数の端末 */
@@ -52,7 +52,7 @@ function world() {
       RN: () => 'Cloudflare', markSynced() {}, markPulled() {}, saveRaw() {}, render() {}, softRender() {},
       normalizeTrash: (x) => x, cleanCatReminders: (x) => x, cleanCatColors: (x) => x, adoptCompletions() {},
       sanitizeIncomingMeta: () => ({ templates: null, categories: null }),
-      _autoSyncBlockedShown: false, _staleNoticeShown: false, CF_REV_KEY: 'cf-known-rev',
+      _autoSyncBlockedShown: false, _autoSyncFailShown: '', _lastAutoSyncError: null, _staleNoticeShown: false, CF_REV_KEY: 'cf-known-rev',
       hoursSincePulled: () => null,
       // 起動時の「取り込み → 自動完了」用（本物の applyCompletion / save は画面まわりに依存するので、同じ効果だけ再現する）
       // .ics の書き出し（Worker 優先）用
@@ -487,4 +487,43 @@ test('同期の確認と送信の間に、自動の取り込みで版が進ん�
   assert.equal(w.log.puts.at(-1).ifMatch, '1', '準備したとき（rev 1）の版で送る');
   assert.deepEqual(titles(await w.server()), ['Bの更新'], 'B の更新は残っている');
   assert.equal((await w.server()).rev, 2);
+});
+
+test('自動同期: 端末内に古い型の項目があると Worker が 400 で断る。理由を1回だけトーストで出し、設定用に残す。型をそろえれば送れて、記録が消える', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.edit('課題1');
+  A.db.items[0].seq = '3';           // 古い型（保存の検査より前の版が書いた形）
+  A.db.items[0].skip = ['x'];
+  await A.auto();
+  const failures = () => A.toasts.filter((m) => /自動同期に失敗しました/.test(m));
+  assert.equal(failures().length, 1, '黙って止まらず、理由を知らせる');
+  assert.match(failures()[0], /seq/, 'Worker が返す理由（どの項目が合わないか）');
+  assert.match(failures()[0], /設定.*同期から送り直せます/);
+  assert.match(A.ctx._lastAutoSyncError.reason, /seq/);
+  assert.equal(await w.server().then((s) => s.data), null, '保存されていない');
+  // 同じ理由の失敗が続く間は、トーストを繰り返さない
+  await A.auto();
+  assert.equal(failures().length, 1);
+  // 型をそろえると送れる。成功したら失敗の記録は消え、そのあとの失敗はまた知らせる
+  A.db.items = Array.from(A.db.items, (it) => A.ctx.normalizeItemTypes(it));
+  await A.auto();
+  assert.equal((await w.server()).rev, 1, '保存できた');
+  assert.equal(A.ctx._lastAutoSyncError, null);
+  assert.match(A.toasts.at(-1), /自動同期しました/);
+  A.db.items[0].seq = 'x';
+  await A.auto();
+  assert.equal(failures().length, 2, '成功したあとの新しい失敗は、また知らせる');
+});
+
+test('端末内の古い型の項目は、normalizeItemTypes を通すと、Worker の保存の検査をすべて通る（実際に保存して 200）', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  const old = [
+    { id: 'a', title: 't', due: '2026-12-01T00:00:00.000Z', seq: '3', skip: ['x', 5], allDay: 'true', autoComplete: 1, calHide: 'no', pick: 7, rep: 'daily', repCount: '2', repDay: 1.5, memo: 5, cat: 9 },
+    { id: 'b', title: 't', due: '2026-12-01T00:00:00.000Z', done: 'yes' },
+  ];
+  const put = (items) => w.fetchToWorker('https://x.test/api/data', { method: 'PUT', headers: { Authorization: `Bearer ${KEY}`, 'If-Match': '0' }, body: JSON.stringify({ items }) }).then((r) => r.status);
+  assert.equal(await put(old), 400, '補正しないと断られる');
+  assert.equal(await put(Array.from(old, (it) => A.ctx.normalizeItemTypes(it))), 201, '補正すると保存できる');
 });

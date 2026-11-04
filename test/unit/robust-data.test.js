@@ -104,7 +104,7 @@ test('保存 API: 日本語の巨大データはバイト数で測り、D1 の�
 
 function loadSanitize() {
   const src = readFileSync(new URL('../../app.js', import.meta.url), 'utf8');
-  const start = src.indexOf('function sanitizeIncomingItems');
+  const start = src.indexOf('function normalizeItemTypes'); // sanitizeIncomingItems が使う補正の関数から
   const end = src.indexOf('/* 取り込んだテンプレート', start);
   assert.ok(start > 0 && end > start, 'sanitizeIncomingItems が見つからない');
   const ctx = vm.createContext({ Date, Math, Object, Array });
