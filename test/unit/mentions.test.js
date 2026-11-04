@@ -1,4 +1,4 @@
-// Discord へ直接送る経路（app.js・deadline-data-template）でも、@everyone・@here を通知にしないことを確かめる。
+// 端末から Discord・GitHub へ直接送る経路が無いこと（app.js）と、deadline-data-template の send_digest.sh で @everyone・@here を通知にしないことを確かめる。
 // Worker の経路は digest.test.js・jobs.test.js で確かめている。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,18 +8,14 @@ import vm from 'node:vm';
 
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
 
-test('app.js: Discord へ直接送る本文は、すべて allowed_mentions で誰もメンションしない', () => {
+test('app.js: Discord へも GitHub へも直接送らない（通知の送信は Worker だけ。Webhook URL・GitHub のトークンを端末に持たない）', () => {
   const src = read('app.js');
-  const m = /function discordPayload\(text\)\{[\s\S]*?\n\}/.exec(src);
-  assert.ok(m, 'discordPayload が見つからない');
-  const ctx = vm.createContext({ JSON });
-  vm.runInContext(m[0], ctx);
-  const body = JSON.parse(ctx.discordPayload('@everyone 締切です @here'));
-  assert.equal(body.content, '@everyone 締切です @here');
-  assert.deepEqual(body.allowed_mentions, { parse: [], users: [] });
-  // Discord へ POST する本文は、必ず discordPayload を通す（content だけの JSON を直接作らない）
-  assert.equal((src.match(/JSON\.stringify\(\{content:/g) || []).length, 1, 'content だけの JSON は discordPayload の中にしか無い');
-  assert.equal((src.match(/body:discordPayload\(/g) || []).length, 2, '自動通知と手動送信の2か所');
+  // 段階5b で、端末から Discord・GitHub へ直接送る経路を消した。戻さないための確認
+  for (const word of ['allowed_mentions', 'discord.com', 'discordapp.com', 'api.github.com', 'dc-hook', 'gh-token']) {
+    const hits = src.split('\n').filter((l) => l.includes(word) && !/forgetLegacySettings|^\s*\/\//.test(l) && !l.includes('["gh-token","dc-hook"'));
+    assert.deepEqual(hits, [], `app.js に ${word} が残っている`);
+  }
+  assert.doesNotMatch(read('index.html'), /connect-src[^;]*(github|discord)/, 'CSP の connect-src に GitHub・Discord を許さない');
 });
 
 test('deadline-data-template の send_digest.sh: ユーザーID が空でも allowed_mentions: {parse: [], users: []} を付ける', () => {

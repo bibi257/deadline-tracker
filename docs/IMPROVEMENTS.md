@@ -394,7 +394,7 @@ Worker は保存のたびに世代バックアップ（snapshots）を残し、`
 
 - 重大度：中
 - 分類：保守性
-- 状態：完了（Cloudflare 版では、未完了の全件の .ics を Worker の `GET /api/ics` から取り、Discord の「今すぐ送る」は保存済みの URL のままなら Worker から送る。残りは段階5で消すコードを `docs/cloudflare-migration.md` に一覧にした。実機での確認はまだ）
+- 状態：完了（段階5b＝v4.0 で、残りのコード〔Discord を端末から直接送る処理と GitHub 同期〕を消した。`docs/cloudflare-migration.md` の段階5。Cloudflare 版では、未完了の全件の .ics を Worker の `GET /api/ics` から取り、Discord の「今すぐ送る」は保存済みの URL のままなら Worker から送る。残りは段階5で消すコードを `docs/cloudflare-migration.md` に一覧にした。実機での確認はまだ）
 
 **問題の内容と該当箇所**
 

@@ -13,7 +13,7 @@
                                   └─ /ics/<トークン>.ics ──→ カレンダーの購読（メモなし）
 ```
 
-> GitHub Pages ＋ 非公開リポジトリ `deadline-data` ＋ GitHub Actions の旧環境は、移行が終わるまで残している。説明は「旧環境」の節にまとめた。移行の計画と進捗は `docs/cloudflare-migration.md`。
+> 旧環境（GitHub Pages ＋ 非公開リポジトリ `deadline-data` ＋ GitHub Actions）は終了した。アプリ側の GitHub 同期・Discord の直接送信のコードは v4.0 で削除した（経緯は「旧環境（終了）」の節と `docs/cloudflare-migration.md`）。
 
 ---
 
@@ -70,18 +70,17 @@
 - 960px以上の画面では、一覧・超過・定期予定・完了のカードを2列に並べ（設定の「広い画面の並び」で1列にもできる。端末ごとの設定で同期しない）、カレンダーは月の表と選んだ日の予定を左右に並べる（今週・設定はこれまでの幅）
 - 締切カードの操作は「完了にする」と「…」。カレンダーへ・編集・雛形に保存・削除（期限切れなら明日に延期、繰り返しならこの回は休み）は「…」の中
 - 期限切れの「明日に延期」（締切を翌日の同じ時刻へ。トーストから元に戻せる）
-- 同期の説明は、Cloudflare（Worker から配信したアプリ）と旧環境（GitHub）の両方に当てはまる。違いは「保存先」と「他の端末の更新の見分け方」（Cloudflare は版番号 `rev`、GitHub は更新時刻）
+- 端末間の同期は Cloudflare だけ（Worker から配信したアプリで使える。他の端末の更新は版番号 `rev` で見分ける）
 - 最終同期時刻の表示（1日以上空くと警告。同期し忘れに気づける）
-- 上書き事故の防止（GitHubの内容を24時間以上取得していない状態や、他の端末の新しい内容を
-  まだ読み込んでいない状態で同期しようとすると確認を挟み、同意すると `backups/` に現在の内容を
-  自動保存してから上書きする。自動同期はこの場合は上書きせずに止まる）
+- 上書き事故の防止（Cloudflare の内容を24時間以上取得していない状態や、他の端末の新しい内容を
+  まだ読み込んでいない状態で同期しようとすると確認を挟み、同意すると現在の内容を世代バックアップに
+  残してから上書きする。自動同期はこの場合は上書きせずに止まる）
 - 自動同期の対象を拡大（登録・編集に加え、完了・削除・延期・休みの設定なども数秒後にまとめて同期）
 - 他端末の更新を自動で取り込む（この端末に未同期の変更が無いときに限り、起動時・画面復帰時・
-  10分ごとにGitHub上の新しい内容を自動反映。この端末で先に変更していた場合は自動上書きせず、
+  10分ごとにCloudflare上の新しい内容を自動反映。この端末で先に変更していた場合は自動上書きせず、
   一度だけ通知する）
-- Publicリポジトリへの同期を警告（締切の内容が世界に公開される事故を防ぐ。一度確認したリポジトリは再警告しない）
 - ゴミ箱（削除した締切を30日間保持。最大30件。設定（右上のメニュー（☰））から個別に復元・完全削除できる）
-- 読み込みデータの検証（GitHub上のdata.jsonが壊れていても、正常な項目はそのまま使え、
+- 読み込みデータの検証（Cloudflare 上のデータが壊れていても、正常な項目はそのまま使え、
   壊れた項目だけ隔離される。隔離項目は設定（右上のメニュー（☰））から修復して一覧に戻せる）
 - 週次レビュー通知（毎週日曜夜、Discordへ。来週7日間の見通しと1週間の達成、続けて繰り返しの調子・
   2週間の負荷予報・月初めは「サブスクなど」の支出まとめ。詳しくは「通知・連携」）
@@ -123,12 +122,12 @@
 - Discord への定期通知（Cloudflare の Cron。「定時の処理」）。下表
 - 設定（右上のメニュー（☰））から Discord へ即時送信
 - 通知の「✅完了」リンクから完了にする（`?done=`。確認を出してから完了にする）
-- 端末間の同期（Cloudflare。旧環境では GitHub 経由。送信・受信の両方向）
+- 端末間の同期（Cloudflare。送信・受信の両方向）
 - モーニングブリーフ用の連携（任意。下の「任意の追加機能」）
 - JSON でのバックアップと復元
 - ダークモード、レスポンシブ表示、ホーム画面追加用アイコン
 - オフライン起動（Service Worker）。一度開いておけば圏外でも画面が開く
-- 設定（右上のメニュー（☰））でバージョン確認（表示中の版とサーバー上の版を比較。「2026-10-31 08:00 v3.1」のように出る。版番号の付け方は [docs/VERSIONS.md](docs/VERSIONS.md)）
+- 設定（右上のメニュー（☰））でバージョン確認（表示中の版とサーバー上の版を比較。「2026-11-04 12:00 v4.0」のように出る。版番号の付け方は [docs/VERSIONS.md](docs/VERSIONS.md)）
 - 削除の取り消し（直前の1件のみ、トーストから「元に戻す」）
 - 一覧でのタイトル・メモ検索（絞り込みの列の虫めがねで開く）
 
@@ -143,7 +142,7 @@
 - 負荷予報は来週・再来週の件数とカテゴリ別の内訳。1週間の合計が6件以上、または1カテゴリが3件以上で ⚠️ を付ける
 - 支出まとめは月の最初の日曜だけ。「サブスクなど」のメモにある `¥1,980`・`1980円` を月額に換算して合計する
 - 見出しの件数と負荷予報には、自動完了の予定（締切を過ぎると自動で完了になるもの）を数えない。一覧には出す（件数は「N件＋自動完了M件」）
-- 旧環境にあった「毎週月曜の `data.json` の添付」は、Cloudflare 版では送らない（D1 に世代バックアップがあり、メモを含む全データを Discord に置かないため）
+- 旧環境にあった「毎週月曜の `data.json` の添付」は送らない（D1 に世代バックアップがあり、メモを含む全データを Discord に置かないため）
 
 ---
 
@@ -172,7 +171,7 @@ deadline-tracker（Public）
 ├── test/               単体テスト（node --test）。D1 の代わりに node:sqlite を使う
 ├── docs/               移行の計画（cloudflare-migration.md）・改善案（IMPROVEMENTS.md・DESIGN-IMPROVEMENTS.md）
 ├── .github/            CI・コードレビュー・マージ時のメール（下の「マージ時のメール」）
-└── deadline-data-template/   旧環境の send_digest.sh の雛形（Worker の文面と比べるテストの元にもなる）
+└── deadline-data-template/   旧環境の send_digest.sh の雛形（Worker の文面と比べるテストの元になっている）
 ```
 
 Public リポジトリはファイル一覧もコミット履歴も公開される。**秘密（アクセスキーなど）と締切データは、このリポジトリに置かない**。秘密は Cloudflare のシークレットに、データは D1 にある。
@@ -328,155 +327,14 @@ Cron は UTC で書く（`UTC = JST − 9時間`）。無料プランの本数�
 
 ---
 
-## 旧環境（GitHub Pages・deadline-data）
+## 旧環境（終了）
 
-**移行が終わるまで残している旧環境。**段階5（`docs/cloudflare-migration.md`）で、GitHub Pages の停止・GitHub 同期コードの削除・`deadline-data` のアーカイブを行う。今は、ルートのファイルが GitHub Pages で配信され、アプリは GitHub への同期でも動く。旧環境の Discord 通知・メールは、Cloudflare 版と二重にならないよう止めてある（コードは `deadline-data` の `archive/` にある）。
+以前は、GitHub Pages でアプリを配信し、締切データを非公開リポジトリ `deadline-data` の `data.json` に GitHub Contents API で同期し、通知を GitHub Actions で送っていた。Cloudflare への移行（`docs/cloudflare-migration.md`）で、段階5までに次のとおり終えた。
 
-### 構成（旧）
-
-リポジトリを2つに分けている。締切の内容が他人に見えないよう、**データは必ず Private 側に置く**。
-
-```
-deadline-tracker（Public / GitHub Pages で公開）
-├── index.html              画面の骨組み
-├── app.js                  アプリ本体のJavaScript（CSPで inline script を許さないため分けている）
-├── styles.css              見た目（CSS。CSPで <style> 要素を許さないため分けている）
-├── manifest.webmanifest    ホーム画面追加用の設定
-├── service-worker.js       オフライン起動用
-├── assets/
-│   └── icon-180/192/512.png    アイコン
-├── .github/                    PR をマージしたとき、変更点を Gmail で自分宛てに送る（下の「マージ時のメール」）
-└── deadline-data-template/     Private側に置く send_digest.sh の雛形（設定は空。使い方は同梱のREADME）
-
-deadline-data（Private / データと自動送信）
-├── data.json                           締切データ（アプリから自動生成・更新）
-├── feed.json                           モーニングブリーフ用の一覧（自動生成。手で編集しない）
-├── backups/                            上書き前の自動バックアップ（月1回、古いものを間引く）
-└── .github/
-    ├── workflows/
-    │   ├── daily-digest.yml            朝・夜・日曜夜の Discord 通知
-    │   ├── check.yml                   更新時に data.json の中身を検証し、送信せず動作確認。失敗は Discord にも知らせる
-    │   ├── build-feed.yml              data.json の更新ごとに feed.json を作り直す（任意）
-    │   ├── send-feed-mail.yml          締切一覧を自分宛ての Gmail で送る（任意）
-    │   ├── publish-ics.yml             購読用 .ics を秘密 Gist へ書き出す（任意）
-    │   └── prune-backups.yml           backups/ を毎月間引く（任意）
-    └── scripts/
-        ├── send_digest.sh              Discordへ送る処理（設定はこの冒頭）
-        ├── build_ics.py                .ics を作る処理
-        ├── validate_data.py            data.json の中身チェック
-        ├── build_feed.py               feed.json を作る処理
-        ├── send_feed_mail.py           Gmail へ送る処理
-        └── prune_backups.py            バックアップの間引き
-```
-
-> `deadline-data-template/` には、個人の設定値を空にした `send_digest.sh` だけを置いている。ほかのファイルは deadline-data にあるものと同じなので、
-> そちらから写す（同じファイルを2か所で持たないため）。必要なものだけ選んで置けばよい。
-> deadline-data は作者の Private リポジトリなので、ほかの人はこの公開リポジトリだけでは写せない。その場合は上の構成図のファイル名と役割を目安に、必要なものを自分で用意する。
-> 置いたものだけが動き、Secret を登録していない機能は何もせずに終わる。
-
-Public リポジトリはファイル一覧もコミット履歴も公開される。ファイル名を変えたり深い階層に置いても隠したことにはならないため、リポジトリの分離が唯一の確実な方法になる。
-
-#### 技術構成
-
-| 要素 | 内容 |
-|---|---|
-| ホスティング | GitHub Pages |
-| フロントエンド | HTML / CSS / JavaScript（フレームワークなし・ビルド不要） |
-| データ保存 | localStorage ＋ GitHub Contents API による同期 |
-| 定期実行 | GitHub Actions（cron） |
-| 費用 | 0円 |
-
-
-### セットアップ（旧）
-
-#### 1. アプリを公開する
-
-1. `index.html`・`app.js`・`styles.css`・`manifest.webmanifest`・`service-worker.js`・`assets/` フォルダを、自分の Public リポジトリにアップロードする
-2. **Settings → Pages** を開き、Source を `Deploy from a branch`、Branch を `main / (root)` にして Save
-3. 1〜2分待つと `https://<ユーザー名>.github.io/<リポジトリ名>/` で開く
-
-iPhone では Safari で開いて共有ボタン →「ホーム画面に追加」でアプリのように使える。
-
-ここまでで、締切の管理と `.ics` の書き出しは使える。以降は任意の機能。
-
-#### 2. 端末間で同期する
-
-1. Private リポジトリ（例：`deadline-data`）を新規作成する
-2. **Settings（アカウント） → Developer settings → Fine-grained tokens** でトークンを発行する
-   - Repository access: 作成した Private リポジトリのみ
-   - Permissions: **Contents → Read and write**
-3. アプリの **設定（右上のメニュー（☰）） → 端末間の同期とDiscord通知** に、ユーザー名・リポジトリ名・トークンを入力する
-4. **GitHubに同期する** で送信、別の端末では **GitHubから読み込む** で受信
-
-> 読み込むと、その端末のデータは GitHub 上の内容で**置き換わる**（実行前に確認が出る）。両方の端末で別々に編集してから読み込むと片方が消えるため、「登録するのは主に1台、他は読み込むだけ」という使い方が安全。
-
-#### 3. Discord へ毎朝の連絡を送る
-
-1. Discord のチャンネル設定 →「連携サービス」→「ウェブフック」で URL を取得する
-2. Private リポジトリに `.github/workflows/daily-digest.yml` と `.github/scripts/`（`send_digest.sh`・`build_ics.py`）を配置する
-   - `send_digest.sh` は **`deadline-data-template/` のもの**（設定値は空にしてある）、それ以外は元の deadline-data（このアプリのデータ用リポジトリ）の同じ場所のファイルを写す
-   - GitHub 上で **Add file → Create new file** を選び、ファイル名にスラッシュを含めて入力するとフォルダごと作られる
-   - ワークフロー内の `run:` のパスと、スクリプトの実際の置き場所を一致させること
-3. Webhook URL を設定する（Private リポジトリの Secrets に `DISCORD_WEBHOOK_URL` として登録するか、`send_digest.sh` の冒頭に記入する）。メンション先などもスクリプト冒頭で設定する
-4. Private リポジトリの **Actions** タブ → **Run workflow** で動作を確認する（**dry_run** にチェックすると送らずにログで本文を確認できる）
-
-> ⚠️ Webhook URL をスクリプトに直接書く場合、**このファイルは必ず Private リポジトリに置くこと**。万一漏れた場合は Discord 側でウェブフックを削除すれば即座に無効化できる。Secrets に登録した値はワークフローから渡され、スクリプト内の値より優先される。
-
-#### 4. 任意の追加機能
-
-どれも元の deadline-data（このアプリのデータ用リポジトリ）の対応するファイルを自分の Private リポジトリに置くだけで、置かなければ何も起きない。
-
-| 機能 | 置くもの | 必要な設定 |
-|---|---|---|
-| モーニングブリーフ用の一覧 | `build-feed.yml`・`build_feed.py` | なし（`GITHUB_TOKEN` でコミットする） |
-| 締切を Gmail で自分宛てに送る | `send-feed-mail.yml`・`send_feed_mail.py` | Secret に `GMAIL_ADDRESS`・`GMAIL_APP_PASSWORD`（アプリパスワード）。未登録なら送らない。メール本文の先頭に「おすすめの順番」が付く |
-| 購読用 .ics（URL で購読） | `publish-ics.yml` | 秘密 Gist を作り、Secret に `GIST_ID`・`GIST_TOKEN`（Gists: Read and write）。未登録なら何もしない |
-| バックアップの間引き | `prune-backups.yml`・`prune_backups.py` | なし（毎月28日。直近14日は全部、〜90日は週1つ、それ以前は月1つ残す） |
-| data.json の中身チェック | `validate_data.py`・`check.yml` | なし（id の重複・日時・繰り返しの値などを見て、エラーなら失敗） |
-
-> ⚠️ 購読用 .ics の秘密 Gist は、**URL を知っていれば誰でも読める**。メモは書き出さないが、タイトル・日時・カテゴリは外に出る。
-> 外に出したくなければ Secret を登録しない（登録しない間は何も公開されない）。
-
-### 設定項目（旧）
-
-#### `.github/scripts/send_digest.sh` の冒頭
-
-```bash
-DEFAULT_WEBHOOK_URL="https://discord.com/api/webhooks/..."   # 通知先
-MENTION_USER_ID="000000000000000000"                         # 空にするとメンションしない
-DEFAULT_WINDOW_DAYS="7"                                      # 何日以内を対象にするか
-BACKUP_DOW="1"                                               # data.json を添付する曜日（1=月, 0=しない）
-APP_URL="https://<ユーザー名>.github.io/<リポジトリ名>/"      # 通知に載せるアプリのリンク
-ATTACH_ICS="0"                                               # .ics を添付するか（既定0）
-ICS_DAY_HOUR="9"                                             # .ics 内の当日リマインド時刻
-LOAD_WARN="6"                                                # 負荷予報で ⚠️ を付ける、1週間の合計件数
-CAT_WARN="3"                                                 # 同、1カテゴリの件数
-SUBSC_CAT="サブスクなど"                                      # 月初めに支出をまとめるカテゴリ（空にすると出さない）
-DONE_LINKS="1"                                               # 期限切れ・今日が締切の行に「✅完了」リンクを付ける（0で無し）
-```
-
-#### `.github/workflows/daily-digest.yml`
-
-```yaml
-- cron: "47 21 * * *"     # UTC 21:47 = JST 6:47（朝）
-- cron: "45 12 * * 0"     # UTC 12:45 日曜 = JST 21:45 日曜（週次レビュー）
-- cron: "47 11 * * 1-6"   # UTC 11:47 月〜土 = JST 20:47 月〜土（夜の再通知）
-```
-
-cron は UTC 基準（`UTC = JST − 9時間`）。GitHub の cron は混雑時に遅れるため、「0分ちょうど」を避けると比較的安定する。数十分の遅延は仕様上ありうるので、「朝のうちに届けばよい」程度の想定で使う。
-
-### データとバックアップ（旧）
-
-保存先はブラウザの localStorage で、端末ごとに独立している。復元手段は3つある。
-
-| 手段 | 作られるタイミング | 復元方法 |
-|---|---|---|
-| GitHub のコミット履歴 | 同期のたび | `data.json` → History から任意の時点を取得 |
-| `backups/` の自動バックアップ | 上書きの確認に同意して同期したとき | `backups/data-日時.json` を取得して「JSONを読み込む」。月1回、古いものから間引かれる |
-| Discord への週次添付 | 毎週月曜の朝 | 添付を保存 → 設定（右上のメニュー（☰））の「JSONを読み込む」 |
-| 手動の JSON 書き出し | 任意 | 同上 |
-
-最も細かく戻せるのはコミット履歴。`backups/` は間引かれるので、古い時点に戻したいときもコミット履歴を使う。
+- アプリ（v4.0）から、GitHub への同期（トークン・リポジトリ名の設定、Public 確認、`backups/` への退避）と、Discord へ端末から直接送る処理（Webhook URL の入力・端末保存、登録のたびの自動通知）を削除した。通知の送信は Worker だけが行う
+- 端末に残っていた旧設定（GitHub のトークン・リポジトリ名、Webhook URL）は、アプリを開いたときに自動で消す
+- GitHub Pages は停止する。`deadline-data` は、移行前のバックアップ（`archive/pre-cloudflare-2026-10-23/`）を残してアーカイブする
+- 旧環境のアプリが必要になった場合は、v3.3 までの Git の履歴から取り出せる（`deadline-data-template/` に send_digest.sh の雛形だけ残してある）
 
 ---
 
@@ -536,13 +394,13 @@ Discord などの添付ファイルを直接タップすると、iOS は「照�
 
 差分のマージは行わない。他の端末の新しい更新があるときは、読み込むか、バックアップ付きで上書きするかを選ぶ（「セットアップ」の「2. 端末をつなぐ」）。
 
-**アクセスキー（旧環境では GitHub トークン）・Discord Webhook URL の保存と CSP**
+**アクセスキーの保存と CSP**
 
-設定（右上のメニュー（☰））で「この端末にアクセスキーを保存」（旧環境では「この端末にトークンを保存」）「この端末に保存（Webhook URL）」を選ぶと、アクセスキー・トークンと Webhook URL は**暗号化して**保存する（同じ仕組み・同じ鍵を使う）。ブラウザが端末ごとに作る「取り出せない鍵」（WebCrypto）で AES-GCM 暗号化し、鍵は IndexedDB、暗号文（`enc1:...`）は localStorage に置く。以前の版が平文で保存していた値は、開いたときに自動で暗号化し直す。
+設定（右上のメニュー（☰））で「この端末にアクセスキーを保存」を選ぶと、アクセスキーは**暗号化して**保存する。Discord の Webhook URL は端末には置かない（Worker のシークレットにだけある）。仕組み：このブラウザに「取り出せない鍵」（WebCrypto・`extractable:false`）を作って IndexedDB に置き、その鍵で暗号化した文字列だけを localStorage に残す。
 
 - 守れるのは、localStorage の中身だけが漏れた場合（バックアップの流出・保存領域の抜き出し・画面の写り込みなど）。同じページで動くスクリプトが乗っ取られた場合は、鍵を使って復号されてしまう。そちらは CSP（`script-src 'self'`：`app.js` 以外のスクリプトを実行しない、通信先は自分と同じオリジン〔Worker の `/api/`〕・GitHub・Discord だけ）で防ぐ
-- ブラウザのサイトデータを消すなどで鍵が失われると、保存済みの値は読めなくなる。そのときは自動で消えるので、入力し直す（Webhook URL は空欄のまま送れば、GitHub の設定から取り直せる）
-- 暗号化できない環境（IndexedDB / WebCrypto が使えない）では、平文で残さず保存しない。設定（右上のメニュー（☰））にその旨が出て、今回の操作にだけトークンを使う
+- ブラウザのサイトデータを消すなどで鍵が失われると、保存済みの値は読めなくなる。そのときは自動で消えるので、アクセスキーを入力し直す
+- 暗号化できない環境（IndexedDB / WebCrypto が使えない）では、平文で残さず保存しない。設定（右上のメニュー（☰））にその旨が出て、今回の操作にだけアクセスキーを使う
 - Worker から配信するときの CSP と、`frame-ancestors 'none'` などのセキュリティヘッダーは、`scripts/build.mjs` が `index.html` の meta から `web/_headers` に作る。
 - CSP のため、HTML にインライン `<script>` や `onclick="..."` を書かない（イベントは `app.js` で付ける）。CSS は `styles.css` に置き、`<style>` 要素も `style="..."` の属性も許さない（`style-src-elem`・`style-src-attr 'none'`。`'unsafe-inline'` は付けない）。固定の見た目は `styles.css` のクラスに置き、計算で決まる値（色・幅・位置）は `data-st="プロパティ:値;…"` で渡す（`app.js` の `applyDyn` が、要素ができてから CSSOM で付ける）
 
@@ -563,10 +421,6 @@ Cloudflare 版:
 - [ ] 設定の「世代バックアップの一覧を読み込む」で一覧が出て、「中身」で件数が見える（`GET /api/snapshots` でも同じ）
 - [ ] （任意）購読用 `.ics` の URL をカレンダーに追加して、予定が出る（メモは入らない）
 - [ ] Public リポジトリ側に、秘密や締切データ（`data.json` など）が残っていない
-
-旧環境（移行が終わるまで）:
-
-- [ ] GitHub Pages の URL が開き、設定で GitHub に同期できる
 
 ---
 
