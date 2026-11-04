@@ -28,11 +28,12 @@ function load(names) {
 }
 
 test('古いキャッシュは、このアプリ（deadline-tracker-）のものだけ消す。同じオリジンの他のアプリのキャッシュは消さない', async () => {
-  const { handlers, deleted } = load(['deadline-tracker-v32', 'deadline-tracker-v33', 'other-app-v1', 'shared-cache']);
+  const current = /const CACHE_NAME = "([^"]+)"/.exec(SRC)[1]; // 今のキャッシュ名（版を上げるたびに変わるので、ソースから読む）
+  const { handlers, deleted } = load(['deadline-tracker-v0', current, 'other-app-v1', 'shared-cache']);
   let waiting;
   handlers.activate({ waitUntil: (p) => { waiting = p; } });
   await waiting;
-  assert.deepEqual(deleted, ['deadline-tracker-v32'], '今のキャッシュ（v33）と、他のアプリのキャッシュは残す');
+  assert.deepEqual(deleted, ['deadline-tracker-v0'], '今のキャッシュと、他のアプリのキャッシュは残す');
 });
 
 test('締切データ（/api/）と購読用の .ics（/ics/）は、Service Worker が取り扱わない（保存もしない）', () => {

@@ -10,19 +10,19 @@
      style="..." の属性も許さない（style-src-attr 'none'）。HTML に style 属性を書くと効かなくなる。
      固定の見た目は styles.css のクラスに置き、計算で決まる値（色・幅・位置）は data-st="プロパティ:値;…" で渡す（app.js の applyDyn が、要素ができてから CSSOM で付ける）。
      'unsafe-inline' は付けない：style-src-elem/attr を知らない古いブラウザでも、style 属性は許されない。
-     外部へ通信する機能（GitHub同期・Discord送信・フォント）を足すときは、ここにも追加すること -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'none'; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://api.github.com https://discord.com https://discordapp.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+     外部へ通信する機能（フォントなど）を足すときは、ここにも追加すること -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; style-src-elem 'self' https://fonts.googleapis.com; style-src-attr 'none'; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <!-- ブラウザがHTMLを保持し続けないようにする（更新をすぐ反映させるため） -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <!-- ファイルを差し替えるたびに、この日時を更新する（設定タブに表示され、最新版かの判断に使う）。
      app.js / styles.css を変えたときは、<script src="app.js?v=..."> / <link href="styles.css?v=..."> の v も同じ日時（例 20261009-1019）に変える。
-     これは GitHub Pages（旧環境）用の手作業。Worker から配信する web/ は、ビルド（scripts/build.mjs）が v・スタンプ・キャッシュ名をハッシュで自動で書き換える。旧環境をやめたら、この手作業は不要 -->
-<meta name="build-stamp" content="2026-10-31 14:00 メモ内チェックリスト（チェック欄と進み具合）">
-<!-- アプリの版番号（設定の「バージョン」に「2026-10-31 08:00 v3.1」のように出る）。大きな変更のときに手で上げる。決め方は docs/VERSIONS.md。
-     package.json の version（3.1.0）と major.minor をそろえる（テストで確かめる） -->
-<meta name="app-version" content="3.3">
+     Worker から配信する web/ は、ビルド（scripts/build.mjs）が v・スタンプ・キャッシュ名をハッシュで自動で書き換える（GitHub Pages の旧環境は終了したので、この手作業は必須ではない。ルートのファイルを直接開くときの目安として残している） -->
+<meta name="build-stamp" content="2026-11-04 12:00 旧環境（GitHub 同期・Discord の直接送信）のコードを削除">
+<!-- アプリの版番号（設定の「バージョン」に「2026-11-04 12:00 v4.0」のように出る）。大きな変更のときに手で上げる。決め方は docs/VERSIONS.md。
+     package.json の version（4.0.0）と major.minor をそろえる（テストで確かめる） -->
+<meta name="app-version" content="4.0">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
@@ -35,7 +35,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20261031-1400">
+<link rel="stylesheet" href="styles.css?v=20261104-1200">
 </head>
 <body>
 
@@ -115,6 +115,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20261031-1400"></script>
+<script src="app.js?v=20261104-1200"></script>
 </body>
 </html>

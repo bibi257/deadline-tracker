@@ -13,8 +13,8 @@ before(() => { mock.method(console, 'log', () => {}); mock.method(console, 'erro
 after(() => mock.restoreAll());
 
 const FNS = [
-  'cfKnownRev', 'cfSaveRev', 'cfFetchData', 'cfFetchState', 'cfPut', 'cfAskOverwrite', 'remoteHasUnknownChanges', 'fetchRemoteState',
-  'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'ghHint',
+  'cfKnownRev', 'cfSaveRev', 'cfFetchData', 'cfFetchState', 'cfPut', 'cfAskOverwrite', 'remoteHasUnknownChanges',
+  'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'syncHint',
   'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems', 'cfAutoBlocked', 'cfNoteAuthFailure',
   'cfSnapUrl', 'cfGetJson', 'cfFetchSnapshots', 'cfReadSnapshot', 'fmtSnapAt', 'cfRestoreSnapshot',
   'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker',
@@ -53,7 +53,7 @@ function world() {
       normalizeTrash: (x) => x, cleanCatReminders: (x) => x, cleanCatColors: (x) => x, adoptCompletions() {},
       sanitizeIncomingMeta: () => ({ templates: null, categories: null }),
       _autoSyncBlockedShown: false, _staleNoticeShown: false, CF_REV_KEY: 'cf-known-rev',
-      utf8ToBase64: () => '', hoursSincePulled: () => null,
+      hoursSincePulled: () => null,
       // 起動時の「取り込み → 自動完了」用（本物の applyCompletion / save は画面まわりに依存するので、同じ効果だけ再現する）
       // .ics の書き出し（Worker 優先）用
       CF: true, cfDetect: async () => true, activeItems: () => d.db.items.filter((i) => !i.done),
@@ -199,9 +199,9 @@ test('手動同期の 409: 新しい rev で再送せず、読み込みか「バ
     B.edit('Bの更新');
     await B.sync(); // サーバーは rev2。A の known は 1
     // 最初の「確認」だけ、更新の前の古い状態を返す（確認と送信の間に B が更新した状況）。2回目以降は本当の状態
-    const real = A.ctx.fetchRemoteState;
+    const real = A.ctx.cfFetchState;
     let first = true;
-    A.ctx.fetchRemoteState = (cfg) => (first ? ((first = false), Promise.resolve({ cf: true, sha: '1', updatedAt: null, itemCount: 1 })) : real(cfg));
+    A.ctx.cfFetchState = (cfg) => (first ? ((first = false), Promise.resolve({ cf: true, sha: '1', updatedAt: null, itemCount: 1 })) : real(cfg));
     A.edit('Aの更新');
     return { w, A };
   };
