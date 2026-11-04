@@ -7,8 +7,8 @@
 - 画面: HTML 1枚 + `app.js` + `styles.css`。フレームワークなし・ビルドなし（ES5 風の素の JavaScript）。ルートに置く
 - 保管 API: Cloudflare Worker + D1（`worker/src/index.js`）。設定はルートの `wrangler.jsonc`。利用者は自分1人
 - 配信: Cloudflare の Workers Builds が `main` から自動デプロイする（PR では「Workers Builds」のチェックが走る）。`web/` は `scripts/build.mjs` が作る生成物でコミットしない
-- 旧環境: GitHub Pages（ルートから配信）と、非公開リポジトリ `deadline-data` への GitHub 同期。移行が終わるまで壊さない
-- 移行の計画と進捗: `docs/cloudflare-migration.md`
+- Cloudflare への移行は完了（2026-11-04）。経緯は `docs/cloudflare-migration.md`。旧環境（GitHub Pages・`deadline-data`）は終了していて、守る必要はない
+- ルートの `index.html` の `app.js?v=`・`styles.css?v=`・`build-stamp`、`service-worker.js` の `CACHE_NAME` は `dev` のまま手で更新しない。`web/` はビルド（`scripts/build.mjs`）が内容のハッシュと日時に書き換える
 
 ```
 worker/src/   API（認証・データの保存・世代バックアップ）
