@@ -1,6 +1,6 @@
 // 画面のファイルを web/ にそろえる（Worker の静的配信用）。
-// GitHub Pages がリポジトリのルートから配信している間は、ルートが元で web/ は写し。
-// Pages をやめたら、ファイルを web/ に移してこのスクリプトを不要にする
+// ルートの画面のファイルが元で、web/ はこのスクリプトが作る写し（Worker の静的配信用。コミットしない）。
+// ルートの index.html の ?v=・build-stamp と service-worker.js の CACHE_NAME は `dev` のままにし、ここで本当の値に書き換える
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -52,7 +52,8 @@ export function versionIndexHtml(html, { app, css, all, date }) {
   let out = replaceOnce(html, /(<script src="app\.js\?v=)[^"]*("><\/script>)/, `$1${app}$2`, 'index.html の app.js?v=');
   out = replaceOnce(out, /(<link rel="stylesheet" href="styles\.css\?v=)[^"]*(">)/, `$1${css}$2`, 'index.html の styles.css?v=');
   return replaceOnce(out, /(<meta name="build-stamp" content=")([^"]*)(")/, (_, a, stamp, c) => {
-    const note = stamp.replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}\s*/, '').trim(); // 元の先頭の手書きの日時は外す
+    // 元の先頭の手書きの日時は外す。ルートの印 `dev` は説明ではないので、web/ には残さない
+    const note = stamp === 'dev' ? '' : stamp.replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}\s*/, '').trim();
     return `${a}${[date, `[${all}]`, note].filter(Boolean).join(' ')}${c}`;
   }, 'index.html の build-stamp');
 }
@@ -85,7 +86,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await cp(`${root}assets`, `${out}assets`, { recursive: true });
   const text = (f) => readFile(`${root}${f}`, 'utf8');
   const [index, app, css, sw] = await Promise.all([text('index.html'), text('app.js'), text('styles.css'), text('service-worker.js')]);
-  // ルートのファイル（GitHub Pages 用の旧環境）は手で版番号を更新する。web/ には、内容のハッシュを自動で入れる
+  // ルートのファイルは `dev` のまま（手で版番号を更新しない）。web/ には、内容のハッシュと日時を自動で入れる
   const all = hash10(index, app, css, sw);
   await writeFile(`${out}index.html`, versionIndexHtml(index, { app: hash10(app), css: hash10(css), all, date: versionDate(root) }));
   await writeFile(`${out}service-worker.js`, versionServiceWorker(sw, all));

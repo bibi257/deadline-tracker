@@ -3,8 +3,8 @@
 // データそのものはlocalStorageにあるので、ここではアプリの「殻」だけキャッシュする。
 //
 // キャッシュ名を変えると古いキャッシュは自動で破棄される。
-// 中身（index.html等）を大きく更新したときは、この名前も変えると確実に切り替わる。
-const CACHE_NAME = "deadline-tracker-v40";
+// ここは `dev` のまま手で更新しない。Worker から配信する web/ は、ビルド（scripts/build.mjs）が内容のハッシュに書き換える（版が変わると切り替わる）。
+const CACHE_NAME = "deadline-tracker-dev";
 const CORE_FILES = [
   "./",
   "./index.html",
