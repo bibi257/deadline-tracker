@@ -145,9 +145,24 @@ function load(){
   db.trash=db.trash.filter(function(t){ return new Date(t.deletedAt).getTime()>=cutoff; });
   if(db.trash.length>30) db.trash=db.trash.slice(db.trash.length-30);
   if(typeFixed) writeDb(); // 型を直した項目があれば、保存し直す（updatedAt は変えない）
+  // 「人の未送信の変更」の印が無い端末（この版より前）は、前回同期した時刻との比較で初期値を決める
+  if(store.get("sync-dirty")===null) store.set("sync-dirty", (db.updatedAt && store.get("gh-known-updatedAt")!==db.updatedAt) ? "1" : "0");
 }
-/* 通常の保存。呼ぶたびに「この端末で今変更した」時刻を刻む */
-function save(){ db.updatedAt=new Date().toISOString(); writeDb(); }
+/* 通常の保存（人の操作）。呼ぶたびに「この端末で今変更した」時刻を刻み、「人の未送信の変更あり」の印を立てる */
+var _editSeq=0; // 人の保存の回数（送信中に新しい編集が入ったかを見分ける）
+function save(){ db.updatedAt=new Date().toISOString(); _editSeq++; store.set("sync-dirty","1"); writeDb(); }
+/* 機械の処理（期限切れの自動完了）の保存。同じデータ・同じ時刻からは、どの端末でも同じ結果になるので、
+   「人の未送信の変更」の印は立てない（立てると、他の端末の更新の自動取り込みが止まる）。updatedAt は進める */
+function saveAuto(){ db.updatedAt=new Date().toISOString(); writeDb(); }
+/* 人の操作による、まだ送っていない変更があるか。印が無い（この版より前の）端末は、前回同期した時刻との比較で決める */
+function hasUnsyncedChanges(){
+  var d=store.get("sync-dirty");
+  if(d===null) return !!(db.updatedAt && store.get("gh-known-updatedAt")!==db.updatedAt);
+  return d==="1";
+}
+/* 送信（PUT）か取り込みが成功したときに、印を消す。mark は送る内容を作った時点の _editSeq。
+   送信中に新しい人の編集が入っていたら（_editSeq が進んでいたら）消さない */
+function markClean(mark){ if(mark===undefined || mark===_editSeq) store.set("sync-dirty","0"); }
 /* 保存データを書く。読めなかった元のデータがあれば、上書きする前に別のキーへ退避する */
 function writeDb(){
   if(_unreadableRaw!==null){
@@ -177,8 +192,11 @@ function saveRaw(){ writeDb(); }
    週次レビューでまとめる。古い記録は上限を超えたら捨て、そのEXPだけ expCarry に繰り越す */
 var COMPLETION_LIMIT=500;
 function cleanCompletions(arr){
+  var seen={};
   return (Array.isArray(arr)?arr:[]).filter(function(c){
-    return c && typeof c.id==="string" && !isNaN(new Date(c.doneAt).getTime());
+    if(!c || typeof c.id!=="string" || isNaN(new Date(c.doneAt).getTime())) return false;
+    if(seen[c.id]) return false; // 同じ id の記録は1件だけ残す（先に出たものを残す）
+    seen[c.id]=1; return true;
   }).map(function(c){ var x=Object.assign({},c); x.exp=Math.max(0,Number(x.exp)||0); return x; });
 }
 function adoptCompletions(d){
@@ -588,7 +606,7 @@ function downloadICS(items,name){
    キーが無い・通信できない・失敗したとき、中身が空のときは、この端末で作る（オフラインでも書き出せる） */
 function icsViaWorkerOk(list){
   if(CF!==true || !list.length || list.length!==activeItems().length) return false;
-  return !(db.updatedAt && store.get("gh-known-updatedAt")!==db.updatedAt);
+  return !hasUnsyncedChanges();
 }
 function cfFetchIcs(cfg,dayHour){
   // 当日リマインドの時刻は端末ごとの設定で Worker は知らないので、渡す
@@ -1162,6 +1180,7 @@ function autoSyncIfConfigured(){
 function runAutoSync(cfg){
   if(cfAutoBlocked(cfg)) return;
   var pushedAt=db.updatedAt; // 送信中に別の編集が入っても、送った時点の値を記録するため捕捉しておく
+  var mark=_editSeq;         // 送る内容を作った時点の、人の編集の回数
   var payload=syncPayload();
   // 手元の rev を If-Match に付けて直接送る（衝突は Worker が 409 で断る）。先に全データを読み直さない
   cfPut(cfg,payload)
@@ -1182,6 +1201,7 @@ function runAutoSync(cfg){
         markSynced("自動同期");
         markPulled(); // 送った内容＝この端末の最新状態としてよい
         store.set("gh-known-updatedAt", pushedAt); // 保存先ともこの時点で一致した
+        markClean(mark);
         _autoSyncBlockedShown=false;
         _autoSyncFailShown=""; _lastAutoSyncError=null;
         toast("Cloudflareに自動同期しました");
@@ -2257,7 +2277,7 @@ function snapshotRow(sn,cfg,status){
       detail.textContent="締切 "+items.length+"件"+(titles.length?"：":"")+titles.join("、")+(items.length>5?" ほか":"");
       var bBack=h('<button class="act danger act-block">この時点に戻す</button>');
       bBack.onclick=function(){
-        var unsynced=db.updatedAt && store.get("gh-known-updatedAt")!==db.updatedAt;
+        var unsynced=hasUnsyncedChanges();
         if(!confirm("Cloudflareのデータを、"+when+"（版 "+sn.rev+"・"+items.length+"件）の内容に戻します。\n\n"+
           "今のCloudflareの内容は、先に世代バックアップへ残します。この世代バックアップも消えません。"+
           (unsynced ? "\n\nこの端末には、まだ同期していない変更があります。戻すと、その変更は失われます。" : "")+"\n\nよろしいですか？")) return;
@@ -2887,6 +2907,7 @@ function cfRestoreSnapshot(cfg,snap){
     markSynced("復元");
     markPulled();
     store.set("gh-known-updatedAt", db.updatedAt); // 保存先もこの時刻の内容と一致した（版は cfPut が保存した）
+    markClean();
     return {n:check.kept.length, quarantined:check.quarantined.length};
   });
 }
@@ -2985,7 +3006,7 @@ function autoPullWith(cfg){
       var knownRev=cfKnownRev();                // 版（rev）で比べる（他の端末の時計に左右されない）
       if(!knownRev) return;                     // 版を一度も確認していない端末は、必ず手動の読み込み・同期を経由させる
       var remoteChanged=(String(cfRev)!==knownRev); // 前回同期時点から保存先が変わったか
-      var localChanged=(localAt!==known);       // 前回同期時点からこの端末で変更したか（自分の値同士の比較）
+      var localChanged=hasUnsyncedChanges();    // この端末に、人の操作による未送信の変更があるか（機械の自動完了は数えない）
       if(!remoteChanged) return;                // 保存先に新しい内容が無ければ何もしない
 
       if(!localChanged){
@@ -3005,8 +3026,10 @@ function autoPullWith(cfg){
         markPulled();
         markSynced("自動反映");
         store.set("gh-known-updatedAt", d.updatedAt);
+        markClean();
         cfSaveRev(cfRev);
         toast("他の端末で更新された内容を自動で反映しました"+(check.quarantined.length?"（"+check.quarantined.length+"件は隔離）":""));
+        if(autoCompleteOverdueItems()>0) softRender(); // 取り込んだ内容に、期限切れの自動完了をもう一度かける（どの端末でも同じ結果になる）
       } else if(!_staleNoticeShown){
         // 双方が前回同期後に変更されている（競合）→ 自動上書きはしない。一度だけ知らせる
         _staleNoticeShown=true;
@@ -3111,6 +3134,7 @@ function proceedPull(cfg,statusEl){
       markPulled();
       _autoSyncFailShown=""; _lastAutoSyncError=null; // 読み込めたので、自動同期の失敗の表示は消す
       store.set("gh-known-updatedAt", db.updatedAt); // 保存先もこの時刻の内容と一致した
+      markClean();
       cfSaveRev(cfg.rev);
       statusEl.textContent="読み込みました（"+n+"件）。"+(check.quarantined.length?(" "+check.quarantined.length+"件は形式が不正のため隔離しました（設定で確認できます）。"):"");
       toast(RN()+"から"+n+"件を読み込みました"+(check.quarantined.length?"（"+check.quarantined.length+"件は隔離）":""));
@@ -3174,6 +3198,7 @@ function doSync(cfg,statusEl,backedUp){
   // 一度も保存していない端末はupdatedAtが無いので、送る直前に確定させる
   if(!db.updatedAt) db.updatedAt=new Date().toISOString();
   var pushedAt=db.updatedAt; // 送信中の編集に影響されないよう、送った時点の値を捕捉
+  var mark=_editSeq;
   var payload=syncPayload(); // 自動同期と同じ内容を送る
   // 送る内容を作った時点の版。確認と送信の間に自動の取り込みで版が進んでも、この版で送る（新しい版を古い内容で上書きしない）
   var baseRev=cfKnownRev();
@@ -3213,6 +3238,7 @@ function doSync(cfg,statusEl,backedUp){
       markPulled(); // 自分が今アップロードした内容＝この端末の最新状態、として扱う
       _autoSyncFailShown=""; _lastAutoSyncError=null; // 手動の同期が通ったので、自動同期の失敗の表示は消す
       store.set("gh-known-updatedAt", pushedAt); // 保存先もこの時刻の内容と一致した
+      markClean(mark);
       statusEl.textContent="同期しました。次の朝のダイジェストから反映されます。";
       toast("Cloudflareに同期しました");
     })
@@ -3510,7 +3536,9 @@ function logCompletion(it, source){
   else if(hours<0){ kind="late"; exp=5; }
   else if(hours<24){ kind="ontime"; exp=10; }
   else { kind="early"; exp=10+Math.min(40, 5*Math.floor(hours/24)); }
-  var c={id:"c"+now.getTime().toString(36)+Math.random().toString(36).slice(2,6), itemId:it.id, title:it.title,
+  // 自動完了の記録の id は、締切の id と、その回の締切日時で決まる値にする（2台で同じ締切を自動完了しても、記録が重複しないように）
+  var cid=source==="auto" ? "auto:"+it.id+":"+due.toISOString() : "c"+now.getTime().toString(36)+Math.random().toString(36).slice(2,6);
+  var c={id:cid, itemId:it.id, title:it.title,
          cat:it.cat||"その他", due:due.toISOString(), doneAt:now.toISOString(), lead:Math.round(hours*10)/10,
          kind:kind, exp:exp, src:source};
   if(isRepeating(it)) c.rep=true;
@@ -4044,7 +4072,7 @@ function autoCompleteOverdueItems(){
     affected++;
   });
   if(affected>0){
-    save();
+    saveAuto(); // 機械の処理なので、「人の未送信の変更」の印は立てない
     toast(affected===1?"期限を過ぎた締切を自動で完了にしました":"期限を過ぎた"+affected+"件を自動で完了にしました");
     scheduleAutoSync();
   }
