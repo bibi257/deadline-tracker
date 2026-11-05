@@ -830,3 +830,8 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .chk-prog{font-size:var(--fs-xs);color:var(--ink-3);letter-spacing:.04em}
 .chk-prog.all{border:1px solid var(--ink-3);border-radius:var(--radius);padding:0 5px;font-weight:700;color:var(--ink);letter-spacing:.06em;line-height:1.6}
 @media (pointer:coarse){ .chk-row{min-height:44px;align-items:center} .chk-in{top:50%;margin-top:-9px} .chk-box{margin-top:0} }
+
+/* 起動・画面復帰で保存先を読み込むあいだの帯と、編集できない間の見た目 */
+.srvbar{max-width:var(--wrap,860px);margin:8px auto 0;padding:8px 14px;border:1px solid var(--rule);border-radius:var(--radius);font-size:var(--fs-m);color:var(--ink-2);background:var(--card)}
+.srvbar.srv-off{color:var(--amber)}
+main[inert],.fab[inert]{opacity:.55}

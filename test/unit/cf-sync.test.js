@@ -17,7 +17,7 @@ const FNS = [
   'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'syncHint',
   'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems', 'cfAutoBlocked', 'cfNoteAuthFailure',
   'cfSnapUrl', 'cfGetJson', 'cfFetchSnapshots', 'cfReadSnapshot', 'fmtSnapAt', 'cfRestoreSnapshot',
-  'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker', 'noteAutoSyncFailure', 'normalizeItemTypes', 'markClean', 'hasUnsyncedChanges', 'overwriteLosses', 'conflictLog', 'noteConflict', 'conflictStats',
+  'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker', 'noteAutoSyncFailure', 'normalizeItemTypes', 'markClean', 'hasUnsyncedChanges', 'overwriteLosses', 'conflictLog', 'noteConflict', 'conflictStats', 'runDeferredRefresh',
 ];
 
 /** 共有の Worker（1つの D1）と、複数の端末 */
@@ -39,16 +39,18 @@ function world() {
   function device(name, clock) {
     const mem = new Map();
     const d = {
-      name, toasts: [], confirms: [], dialogs: [], answers: [], status: { textContent: '' },
+      name, toasts: [], confirms: [], dialogs: [], answers: [], states: [], busy: false, delay: 0, down: false, status: { textContent: '' },
       db: { items: [], quarantine: [], updatedAt: null, settings: { dayHour: 9 } },
       saved: [], local: [], storedCfg: undefined,
       store: { get: (k) => (mem.has(k) ? mem.get(k) : null), set: (k, v) => mem.set(k, String(v)) },
     };
     const g = {
       db: d.db, store: d.store, location: { origin: 'https://x.test' },
-      fetch: fetchToWorker,
+      fetch: (u, o) => (d.down ? Promise.reject(new Error('offline')) : d.delay ? sleep(d.delay).then(() => fetchToWorker(u, o)) : fetchToWorker(u, o)),
       toast: (m) => d.toasts.push(m),
       confirm: (m) => { d.confirms.push(m); return d.answers.length ? d.answers.shift() : false; },
+      editingBusy: () => d.busy, setSrvState: (st) => d.states.push(st), autoSyncIfConfigured() {},
+      _srvState: 'fresh', _deferRefresh: false, _lastRefreshAt: 0, SRV_WAIT_MS: 60,
       askOverwriteDialog: (losses) => { d.dialogs.push(losses); return Promise.resolve(d.answers.length ? d.answers.shift() : false); },
       RN: () => 'Cloudflare', markSynced() {}, markPulled() {}, saveRaw() {}, render() {}, softRender() {},
       normalizeTrash: (x) => x, cleanCatReminders: (x) => x, cleanCatColors: (x) => x, adoptCompletions() {},
@@ -72,6 +74,7 @@ function world() {
     d.sync = async () => { d.ctx.doSync(d.cfg, d.status, false); await sleep(150); };
     d.pull = async () => { d.ctx.proceedPull(d.cfg, d.status); await sleep(150); };
     d.auto = async () => { d.ctx.runAutoSync(d.cfg); await sleep(150); };
+    d.startBlock = async () => { await d.ctx.refreshThenAutoComplete(true); };
     d.start = async () => { await d.ctx.refreshThenAutoComplete(); }; // 起動時の処理
     d.autoPull = async () => { d.ctx.autoPullWith(d.cfg); await sleep(150); };
     return d;
@@ -620,4 +623,65 @@ test('送信中に新しい人の編集が入ったら、送信が成功して�
   assert.equal((await w.server()).rev, 1, '最初の内容は保存された');
   assert.equal(A.ctx.hasUnsyncedChanges(), true, '送信中の編集は未送信のまま、印が残る');
   void p;
+});
+
+test('起動（読み込みを待つ）: 保存先の新しい内容を読み終えてから編集できる。読み込み中の印が付き、終わると消える', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  const B = w.device('B', () => '2026-10-26T11:00:00.000Z');
+  B.store.set('cf-key', 'enc1:x');
+  A.edit('古い');
+  await A.sync();
+  await B.pull();
+  A.edit('新しい');
+  await A.sync(); // 他の端末で更新
+  await B.startBlock();
+  assert.deepEqual(Array.from(B.states), ['loading', 'fresh']);
+  assert.deepEqual(mine(B), ['新しい'], '編集できるようになる前に、保存先の内容に置き換わっている');
+});
+
+test('起動: 4秒（テストでは60ms）を過ぎたら待たせず「前回の内容」にし、遅れて読めたら元に戻す。圏外なら戻らない', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  const B = w.device('B', () => '2026-10-26T11:00:00.000Z');
+  B.store.set('cf-key', 'enc1:x');
+  A.edit('古い');
+  await A.sync();
+  await B.pull();
+  B.delay = 200; // 通信が遅い
+  await B.startBlock();
+  assert.deepEqual(Array.from(B.states), ['loading', 'offline'], '上限で待つのをやめ、編集できる状態にする');
+  await sleep(500);
+  assert.deepEqual(Array.from(B.states), ['loading', 'offline', 'fresh'], '遅れて読めたら帯を消す');
+
+  B.states.length = 0; B.delay = 0; B.down = true; // 圏外
+  B.ctx._lastRefreshAt = 0;
+  await B.startBlock();
+  assert.deepEqual(Array.from(B.states), ['loading', 'offline']);
+  B.edit('圏外で編集'); // 編集はでき、手元に残る
+  assert.deepEqual(mine(B), ['圏外で編集']);
+});
+
+test('起動: 登録・編集のダイアログ（や入力）を開いている間は置き換えず、閉じてから行う。キー未保存の端末は待たせない', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  const B = w.device('B', () => '2026-10-26T11:00:00.000Z');
+  B.store.set('cf-key', 'enc1:x');
+  A.edit('古い');
+  await A.sync();
+  await B.pull();
+  A.edit('新しい');
+  await A.sync();
+  B.busy = true;
+  await B.startBlock();
+  assert.deepEqual(Array.from(B.states), [], '開いている間は何もしない');
+  assert.deepEqual(mine(B), ['古い']);
+  B.busy = false;
+  B.ctx.runDeferredRefresh();
+  await sleep(150);
+  assert.deepEqual(mine(B), ['新しい'], '閉じた後に置き換わる');
+
+  const C = w.device('C', () => '2026-10-26T12:00:00.000Z'); // アクセスキーが無い
+  await C.startBlock();
+  assert.deepEqual(Array.from(C.states), ['fresh'], '読み込み中の帯は出さない');
 });
