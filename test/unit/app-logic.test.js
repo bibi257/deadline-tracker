@@ -13,7 +13,7 @@ const FNS = [
   'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText',
   'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
   'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
-  'normalizeItemTypes', 'parseChecklist', 'toggleChecklist', 'checklistProgress', 'picksFor', 'canPick', 'addPickDay', 'pickDaysIn', 'sanitizeIncomingItems', 'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
+  'normalizeItemTypes', 'cleanCompletions', 'parseChecklist', 'toggleChecklist', 'checklistProgress', 'picksFor', 'canPick', 'addPickDay', 'pickDaysIn', 'sanitizeIncomingItems', 'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
 ];
 const VARS = ['CHECK_RE', 'PICK_MAX', 'DOW', 'QUICK_DOW', 'EXP_PER_LEVEL', 'KIND_LABEL', 'REMINDER_DEFAULT', 'COMPLETION_LIMIT'];
 
@@ -742,4 +742,30 @@ test('sanitizeIncomingItems は、normalizeItemTypes と同じ補正をした上
   assert.equal(r.kept.length, 1);
   assert.equal(r.quarantined.length, 1);
   assert.deepEqual(plain(r.kept[0]), { id: 'a', title: 't', due: '2026-02-01T00:00:00.000Z', skip: [], done: false });
+});
+
+// ---- 自動完了の記録・未送信の変更の印（項目29） ----
+
+test('自動完了の記録の id は「auto:締切のid:その回の締切日時」で決まる。同じ締切を2台で自動完了しても同じ id になり、手動の完了は今までどおり別々の id', () => {
+  const { app, db } = load('2026-01-30 12:00');
+  const it = { id: 'sub1', title: 'サブスク', cat: 'その他', due: iso(2026, 1, 29, 9), rep: 'none', autoComplete: true };
+  const a = plain(app.logCompletion(it, 'auto'));
+  const b = plain(load('2026-01-30 18:30').app.logCompletion(it, 'auto')); // 別の端末・別の時刻
+  assert.equal(a.id, `auto:sub1:${new Date(iso(2026, 1, 29, 9)).toISOString()}`);
+  assert.equal(b.id, a.id);
+  assert.equal(a.kind, 'auto');
+  assert.equal(a.exp, 0);
+  const m1 = plain(app.logCompletion({ ...it, id: 'm' }, 'manual'));
+  const m2 = plain(app.logCompletion({ ...it, id: 'm' }, 'manual'));
+  assert.match(m1.id, /^c/);
+  assert.notEqual(m1.id, m2.id, '手動は乱数');
+  assert.ok(db.completions.length >= 3);
+});
+
+test('cleanCompletions: 同じ id の記録は1件だけ残す（先に出たもの）。壊れた記録は捨てる', () => {
+  const { app } = load();
+  const c = (id, extra = {}) => ({ id, itemId: 'x', title: 't', doneAt: '2026-01-30T00:00:00.000Z', exp: 0, kind: 'auto', ...extra });
+  const out = plain(app.cleanCompletions([c('auto:a:1'), c('auto:a:1', { title: '後から' }), c('c1'), { id: 5 }, null, c('auto:b:1', { doneAt: 'x' })]));
+  assert.deepEqual(out.map((x) => x.id), ['auto:a:1', 'c1']);
+  assert.equal(out[0].title, 't', '先に出たものを残す');
 });
