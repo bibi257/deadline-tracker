@@ -2645,7 +2645,7 @@ function renderSettings(){
   } else {
   var s5=h('<div class="sec"><h3>端末間の同期</h3>'+
     '<p>締切データをCloudflareに保存し、端末間で受け渡します。<b>同期する</b>でこの端末の内容を送り、<b>読み込む</b>で他の端末から送られた内容を取り込みます。毎朝のDiscord送信とメールも同じデータを見ています。</p>'+
-    '<p class="note">アクセスキーを保存している端末では、この端末に未同期の変更が無いときに限り、Cloudflare上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
+    '<p class="note">アクセスキーを保存している端末では、この端末に未同期の変更が無いときに限り、Cloudflare上の新しい内容を自動で取り込みます（読み込むボタンを押さなくても、他の端末の更新が反映されます）。アプリを開いたときと画面に戻ったときは、読み終えるまで「読み込み中」を出して編集できなくします（最大4秒。つながらないときは「前回の内容」と表示して、そのまま編集できます）。この端末で先に変更していた場合は、自動では上書きしません。</p>'+
     '<label class="field"><span>アクセスキー</span><input type="password" id="syncKey" placeholder="Cloudflare に登録したアクセスキー（APP_KEY）" autocomplete="off"></label>'+
     '<label class="chk-set">'+
     '<input type="checkbox" id="syncRemember" class="cb">この端末にアクセスキーを保存して次回から入力を省く</label>'+
@@ -2929,13 +2929,15 @@ function getStoredSyncConfig(){
 var _staleNoticeShown=false;
 function autoPullIfStale(){
   // 同期の設定自体が無ければ何もしない
-  return getStoredSyncConfig().then(function(cfg){ return cfg ? autoPullWith(cfg) : undefined; }).catch(function(){});
+  // 結果: true=保存先を読めた、false=読めなかった（圏外など）、undefined=同期の設定が無い
+  return getStoredSyncConfig().then(function(cfg){ return cfg ? autoPullWith(cfg) : undefined; }).catch(function(){ return false; });
 }
 function autoPullWith(cfg){
   if(cfAutoBlocked(cfg)) return Promise.resolve();
   // ネットワーク不調などは静かに諦める（自動処理のため）。認証の失敗だけは cfNoteAuthFailure が一度だけ知らせる
   var cfRev=null; // Cloudflare から読んだ版
-  return cfFetchData(cfg).then(function(j){ cfRev=j.rev; return j.data; }).catch(function(e){ cfNoteAuthFailure(e); return null; })
+  var read=false; // 保存先を読めたか（読めなかったときは、画面に「前回の内容」と出す）
+  return cfFetchData(cfg).then(function(j){ cfRev=j.rev; read=true; return j.data; }).catch(function(e){ cfNoteAuthFailure(e); return null; })
     .then(function(d){
       // 比較に必要な情報（件数・時刻）が無いデータは判断できないので何もしない
       if(!d || !Array.isArray(d.items) || !d.updatedAt) return;
@@ -2977,7 +2979,8 @@ function autoPullWith(cfg){
         toast("Cloudflareに新しい内容がありますが、この端末の未同期の変更を守るため自動反映していません");
       }
     })
-    .catch(function(){});
+    .catch(function(){})
+    .then(function(){ return read; });
 }
 
 /* Cloudflare 向けの設定（アクセスキーだけ）。画面から読み取り、保存する指定ならこの端末に暗号化して残す */
@@ -3194,6 +3197,7 @@ dlg.addEventListener("close",function(){
   // (保存成功時は既にnullにしている。ここで消えるのは「修復せず閉じた」場合のみ)
   fixingQuarantineId=null;
   fromQuick=false;
+  setTimeout(runDeferredRefresh,0); // 開いている間に保留した、保存先の取り込みを行う
 });
 function openDialog(item){
   editingId=item?item.id:null;
@@ -4019,19 +4023,52 @@ function autoCompleteOverdueItems(){
 /* 保存先の新しい内容の取り込みを先に済ませてから、期限切れの自動完了を行う。
    順序が逆だと、自動完了の保存で「この端末に未同期の変更がある」と判断され、
    他の端末の更新を取り込めず、次の同期も 409 で止まる。
-   取り込みが長引いても自動完了が止まらないよう、待つのは最大8秒 */
-var _refreshing=null;
-function refreshThenAutoComplete(){
+   起動と画面復帰（block=true）では、読み終えるまで「読み込み中」を出して編集させない（古い内容のまま編集して衝突するのを防ぐ）。
+   待つのは最大4秒。過ぎたら編集できるようにして「圏外のため前回の内容」と出す（読めたら、その時点で帯を消す） */
+var _refreshing=null, _srvState="fresh", _deferRefresh=false, _lastRefreshAt=0;
+var SRV_WAIT_MS=4000;
+function editingBusy(){
+  var a=document.activeElement;
+  return !!(dlg && dlg.open) || !!(a && main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+}
+function srvBarText(state){
+  if(state==="loading") return "保存先の最新の内容を読み込んでいます…";
+  var raw=store.get("gh-last-pulled"), t=raw?new Date(raw):null;
+  var when=(t && !isNaN(t.getTime())) ? "（"+(t.getMonth()+1)+"/"+t.getDate()+" "+pad(t.getHours())+":"+pad(t.getMinutes())+" 時点）" : "";
+  return "圏外のため、前回の内容"+when+"を表示しています。編集はでき、つながったときに送ります。";
+}
+/* 画面の状態: loading=読み込み中（編集不可）、fresh=最新、offline=読めず前回の内容 */
+function setSrvState(state){
+  _srvState=state;
+  var bar=document.getElementById("srvBar"), fab=document.getElementById("fabAdd");
+  if(bar){ bar.hidden=(state==="fresh"); bar.textContent=state==="fresh"?"":srvBarText(state); bar.className="srvbar"+(state==="offline"?" srv-off":""); }
+  main.inert=(state==="loading"); fab.inert=(state==="loading");
+  main.setAttribute("aria-busy", state==="loading"?"true":"false");
+}
+function refreshThenAutoComplete(block){
   if(_refreshing) return _refreshing;
+  if(editingBusy()){ _deferRefresh=true; return Promise.resolve(); } // 登録・編集中や入力中は置き換えない。終わってから行う
+  _deferRefresh=false; _lastRefreshAt=Date.now();
+  // アクセスキーが無い端末は同期しないので、待たせない
+  var wait=block===true && !!store.get("cf-key");
+  if(wait) setSrvState("loading");
   var timer;
-  var limit=new Promise(function(resolve){ timer=setTimeout(resolve, 8000); });
-  _refreshing=Promise.race([autoPullIfStale(), limit]).then(function(){
+  var limit=new Promise(function(resolve){ timer=setTimeout(function(){ resolve("timeout"); }, SRV_WAIT_MS); });
+  var pull=autoPullIfStale().then(function(ok){
+    setSrvState(ok===false ? "offline" : "fresh"); // 遅れて読めたときも、ここで帯を消す
+    if(ok===true && hasUnsyncedChanges()) autoSyncIfConfigured(); // 読み終えたら、人の未送信の変更を先に送る（409 なら衝突の流れへ）
+    return ok;
+  });
+  _refreshing=Promise.race([pull, limit]).then(function(r){
     clearTimeout(timer);
+    if(r==="timeout") setSrvState("offline"); // 4秒待っても読めない → 編集できるようにして、前回の内容と知らせる（読めたら pull 側で消える）
     _refreshing=null;
     if(autoCompleteOverdueItems()>0) softRender();
   });
   return _refreshing;
 }
+/* 置き換えを保留していたとき、登録・編集が終わってから行う */
+function runDeferredRefresh(){ if(_deferRefresh && !editingBusy()) refreshThenAutoComplete(true); }
 
 /* 繰り返し1回分だけ日付を進める。月・年単位は基準日(anchorDay)を保ち、
    その月に無い日(31日・2/29など)は月末に丸める。
@@ -4250,7 +4287,8 @@ function checkForUpdate(){
 }
 document.addEventListener("visibilitychange",function(){
   if(document.hidden){ flushAutoSync(); return; } // 閉じる前に、待っている自動同期を送る
-  checkForUpdate(); refreshThenAutoComplete();
+  checkForUpdate();
+  if(Date.now()-_lastRefreshAt>=30000) refreshThenAutoComplete(true); // 前回の確認から30秒以上たっていれば、読み終えるまで待たせる
 });
 
 /* 定期的な再描画。入力欄を操作中や設定タブを開いているときは、
@@ -4266,6 +4304,7 @@ function softRender(){
 }
 main.addEventListener("focusout",function(){
   if(renderAfterInput) setTimeout(softRender,0);
+  setTimeout(runDeferredRefresh,0);
 });
 
 /* ========== 起動 ========== */
@@ -4279,10 +4318,10 @@ forgetLegacySettings();
 render();
 handleExportParam();
 handleActionParam();
-setInterval(function(){ if(!_refreshing) autoCompleteOverdueItems(); softRender(); }, 60000); // 残り時間の更新とあわせて自動完了も確認（取り込み中は待つ）
+setInterval(function(){ if(!_refreshing && _srvState!=="loading") autoCompleteOverdueItems(); softRender(); }, 60000); // 残り時間の更新とあわせて自動完了も確認（取り込み中は待つ）
 checkForUpdate();
-var _pullDone=refreshThenAutoComplete(); // 他の端末の更新の取り込み → 自動完了 の順
+var _pullDone=refreshThenAutoComplete(true); // 他の端末の更新の取り込み → 自動完了 の順
 handleDoneParam(_pullDone);
 setInterval(checkForUpdate, 10*60000); // 10分ごとに更新を確認
-setInterval(refreshThenAutoComplete, 10*60000); // 10分ごとに保存先の新しい内容を確認
+setInterval(function(){ refreshThenAutoComplete(); }, 10*60000); // 10分ごとに保存先の新しい内容を確認
 })();
