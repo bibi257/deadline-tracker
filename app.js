@@ -2970,7 +2970,7 @@ function autoPullWith(cfg){
         markClean();
         cfSaveRev(cfRev);
         toast("他の端末で更新された内容を自動で反映しました"+(check.quarantined.length?"（"+check.quarantined.length+"件は隔離）":""));
-        autoCompleteOverdueItems(); // 取り込んだ内容に、期限切れの自動完了をもう一度かける（どの端末でも同じ結果になる）
+        if(autoCompleteOverdueItems()>0) softRender(); // 取り込んだ内容に、期限切れの自動完了をもう一度かける（どの端末でも同じ結果になる）
       } else if(!_staleNoticeShown){
         // 双方が前回同期後に変更されている（競合）→ 自動上書きはしない。一度だけ知らせる
         _staleNoticeShown=true;
