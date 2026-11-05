@@ -2649,6 +2649,8 @@ function renderSettings(){
          +(ls.stale?'<br>しばらく同期されていません。登録した内容が毎朝の連絡に反映されていない可能性があります。':''))
         :'まだ一度も同期していません。')+'</p>');
   s5.insertBefore(lsEl, s5.querySelector(".field"));
+  var cs=conflictStats();
+  if(cs.total) lsEl.after(h('<p class="note">他の端末の更新とぶつかった回数：'+cs.total+'回（うち上書き '+cs.overwrote+'回、失われた可能性のある締切 '+cs.lost+'件）</p>'));
   if(_lastAutoSyncError) lsEl.after(h('<p class="c-red">最後の自動同期は失敗しました：'+escHtml(_lastAutoSyncError.reason)+'</p>'));
   // この端末の締切が0件なら、先にすることは読み込み（別の端末で初めて設定したときの上書き事故を防ぐ）
   var emptyHere=!db.items.length;
@@ -2888,12 +2890,69 @@ function cfRestoreSnapshot(cfg,snap){
     return {n:check.kept.length, quarantined:check.quarantined.length};
   });
 }
-/* Cloudflare に、この端末がまだ読み込んでいない更新があるとき、どうするかを選ばせる。
+/* 上書きすると失われる内容。保存先にあって、この端末に無い（＝消える）もの、両方にあるが保存先のほうが新しい（＝この端末の内容で置き換わる）もの。
+   新しさは各締切の seq（編集のたびに増える）で見る。端末の時計は使わない */
+function overwriteLosses(localItems, remoteItems){
+  var local={}, gone=[], older=[];
+  (Array.isArray(localItems)?localItems:[]).forEach(function(it){ if(it && it.id!==undefined) local[it.id]=it; });
+  (Array.isArray(remoteItems)?remoteItems:[]).forEach(function(r){
+    if(!r || r.id===undefined) return;
+    var l=local[r.id], t=String(r.title||"（題名なし）");
+    if(!l) gone.push(t);
+    else if((r.seq||0)>(l.seq||0)) older.push(t);
+  });
+  return {gone:gone, older:older};
+}
+/* 上書きの記録。回数と選んだ道を端末の中にだけ残す（「どれくらい競合するか」を、あとで設定画面から見られるように） */
+var CONFLICT_KEY="conflict-log";
+function conflictLog(){
+  try{ var a=JSON.parse(store.get(CONFLICT_KEY)||"[]"); return Array.isArray(a)?a:[]; }catch(e){ return []; }
+}
+function noteConflict(choice, losses){
+  var a=conflictLog();
+  a.push({at:new Date().toISOString(), choice:choice, gone:losses?losses.gone.length:0, older:losses?losses.older.length:0});
+  store.set(CONFLICT_KEY, JSON.stringify(a.slice(-50)));
+}
+function conflictStats(){
+  var a=conflictLog();
+  return {total:a.length, overwrote:a.filter(function(x){ return x.choice==="overwrite"; }).length, lost:a.reduce(function(n,x){ return n+(x.choice==="overwrite"?(x.gone||0)+(x.older||0):0); },0)};
+}
+/* 失われる内容を見せて選ばせる画面。true=この端末の内容で上書き、false=保存先の内容を読み込む。
+   外側（背景の押下・Esc）で閉じたときは false（上書きしない側）にする */
+function askOverwriteDialog(losses){
+  return new Promise(function(resolve){
+    var list=function(title, arr){
+      if(!arr.length) return "";
+      return '<p class="ov-h">'+title+'（'+arr.length+'件）</p><ul class="ov-list">'+
+        arr.slice(0,5).map(function(t){ return '<li>'+escHtml(t)+'</li>'; }).join("")+
+        (arr.length>5?'<li class="ov-more">ほか '+(arr.length-5)+'件</li>':"")+'</ul>';
+    };
+    var body=losses ? (list("上書きすると消える締切",losses.gone)+list("上書きすると、この端末の内容に置き換わる締切",losses.older)) : "";
+    if(losses && !losses.gone.length && !losses.older.length) body='<p class="ov-h">失われる締切は見つかりませんでした（並びや設定の違いのみ）。</p>';
+    if(!losses) body='<p class="ov-h">失われる内容を調べられませんでした。</p>';
+    var el=h('<dialog class="ov-dlg"><form method="dialog" class="dlg-in">'+
+      '<h2>他の端末の更新があります</h2>'+
+      '<p>保存先に、この端末がまだ読み込んでいない新しい内容があります。上書きする前の内容は、世代バックアップに保存します。</p>'+
+      body+
+      '<div class="dlg-acts"><button class="btn" value="overwrite" type="submit">この端末の内容で上書きする</button>'+
+      '<button class="btn fill" value="pull" type="submit" autofocus>保存先の内容を読み込む（おすすめ）</button></div>'+
+      '</form></dialog>');
+    el.addEventListener("close",function(){ var ok=el.returnValue==="overwrite"; el.remove(); resolve(ok); });
+    document.body.appendChild(el);
+    el.showModal();
+  });
+}
+/* Cloudflare に、この端末がまだ読み込んでいない更新があるとき、失われる内容を見せて選ばせる。
    true=バックアップ付きで上書き、false=上書きせず読み込みの手順へ */
-function cfAskOverwrite(){
-  return confirm("Cloudflare上に、この端末がまだ読み込んでいない新しい内容があります（他の端末で同期された可能性があります）。\n\n"+
-    "【OK】この端末の内容で上書きします。上書き前の内容は世代バックアップに保存します。\n"+
-    "【キャンセル】上書きせず、Cloudflareの内容を読み込む手順に進みます（そこでもう一度確認します）。");
+function cfAskOverwrite(cfg){
+  return cfFetchData(cfg).then(function(j){
+    return overwriteLosses(db.items, j&&j.data&&j.data.items);
+  }, function(){ return null; }).then(function(losses){
+    return askOverwriteDialog(losses).then(function(ok){
+      noteConflict(ok?"overwrite":"pull", losses);
+      return ok;
+    });
+  });
 }
 
 /* 設定画面を開いていなくても使える、保存済みの同期設定（アクセスキー）の読み取り。
@@ -3129,17 +3188,21 @@ function doSync(cfg,statusEl,backedUp){
   cfFetchState(cfg)
     .then(function(r){
       if(backedUp || !remoteHasUnknownChanges(r)) return;
-      if(!cfAskOverwrite()) throw new Error("__sync_to_pull__"); // 上書きしない → 読み込みの手順へ
-      cfg.backup=true; cfg.ifMatch=r.sha; // 承知の上で上書きする。対象は、いま確認した版
+      return cfAskOverwrite(cfg).then(function(ok){
+        if(!ok) throw new Error("__sync_to_pull__"); // 上書きしない → 読み込みの手順へ
+        cfg.backup=true; cfg.ifMatch=r.sha; // 承知の上で上書きする。対象は、いま確認した版
+      });
     })
     .then(put)
     .then(function(res){
       if(res.status===409){
         // 新しい版で自動的に送り直さない（他の端末の更新を消してしまうため）。利用者に選ばせる
         return cfFetchState(cfg).then(function(r){
-          if(!cfAskOverwrite()) throw new Error("__sync_to_pull__");
-          cfg.backup=true; cfg.ifMatch=r.sha||"0";
-          return put();
+          return cfAskOverwrite(cfg).then(function(ok){
+            if(!ok) throw new Error("__sync_to_pull__");
+            cfg.backup=true; cfg.ifMatch=r.sha||"0";
+            return put();
+          });
         });
       }
       return res;

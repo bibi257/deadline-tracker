@@ -17,7 +17,7 @@ const FNS = [
   'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'syncHint',
   'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems', 'cfAutoBlocked', 'cfNoteAuthFailure',
   'cfSnapUrl', 'cfGetJson', 'cfFetchSnapshots', 'cfReadSnapshot', 'fmtSnapAt', 'cfRestoreSnapshot',
-  'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker', 'noteAutoSyncFailure', 'normalizeItemTypes',
+  'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker', 'noteAutoSyncFailure', 'normalizeItemTypes', 'overwriteLosses', 'conflictLog', 'noteConflict', 'conflictStats',
 ];
 
 /** 共有の Worker（1つの D1）と、複数の端末 */
@@ -39,7 +39,7 @@ function world() {
   function device(name, clock) {
     const mem = new Map();
     const d = {
-      name, toasts: [], confirms: [], answers: [], status: { textContent: '' },
+      name, toasts: [], confirms: [], dialogs: [], answers: [], status: { textContent: '' },
       db: { items: [], quarantine: [], updatedAt: null, settings: { dayHour: 9 } },
       saved: [], local: [], storedCfg: undefined,
       store: { get: (k) => (mem.has(k) ? mem.get(k) : null), set: (k, v) => mem.set(k, String(v)) },
@@ -49,10 +49,11 @@ function world() {
       fetch: fetchToWorker,
       toast: (m) => d.toasts.push(m),
       confirm: (m) => { d.confirms.push(m); return d.answers.length ? d.answers.shift() : false; },
+      askOverwriteDialog: (losses) => { d.dialogs.push(losses); return Promise.resolve(d.answers.length ? d.answers.shift() : false); },
       RN: () => 'Cloudflare', markSynced() {}, markPulled() {}, saveRaw() {}, render() {}, softRender() {},
       normalizeTrash: (x) => x, cleanCatReminders: (x) => x, cleanCatColors: (x) => x, adoptCompletions() {},
       sanitizeIncomingMeta: () => ({ templates: null, categories: null }),
-      _autoSyncBlockedShown: false, _autoSyncFailShown: '', _lastAutoSyncError: null, _staleNoticeShown: false, CF_REV_KEY: 'cf-known-rev',
+      _autoSyncBlockedShown: false, _autoSyncFailShown: '', _lastAutoSyncError: null, _staleNoticeShown: false, CF_REV_KEY: 'cf-known-rev', CONFLICT_KEY: 'conflict-log',
       hoursSincePulled: () => null,
       // 起動時の「取り込み → 自動完了」用（本物の applyCompletion / save は画面まわりに依存するので、同じ効果だけ再現する）
       // .ics の書き出し（Worker 優先）用
@@ -112,7 +113,8 @@ test('時計が進んだ端末 A が、時計の遅れた端末 B の更新を�
   A.edit('Aの更新');
   A.answers = [false, false]; // 上書きしない → 読み込みの確認も断る
   await A.sync();
-  assert.match(A.confirms[0], /まだ読み込んでいない新しい内容/, '確認が出る');
+  assert.equal(A.dialogs.length, 1, '上書きの確認が出る');
+  assert.equal(A.dialogs[0].gone.length + A.dialogs[0].older.length > 0, true, '失われる内容が見つかる');
   const s = await w.server();
   assert.deepEqual(titles(s), ['Bの更新'], 'B の更新は残っている');
   assert.equal(s.rev, 2);
@@ -213,8 +215,11 @@ test('手動同期の 409: 新しい rev で再送せず、読み込みか「バ
   await A.sync();
   assert.equal(w.log.puts.length, before + 1, 'PUT は1回だけ（409 のあと自動で再送しない）');
   assert.equal(w.log.puts.at(-1).ifMatch, '1');
-  assert.match(A.confirms[0], /世代バックアップ/, '選ばせる確認が出る');
-  assert.match(A.confirms[1], /置き換えます/, '「読み込む」を選ぶと、置き換えの確認が出る');
+  assert.equal(A.dialogs.length, 1, '選ばせる画面が出る');
+  assert.deepEqual(Array.from(A.dialogs[0].gone), ['Bの更新'], '上書きすると消える締切が見える');
+  assert.match(A.confirms[0], /置き換えます/, '「読み込む」を選ぶと、置き換えの確認が出る');
+  assert.equal(A.ctx.conflictStats().total, 1, '競合が1回記録される');
+  assert.equal(A.ctx.conflictStats().overwrote, 0);
   assert.deepEqual(titles(await w.server()), ['Bの更新']);
 
   // 読み込みを選ぶ: この端末が Cloudflare の内容になる
@@ -231,6 +236,18 @@ test('手動同期の 409: 新しい rev で再送せず、読み込みか「バ
   assert.equal(w.log.puts.at(-1).search, '?backup=1');
   assert.equal(w.log.puts.at(-1).ifMatch, '2');
   assert.deepEqual(titles(await w.server()), ['Aの更新']);
+  assert.deepEqual({ ...A.ctx.conflictStats() }, { total: 1, overwrote: 1, lost: 1 }, '上書きと失われた件数が記録される');
+});
+
+test('overwriteLosses: 保存先にだけある締切は「消える」、保存先のほうが新しい（seq が大きい）ものは「置き換わる」', () => {
+  const d = world().device('X', () => 'x');
+  const r = d.ctx.overwriteLosses(
+    [{ id: 'a', title: 'A', seq: 1 }, { id: 'b', title: 'B', seq: 3 }, { id: 'c', title: 'C', seq: 1 }],
+    [{ id: 'a', title: 'A', seq: 2 }, { id: 'b', title: 'B', seq: 3 }, { id: 'z', title: 'Z' }, null],
+  );
+  assert.deepEqual(Array.from(r.older), ['A']);
+  assert.deepEqual(Array.from(r.gone), ['Z']);
+  assert.deepEqual(Array.from(d.ctx.overwriteLosses(null, undefined).gone), []);
 });
 
 test('バックアップ付きで上書きを選ぶと、上書き前の内容が世代バックアップに残り、新しい rev を保存する', async () => {
