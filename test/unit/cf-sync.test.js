@@ -17,7 +17,7 @@ const FNS = [
   'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'syncHint',
   'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems', 'cfAutoBlocked', 'cfNoteAuthFailure',
   'cfSnapUrl', 'cfGetJson', 'cfFetchSnapshots', 'cfReadSnapshot', 'fmtSnapAt', 'cfRestoreSnapshot',
-  'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker', 'noteAutoSyncFailure', 'normalizeItemTypes',
+  'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker', 'noteAutoSyncFailure', 'normalizeItemTypes', 'markClean', 'hasUnsyncedChanges',
 ];
 
 /** 共有の Worker（1つの D1）と、複数の端末 */
@@ -61,12 +61,13 @@ function world() {
       saveIcsFile: (text, name) => d.saved.push({ text, name }), downloadICS: (list, name) => d.local.push({ list, name }),
       _cfAuthStopped: false, _cfLimitShown: false, _refreshing: null, autoPullIfStale: () => d.ctx.autoPullWith(d.cfg),
       parseItemDate: (it) => new Date(it.due), applyCompletion: (it) => { it.done = true; },
-      save: () => { d.db.updatedAt = clock(); }, scheduleAutoSync() {},
+      _editSeq: 0,
+      save: () => { d.db.updatedAt = clock(); d.ctx._editSeq += 1; d.store.set('sync-dirty', '1'); }, saveAuto: () => { d.db.updatedAt = clock(); }, scheduleAutoSync() {},
     };
     d.ctx = loadAppFunctions(FNS, g);
     d.cfg = { kind: 'cf', api: 'https://x.test/api/data', headers: { Authorization: `Bearer ${KEY}` } };
     /** 締切を編集する（この端末の時計で updatedAt が付く） */
-    d.edit = (title) => { d.db.items = [{ id: `i-${title}`, title, due: '2026-12-01T00:00:00.000Z' }]; d.db.updatedAt = clock(); };
+    d.edit = (title) => { d.db.items = [{ id: `i-${title}`, title, due: '2026-12-01T00:00:00.000Z' }]; d.db.updatedAt = clock(); d.ctx._editSeq += 1; d.store.set('sync-dirty', '1'); };
     d.sync = async () => { d.ctx.doSync(d.cfg, d.status, false); await sleep(150); };
     d.pull = async () => { d.ctx.proceedPull(d.cfg, d.status); await sleep(150); };
     d.auto = async () => { d.ctx.runAutoSync(d.cfg); await sleep(150); };
@@ -544,4 +545,62 @@ test('自動同期の失敗の表示は、手動の同期・読み込みが成�
   A.answers = [true]; // 「この端末の締切を置き換えます」の確認に、はいと答える
   await A.pull(); // 読み込みが成功
   assert.equal(A.ctx._lastAutoSyncError, null, '読み込みの成功で消える');
+});
+
+test('自動完了は「人の未送信の変更」にならない：自動完了した端末も、他の端末の更新を自動で取り込める（旧: 自動完了の保存で取り込みが止まった）', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  const B = w.device('B', () => '2026-10-26T12:00:00.000Z');
+  A.db.items = [{ id: 'sub', title: 'サブスク', due: '2026-10-01T00:00:00.000Z', autoComplete: true }];
+  A.db.updatedAt = '2026-10-26T10:00:00.000Z'; A.store.set('sync-dirty', '1');
+  await A.sync(); // rev1
+  await B.pull(); // B も rev1。人の未送信の変更なし
+  assert.equal(B.ctx.hasUnsyncedChanges(), false);
+  B.ctx.autoCompleteOverdueItems(); // B で期限切れの自動完了（機械の処理）
+  assert.equal(B.db.items[0].done, true);
+  assert.notEqual(B.db.updatedAt, '2026-10-26T10:00:00.000Z', '保存はして、updatedAt は進む');
+  assert.equal(B.ctx.hasUnsyncedChanges(), false, '自動完了は人の未送信の変更にならない');
+  A.edit('Aの更新'); // A で人が編集して同期（rev2）
+  await A.sync();
+  await B.autoPull();
+  assert.deepEqual(mine(B), ['Aの更新'], 'B は A の更新を自動で取り込む');
+  assert.equal(B.ctx.cfKnownRev(), '2');
+  assert.match(B.toasts.join('\n'), /自動で反映しました/);
+});
+
+test('人の操作の未送信の変更は印が立ち、取り込みで置き換わらない。送信が成功するまで印は残り、成功したら消える。失敗（409）では消えない', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  const B = w.device('B', () => '2026-10-26T12:00:00.000Z');
+  A.edit('A最初'); await A.sync();
+  await B.pull();
+  assert.equal(B.ctx.hasUnsyncedChanges(), false);
+  B.edit('Bの人の編集');           // 人の操作（チェック・今日の一手の印なども同じ save）
+  assert.equal(B.ctx.hasUnsyncedChanges(), true);
+  A.edit('A二番目'); await A.sync(); // 保存先が進む
+  await B.autoPull();
+  assert.deepEqual(mine(B), ['Bの人の編集'], '未送信の変更があるので、置き換えない');
+  await B.auto();                    // 送信は 409 で断られる
+  assert.match(B.toasts.join('\n'), /自動同期を止めました/);
+  assert.equal(B.ctx.hasUnsyncedChanges(), true, '送信が失敗したら、印は残る');
+  // 読み込みで置き換えると消える
+  B.answers = [true]; await B.pull();
+  assert.equal(B.ctx.hasUnsyncedChanges(), false);
+  // 送信が成功したら消える
+  B.edit('Bの次の編集');
+  await B.auto();
+  assert.equal((await w.server()).rev, 3);
+  assert.equal(B.ctx.hasUnsyncedChanges(), false, '送信の成功で消える');
+});
+
+test('送信中に新しい人の編集が入ったら、送信が成功しても印は消さない（その編集はまだ送っていない）', async () => {
+  const w = world();
+  const A = w.device('A', () => '2026-10-26T10:00:00.000Z');
+  A.edit('A最初');
+  const p = A.ctx.runAutoSync(A.cfg); // 送信を始める（内容は作り終えている）
+  A.edit('送信中の編集');            // 送信の最中に、人が編集
+  await sleep(200);
+  assert.equal((await w.server()).rev, 1, '最初の内容は保存された');
+  assert.equal(A.ctx.hasUnsyncedChanges(), true, '送信中の編集は未送信のまま、印が残る');
+  void p;
 });
