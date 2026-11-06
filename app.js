@@ -2578,7 +2578,7 @@ function renderSettings(){
   put("display",s3b);
 
   // 効果音
-  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（はんこを押すような「ぽん」）を鳴らします（手帳風の画面の切り替えでは紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
+  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします（手帳風の画面の切り替えでは紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
@@ -3743,21 +3743,27 @@ function playSfx(kind){
   }catch(e){ /* 音が出せなくても操作は止めない */ }
 }
 
-/* ボタンを押したときの音：はんこを紙に押すような「ぽん」。電子音ではなく、
-   低く沈む胴の音（音程が素早く下がる）に、当たったときの短い雑音を重ねる（約0.12秒） */
+/* ボタンを押したときの音：ゲームの決定音のような、明るく弾む「ぽこっ」（約0.5秒）。
+   音程が下から跳ね上がる三角波に、低めの胴の音と、きらめく高音、当たった瞬間の短い雑音を重ねる。
+   スマホのスピーカーでも聞こえるよう、300Hz 以上を主にする。音は全体を少し絞って、続けて押しても割れないようにする */
 function stampTap(ctx, t0){
-  // 胴：160Hz → 62Hz へ素早く下げる
-  var o=ctx.createOscillator(), og=ctx.createGain();
-  o.type="sine"; o.frequency.setValueAtTime(160, t0); o.frequency.exponentialRampToValueAtTime(62, t0+.09);
-  og.gain.setValueAtTime(.0001, t0); og.gain.exponentialRampToValueAtTime(.32, t0+.006); og.gain.exponentialRampToValueAtTime(.0001, t0+.12);
-  o.connect(og); og.connect(ctx.destination); o.start(t0); o.stop(t0+.14);
-  // 当たった瞬間の「こつ」：短い雑音を中域の帯域に通す
-  var len=.05, n=Math.floor(ctx.sampleRate*len), buf=ctx.createBuffer(1, n, ctx.sampleRate), d=buf.getChannelData(0);
-  for(var i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n); // 先頭が強く、すぐ消える
+  var master=ctx.createGain(); master.gain.value=.6; master.connect(ctx.destination);
+  var k=.75; // 基準の高さ（試聴で選んだ高さ）
+  var tone=function(f0, f1, bend, peak, dec, type){
+    var o=ctx.createOscillator(), g=ctx.createGain();
+    o.type=type; o.frequency.setValueAtTime(f0*k, t0); o.frequency.exponentialRampToValueAtTime(f1*k, t0+bend);
+    g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(peak, t0+.003); g.gain.exponentialRampToValueAtTime(.0001, t0+dec);
+    o.connect(g); g.connect(master); o.start(t0); o.stop(t0+dec+.02);
+  };
+  tone(700, 1180, .045, .26, .5, "triangle");  // 跳ね上がる主な音
+  tone(330, 250, .1, .22, .4, "sine");         // 胴
+  tone(2360, 2360, .01, .07, .25, "sine");     // きらめき
+  // 当たった瞬間の短い雑音
+  var len=.012, n=Math.floor(ctx.sampleRate*len), buf=ctx.createBuffer(1, n, ctx.sampleRate), d=buf.getChannelData(0);
+  for(var i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n, 2);
   var s=ctx.createBufferSource(), bp=ctx.createBiquadFilter(), g=ctx.createGain();
-  s.buffer=buf; bp.type="bandpass"; bp.frequency.value=900; bp.Q.value=.7;
-  g.gain.setValueAtTime(.2, t0); g.gain.exponentialRampToValueAtTime(.0001, t0+len);
-  s.connect(bp); bp.connect(g); g.connect(ctx.destination); s.start(t0); s.stop(t0+len+.01);
+  s.buffer=buf; bp.type="bandpass"; bp.frequency.value=3800; bp.Q.value=.6; g.gain.value=.1;
+  s.connect(bp); bp.connect(g); g.connect(master); s.start(t0);
 }
 
 /* ボタンを押したときの短い音。登録・完了・削除や画面の切り替え（タブ）は専用の音があるので、タブには重ねない。
