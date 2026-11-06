@@ -542,6 +542,8 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
   .tab[aria-selected="true"]{border-top-color:var(--ink)}
   .tab .tab-badge{position:absolute;top:5px;left:calc(50% + 6px)}
   body{padding-bottom:calc(96px + var(--tabbar-h) + env(safe-area-inset-bottom))}
+  /* 内容が短い画面でも、ページを画面いっぱいの高さにする（iOS で、短いページのとき下のタブバーの位置がずれるのを防ぐ） */
+  body{min-height:100vh;min-height:100dvh}
   /* 登録ボタンは右下の小さめの四角に寄せ、中央の内容を空ける。影ではなく罫線と背景色で目立たせる。
      トーストはその真上に、本文と同じ左右の余白で出す（元に戻すと登録ボタンが重ならない） */
   .fab{left:auto;right:16px;transform:none;min-height:48px;padding:0 18px;display:inline-flex;align-items:center;
