@@ -2578,7 +2578,7 @@ function renderSettings(){
   put("display",s3b);
 
   // 効果音
-  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたときに短い音を鳴らします（手帳風では紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
+  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音を鳴らします（手帳風の画面の切り替えでは紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
@@ -3691,7 +3691,7 @@ main.addEventListener("animationend", function(e){
 });
 
 /* 効果音：Web Audio API でその場で作る（音声ファイルは使わない）。設定でオン/オフ、初期値はオフ。
-   音を出す操作は、登録・完了・削除と画面の切り替え。端末の設定（演出とは別）なので同期の対象外 */
+   音を出す操作は、登録・完了・削除と画面の切り替えと、ボタンを押したとき。端末の設定（演出とは別）なので同期の対象外 */
 var _audioCtx=null;
 function soundOn(){ return db.settings.sound==="on"; }
 function audioCtx(){
@@ -3715,7 +3715,8 @@ var SFX={
   add:    [[660,0,.65],[880,.12,1.15]],                       // 登録：軽い2音（上がる）
   done:   [[523.25,0,.8],[659.25,.12,.9],[783.99,.24,1.8]],   // 完了：ド・ミ・ソ（明るい）
   remove: [[440,0,.65],[329.63,.12,1.2]],                     // 削除：2音（下がる）
-  page:   [[1046.5,0,.16,.06],[1567.98,.05,.22,.045]]          // 画面の切り替え：ごく短い2音
+  page:   [[1046.5,0,.16,.06],[1567.98,.05,.22,.045]],         // 画面の切り替え：ごく短い2音
+  tap:    [[1320,0,.06,.07]]                                   // ボタンを押したとき：ごく短い「コッ」
 };
 function playSfx(kind){
   if(!soundOn() || !(SFX[kind] || kind==="turn")) return;
@@ -3741,6 +3742,15 @@ function playSfx(kind){
     });
   }catch(e){ /* 音が出せなくても操作は止めない */ }
 }
+
+/* ボタンを押したときの短い音。登録・完了・削除や画面の切り替え（タブ）は専用の音があるので、タブには重ねない。
+   無効のボタンと、操作できない間（読み込み中の inert）は鳴らさない */
+document.addEventListener("click",function(e){
+  if(!soundOn()) return;
+  var t=e.target && e.target.closest ? e.target.closest("button, summary, input[type=checkbox], [role=button]") : null;
+  if(!t || t.disabled || t.getAttribute("aria-disabled")==="true" || t.closest("[inert], .tab")) return;
+  playSfx("tap");
+});
 
 /* 手帳風の画面の切り替え：紙をめくる「さっ」という音。ノイズを帯域フィルターに通し、
    通す高さを上げながら短く鳴らす（約0.2秒） */
