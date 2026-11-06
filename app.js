@@ -2578,7 +2578,7 @@ function renderSettings(){
   put("display",s3b);
 
   // 効果音
-  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音を鳴らします（手帳風の画面の切り替えでは紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
+  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（はんこを押すような「ぽん」）を鳴らします（手帳風の画面の切り替えでは紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
@@ -3715,11 +3715,10 @@ var SFX={
   add:    [[660,0,.65],[880,.12,1.15]],                       // 登録：軽い2音（上がる）
   done:   [[523.25,0,.8],[659.25,.12,.9],[783.99,.24,1.8]],   // 完了：ド・ミ・ソ（明るい）
   remove: [[440,0,.65],[329.63,.12,1.2]],                     // 削除：2音（下がる）
-  page:   [[1046.5,0,.16,.06],[1567.98,.05,.22,.045]],         // 画面の切り替え：ごく短い2音
-  tap:    [[1320,0,.06,.07]]                                   // ボタンを押したとき：ごく短い「コッ」
+  page:   [[1046.5,0,.16,.06],[1567.98,.05,.22,.045]]          // 画面の切り替え：ごく短い2音
 };
 function playSfx(kind){
-  if(!soundOn() || !(SFX[kind] || kind==="turn")) return;
+  if(!soundOn() || !(SFX[kind] || kind==="turn" || kind==="tap")) return;
   try{
     var ctx=audioCtx(); if(!ctx) return;
     if(ctx.state==="suspended") ctx.resume().catch(function(){});
@@ -3735,12 +3734,30 @@ function playSfx(kind){
       osc.start(s); osc.stop(e+.02);
     };
     if(kind==="turn"){ pageTurn(ctx, t0); return; }
+    if(kind==="tap"){ stampTap(ctx, t0); return; }
     SFX[kind].forEach(function(n){
       var s=t0+n[1], peak=n[3]||.16;
       tone(n[0], s, n[2], peak);         // 基音
       tone(n[0]*2, s, n[2]*.5, peak/4);  // 倍音（早めに消えて、余韻は丸く残る）
     });
   }catch(e){ /* 音が出せなくても操作は止めない */ }
+}
+
+/* ボタンを押したときの音：はんこを紙に押すような「ぽん」。電子音ではなく、
+   低く沈む胴の音（音程が素早く下がる）に、当たったときの短い雑音を重ねる（約0.12秒） */
+function stampTap(ctx, t0){
+  // 胴：160Hz → 62Hz へ素早く下げる
+  var o=ctx.createOscillator(), og=ctx.createGain();
+  o.type="sine"; o.frequency.setValueAtTime(160, t0); o.frequency.exponentialRampToValueAtTime(62, t0+.09);
+  og.gain.setValueAtTime(.0001, t0); og.gain.exponentialRampToValueAtTime(.32, t0+.006); og.gain.exponentialRampToValueAtTime(.0001, t0+.12);
+  o.connect(og); og.connect(ctx.destination); o.start(t0); o.stop(t0+.14);
+  // 当たった瞬間の「こつ」：短い雑音を中域の帯域に通す
+  var len=.05, n=Math.floor(ctx.sampleRate*len), buf=ctx.createBuffer(1, n, ctx.sampleRate), d=buf.getChannelData(0);
+  for(var i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n); // 先頭が強く、すぐ消える
+  var s=ctx.createBufferSource(), bp=ctx.createBiquadFilter(), g=ctx.createGain();
+  s.buffer=buf; bp.type="bandpass"; bp.frequency.value=900; bp.Q.value=.7;
+  g.gain.setValueAtTime(.2, t0); g.gain.exponentialRampToValueAtTime(.0001, t0+len);
+  s.connect(bp); bp.connect(g); g.connect(ctx.destination); s.start(t0); s.stop(t0+len+.01);
 }
 
 /* ボタンを押したときの短い音。登録・完了・削除や画面の切り替え（タブ）は専用の音があるので、タブには重ねない。
