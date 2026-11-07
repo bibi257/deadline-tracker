@@ -1,6 +1,7 @@
 // app.js の日付・繰り返し・入力解析・完了の計算（残り日数・EXP・.ics）。コードは変えず、境目のケースを表にして確かめる。
 // 画面まわりに依存しない関数だけを test/support/appFns.js で取り出して、「今」を固定した vm の中で動かす。
 // 月末・うるう年・取りやめた回・回数指定は、間違えやすい境目。Worker の .ics（buildIcs）とのずれも、ここで気づけるようにする。
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildIcs } from '../../worker/src/ics.js';
@@ -768,4 +769,86 @@ test('cleanCompletions: 同じ id の記録は1件だけ残す（先に出たも
   const out = plain(app.cleanCompletions([c('auto:a:1'), c('auto:a:1', { title: '後から' }), c('c1'), { id: 5 }, null, c('auto:b:1', { doneAt: 'x' })]));
   assert.deepEqual(out.map((x) => x.id), ['auto:a:1', 'c1']);
   assert.equal(out[0].title, 't', '先に出たものを残す');
+});
+
+// ---- 効果音の土台（D15） ----
+const SFX_FNS = ['jitter', 'sfxGain', 'soundOn', 'audioCtx', 'audioOut', 'noiseBuffer', 'noiseShot', 'playSfx', 'stampTap', 'pageTurn'];
+/** 偽の AudioContext：作った部品と、つなぎ先を記録する */
+function fakeAudio() {
+  const log = { created: [], buffers: 0, connects: [], starts: [], ctxCount: 0 };
+  const node = (type, extra = {}) => {
+    const n = { type, gain: { value: 1, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+      threshold: { value: 0 }, knee: { value: 0 }, ratio: { value: 0 }, attack: { value: 0 }, release: { value: 0 }, Q: { value: 0 },
+      connect(to) { log.connects.push([n, to]); return to; }, start(...a) { log.starts.push([n, ...a]); }, stop() {}, ...extra };
+    log.created.push(type);
+    return n;
+  };
+  class FakeCtx {
+    constructor() { log.ctxCount += 1; this.sampleRate = 8000; this.currentTime = 0; this.state = 'running'; this.destination = { type: 'destination' }; }
+    createGain() { return node('gain'); }
+    createOscillator() { return node('osc'); }
+    createDynamicsCompressor() { return node('compressor'); }
+    createBiquadFilter() { return node('filter'); }
+    createBufferSource() { return node('source'); }
+    createBuffer(ch, n) { log.buffers += 1; return { getChannelData: () => new Float32Array(n) }; }
+    resume() { return Promise.resolve(); }
+  }
+  return { FakeCtx, log };
+}
+function sfxWorld(sound = 'on') {
+  const { FakeCtx, log } = fakeAudio();
+  const ctx = loadAppFunctions(SFX_FNS, {
+    window: { AudioContext: FakeCtx }, db: { settings: { sound } },
+    _audioCtx: null, _sfxOut: null, _noiseBuf: null, _lastSfxAt: 0,
+    SFX: { done: [[523.25, 0, .8], [659.25, .12, .9]] }, // 音の表は複数行の定義なので、テスト用の小さな表を渡す
+  });
+  return { ctx, log };
+}
+
+test('sfxGain: 1秒以内に続けて鳴らすと半分。初めてと、1秒以上あいたときは等倍', () => {
+  const { ctx } = sfxWorld();
+  assert.equal(ctx.sfxGain(0, 5000), 1, '初めて');
+  assert.equal(ctx.sfxGain(4200, 5000), .5, '0.8秒あき');
+  assert.equal(ctx.sfxGain(3900, 5000), 1, '1.1秒あき');
+});
+
+test('jitter: ±ratio の範囲でばらつく。乱数 0.5 なら変わらない', () => {
+  const { ctx } = sfxWorld();
+  assert.equal(ctx.jitter(100, .1, () => .5), 100);
+  assert.ok(Math.abs(ctx.jitter(100, .1, () => 0) - 90) < 1e-9);
+  assert.ok(Math.abs(ctx.jitter(100, .1, () => 1) - 110) < 1e-9);
+  for (let i = 0; i < 200; i++) { const v = ctx.jitter(100, .15); assert.ok(v >= 85 && v <= 115); }
+});
+
+test('音が「なし」のとき、AudioContext を作らず何も鳴らさない', () => {
+  const { ctx, log } = sfxWorld('off');
+  ctx.playSfx('done'); ctx.playSfx('tap');
+  assert.equal(log.ctxCount, 0);
+});
+
+test('すべての音は、マスター→コンプレッサー→出力 を通る（出力へ直接つながない）。雑音は1回だけ作って使い回す', () => {
+  const { ctx, log } = sfxWorld();
+  ctx.playSfx('done'); ctx.playSfx('tap'); ctx.playSfx('tap'); ctx.playSfx('turn');
+  const direct = log.connects.filter(([, to]) => to && to.type === 'destination');
+  assert.equal(direct.length, 1, '出力につながるのはコンプレッサーだけ');
+  assert.equal(direct[0][0].type, 'compressor');
+  const comp = log.connects.find(([from]) => from.type === 'gain' && from.gain.value === .6);
+  assert.ok(comp, 'マスター（0.6）がある');
+  assert.equal(comp[1].type, 'compressor');
+  assert.equal(log.buffers, 1, '雑音のバッファは1回だけ');
+  assert.equal(log.created.filter((t) => t === 'compressor').length, 1, 'コンプレッサーも1つだけ');
+});
+
+test('opts.delay で、鳴らす時刻を遅らせられる', () => {
+  const { ctx, log } = sfxWorld();
+  ctx.playSfx('done', { delay: .5 });
+  const firstStart = Math.min(...log.starts.filter(([n]) => n.type === 'osc').map(([, t]) => t));
+  assert.ok(firstStart >= .5, `遅らせた時刻から始まる（${firstStart}）`);
+});
+
+test('ボタンの共通の音は、専用の音がある操作（data-sfx="own"）と、タブでは鳴らさない', () => {
+  const src = readFileSync(new URL('../../app.js', import.meta.url), 'utf8');
+  assert.match(src, /t\.closest\('\[inert\], \.tab, \[data-sfx="own"\]'\)/, '共通の音の除外に data-sfx="own" がある');
+  assert.match(src, /label==="完了にする"\|\|label==="削除"\)\s*b\.setAttribute\("data-sfx","own"\)/, '完了・削除のボタンに印が付く');
+  assert.match(src, /dlgSave\.setAttribute\("data-sfx","own"\)/, '新しく登録する保存ボタンに印が付く');
 });
