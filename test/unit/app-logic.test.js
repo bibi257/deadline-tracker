@@ -796,13 +796,13 @@ function fakeAudio() {
   }
   return { FakeCtx, log };
 }
-function sfxWorld(sound = 'on', { motion = 'techo', hour = 12, store } = {}) {
+function sfxWorld(sound = 'on', { motion = 'techo', hour = 12, store, nightQuiet = false } = {}) {
   const { FakeCtx, log } = fakeAudio();
   class FixedDate extends Date { constructor(...a) { if (a.length) super(...a); else super(2026, 0, 5, hour, 0); } }
   const mem = new Map();
   const ctx = loadAppFunctions(SFX_FNS, {
     Date: FixedDate, store: store || { get: (k) => (mem.has(k) ? mem.get(k) : null), set: (k, v) => mem.set(k, String(v)) }, toLocalISO: (d) => d.toISOString().slice(0, 10),
-    window: { AudioContext: FakeCtx }, db: { settings: { sound, motion } }, TECHO_SIDE_KINDS: ['seal', 'knock', 'pencil', 'tick', 'pita', 'turn', 'ton', 'crumple', 'unfold'], SEAL_MODE: 'first',
+    window: { AudioContext: FakeCtx }, db: { settings: { sound, motion } }, TECHO_SIDE_KINDS: ['seal', 'knock', 'pencil', 'tick', 'pita', 'turn', 'ton', 'crumple', 'unfold'], SEAL_MODE: 'first', NIGHT_QUIET: nightQuiet,
     _audioCtx: null, _sfxOut: null, _noiseBuf: null, _lastSfxAt: 0,
     SFX: { done: [[523.25, 0, .8], [659.25, .12, .9]] }, // 音の表は複数行の定義なので、テスト用の小さな表を渡す
   });
@@ -1009,18 +1009,18 @@ test('nightHour: 22時〜7時が夜。境目は 21→昼、22→夜、6→夜、
 });
 
 test('夜（22時〜7時）の手帳風：脇役の音は鳴らさず、皆済は半分の音量で鳴る。確認音（always）は鳴る。ゲーム風は夜でも変わらない', () => {
-  const night = sfxWorld('on', { hour: 23 });
+  const night = sfxWorld('on', { hour: 23, nightQuiet: true });
   ['seal', 'knock', 'pencil', 'tick', 'pita', 'turn', 'ton', 'crumple', 'unfold'].forEach((k) => night.ctx.playSfx(k));
   assert.equal(night.log.ctxCount, 0, '脇役は、AudioContext も作らず鳴らさない');
   night.ctx.playSfx('seal', { always: true });
   assert.ok(night.log.starts.length > 0, '確認音は夜でも鳴る');
-  const k = sfxWorld('on', { hour: 23 }); k.ctx.playSfx('kaisai', { count: 1 });
+  const k = sfxWorld('on', { hour: 23, nightQuiet: true }); k.ctx.playSfx('kaisai', { count: 1 });
   const busK = k.log.connects.find(([from, to]) => from.type === 'gain' && from.gain.value !== .6 && to.gain && to.gain.value === .6);
   assert.ok(busK && busK[0].gain.value <= .5 * 1.15 + 1e-9, `皆済は半分の音量（${busK && busK[0].gain.value}）`);
-  const day = sfxWorld('on', { hour: 12 }); day.ctx.playSfx('kaisai', { count: 1 });
+  const day = sfxWorld('on', { hour: 12, nightQuiet: true }); day.ctx.playSfx('kaisai', { count: 1 });
   const busD = day.log.connects.find(([from, to]) => from.type === 'gain' && from.gain.value !== .6 && to.gain && to.gain.value === .6);
   assert.ok(busD[0].gain.value > .5 * 1.15, '昼は半分にならない');
-  const game = sfxWorld('on', { hour: 23, motion: 'on' }); game.ctx.playSfx('tap');
+  const game = sfxWorld('on', { hour: 23, motion: 'on', nightQuiet: true }); game.ctx.playSfx('tap');
   assert.ok(game.log.starts.length > 0, 'ゲーム風は夜でも鳴る');
 });
 
@@ -1067,4 +1067,12 @@ test('完了の回数：その日の手動の完了を端末内で数え、日�
   assert.ok(first.log.starts.length > 0, '初回は「ぺたっ」');
   const second = sfxWorld(); second.ctx.techoCompleteSfx(2, 0);
   assert.equal(second.log.starts.length, 0, '2回目は無音');
+});
+
+test('夜の静音は既定でオフ：夜（23時）でも、手帳風の音は昼と同じに鳴る', () => {
+  const src = readFileSync(new URL('../../app.js', import.meta.url), 'utf8');
+  assert.match(src, /\nvar NIGHT_QUIET=false;/, '既定はオフ');
+  const w = sfxWorld('on', { hour: 23 });
+  ['seal', 'knock', 'pencil', 'tick', 'pita', 'turn', 'ton', 'crumple', 'unfold'].forEach((k) => w.ctx.playSfx(k));
+  assert.ok(w.log.ctxCount > 0 && w.log.starts.length > 0, '夜でも鳴る');
 });

@@ -2584,7 +2584,7 @@ function renderSettings(){
   put("display",s3b);
 
   // 効果音
-  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします。手帳風の演出を選んでいるときは、ハンコ・朱肉・紙・机の物音（完了は「ぺたっ」、今日の締切を全部片付けた日は「とん、とん…どん」、画面の切り替えは紙をめくる音、ボタンは「こつ」、登録は鉛筆の「カリカリ」、チェックと今日の一手の印は「シュッ」、延期・休みは「ぴたっ」、削除は「くしゃっ」）になります。完了の音は、その日の初回だけです。夜（22時〜7時）は、全部片付けた日の音以外は鳴りません。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
+  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします。手帳風の演出を選んでいるときは、ハンコ・朱肉・紙・机の物音（完了は「ぺたっ」、今日の締切を全部片付けた日は「とん、とん…どん」、画面の切り替えは紙をめくる音、ボタンは「こつ」、登録は鉛筆の「カリカリ」、チェックと今日の一手の印は「シュッ」、延期・休みは「ぴたっ」、削除は「くしゃっ」）になります。完了の音は、その日の初回だけです。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip" data-sfx="own">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
@@ -3786,7 +3786,7 @@ function playSfx(kind, opts){
   opts=opts||{};
   if(!soundOn() || !(SFX[kind] || ["turn","tap","seal","kaisai","knock","pencil","tick","pita","ton","crumple","unfold"].indexOf(kind)>=0)) return;
   // 夜（22時〜7時）は、手帳風の脇役の音を鳴らさない（皆済は半分の音量で残す）。確認音（opts.always）は鳴らす
-  var night=techoStyle() && nightHour(new Date().getHours()) && !opts.always;
+  var night=NIGHT_QUIET && techoStyle() && nightHour(new Date().getHours()) && !opts.always;
   if(night && TECHO_SIDE_KINDS.indexOf(kind)>=0) return;
   try{
     var ctx=audioCtx(); if(!ctx) return;
@@ -3833,6 +3833,8 @@ function playSfx(kind, opts){
 var SEAL_MODE="first";
 /* 手帳風の脇役の音（夜は鳴らさない）。皆済は含めない */
 var TECHO_SIDE_KINDS=["seal","knock","pencil","tick","pita","turn","ton","crumple","unfold"];
+/* 夜の静音（22時〜7時は、皆済以外の手帳風の音を止め、皆済は半分の音量）を使うか。既定はオフ（夜でも昼と同じに鳴る）。使うときは true にする */
+var NIGHT_QUIET=false;
 /* 夜（22時〜7時）か。時刻だけで決まる */
 function nightHour(h){ return h>=22 || h<7; }
 /* その日の n 回目（1から数える）の完了で、鳴らす音と音量を返す。{kind:"seal"|"knock"|null, vol} */
