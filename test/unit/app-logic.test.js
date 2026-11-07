@@ -773,7 +773,7 @@ test('cleanCompletions: 同じ id の記録は1件だけ残す（先に出たも
 });
 
 // ---- 効果音の土台（D15） ----
-const SFX_FNS = ['jitter', 'sfxGain', 'soundOn', 'audioCtx', 'audioOut', 'noiseBuffer', 'noiseShot', 'playSfx', 'stampTap', 'pageTurn', 'stampSound', 'kaisaiSound', 'knockSound', 'pencilSound', 'tickSound', 'pitaSound'];
+const SFX_FNS = ['jitter', 'sfxGain', 'soundOn', 'audioCtx', 'audioOut', 'noiseBuffer', 'noiseShot', 'playSfx', 'stampTap', 'pageTurn', 'stampSound', 'kaisaiSound', 'knockSound', 'pencilSound', 'tickSound', 'pitaSound', 'tonPair', 'crumpleSound', 'nightHour', 'sealLevel', 'techoStyle', 'techoCompleteSfx', 'sfxDay', 'bumpManualCount'];
 /** 偽の AudioContext：作った部品と、つなぎ先を記録する */
 function fakeAudio() {
   const log = { created: [], buffers: 0, connects: [], starts: [], stops: [], ctxCount: 0 };
@@ -796,10 +796,13 @@ function fakeAudio() {
   }
   return { FakeCtx, log };
 }
-function sfxWorld(sound = 'on') {
+function sfxWorld(sound = 'on', { motion = 'techo', hour = 12, store } = {}) {
   const { FakeCtx, log } = fakeAudio();
+  class FixedDate extends Date { constructor(...a) { if (a.length) super(...a); else super(2026, 0, 5, hour, 0); } }
+  const mem = new Map();
   const ctx = loadAppFunctions(SFX_FNS, {
-    window: { AudioContext: FakeCtx }, db: { settings: { sound } },
+    Date: FixedDate, store: store || { get: (k) => (mem.has(k) ? mem.get(k) : null), set: (k, v) => mem.set(k, String(v)) }, toLocalISO: (d) => d.toISOString().slice(0, 10),
+    window: { AudioContext: FakeCtx }, db: { settings: { sound, motion } }, TECHO_SIDE_KINDS: ['seal', 'knock', 'pencil', 'tick', 'pita', 'turn', 'ton', 'crumple', 'unfold'], SEAL_MODE: 'first',
     _audioCtx: null, _sfxOut: null, _noiseBuf: null, _lastSfxAt: 0,
     SFX: { done: [[523.25, 0, .8], [659.25, .12, .9]] }, // 音の表は複数行の定義なので、テスト用の小さな表を渡す
   });
@@ -865,8 +868,8 @@ function completeWorld({ reduced }) {
     window: { matchMedia: () => ({ matches: reduced }) },
     applyCompletion: () => ({ log: { exp: 5, kind: 'manual' }, repeating: false }),
     grantAllClearBonus: () => null, totalExp: () => 0, toLocalISO: () => 'k', parseItemDate: () => new Date(),
-    rewardOf: () => ({ gain: 5 }), save() {}, scheduleAutoSync() {},
-    playSfx: (kind, opts) => events.push(['sfx', kind, opts && opts.delay]),
+    rewardOf: () => ({ gain: 5 }), save() {}, scheduleAutoSync() {}, bumpManualCount: () => 1,
+    techoCompleteSfx: (n, delay) => events.push(['sfx', 'seal', delay]), playSfx: (kind) => events.push(['sfx', kind]),
     render: () => events.push('render'), toast: () => events.push('toast'), playKaisai() {},
     stampCard: () => events.push('stamp'), foldCard: (c, fn) => { events.push('fold'); timers.push(fn); },
     setTimeout: (fn, ms) => { timers.push(fn); events.push(`timer${ms}`); },
@@ -878,7 +881,7 @@ function completeWorld({ reduced }) {
 test('手帳風・動きを減らす設定で完了：印を先に出し、畳まずに、あとから一覧を描き直す（音の遅れは 0）', () => {
   const w = completeWorld({ reduced: true });
   w.ctx.complete({ id: 'a' }, w.card);
-  assert.deepEqual(w.events, [['sfx', 'seal', 0], 'stamp', 'timer400'], '印が先で、描き直しはまだ。手帳風の完了の音は「ぺたっ」');
+  assert.deepEqual(w.events, [['sfx', 'seal', 0], 'stamp', 'timer400'], '印が先で、描き直しはまだ。手帳風の完了の音は「ぺたっ」（その日の1回目）');
   assert.ok(!w.events.includes('fold'), '畳まない');
   w.timers.forEach((f) => f());
   assert.deepEqual(w.events.slice(-2), ['render', 'toast'], '印を見せたあとに描き直す');
@@ -932,7 +935,7 @@ test('手帳風の完了：皆済の日（印が出るカードがあるとき�
       applyCompletion: () => ({ log: { exp: 5, kind: 'manual' }, repeating: false }),
       grantAllClearBonus: () => (allClear ? { exp: 20 } : null), totalExp: () => 0, toLocalISO: () => 'k', parseItemDate: () => new Date(),
       rewardOf: (l) => ({ gain: l.exp }), save() {}, scheduleAutoSync() {},
-      playSfx: (kind) => events.push(kind), render() {}, toast() {}, playKaisai() {}, stampCard() {}, foldCard() {}, playQuestClear() {}, playAllClear() {},
+      bumpManualCount: () => 1, techoCompleteSfx: () => events.push('seal'), playSfx: (kind) => events.push(kind), render() {}, toast() {}, playKaisai() {}, stampCard() {}, foldCard() {}, playQuestClear() {}, playAllClear() {},
       setTimeout() {},
     });
     ctx.complete({ id: 'a' }, card ? { querySelectorAll: () => [] } : null);
@@ -948,7 +951,7 @@ test('手帳風の完了：皆済の日（印が出るカードがあるとき�
       applyCompletion: () => ({ log: { exp: 5, kind: 'manual' }, repeating: false }),
       grantAllClearBonus: () => ({ exp: 20 }), totalExp: () => 0, toLocalISO: () => 'k', parseItemDate: () => new Date(),
       rewardOf: () => ({ gain: 25 }), save() {}, scheduleAutoSync() {},
-      playSfx: (kind) => events.push(kind), render() {}, toast() {}, playKaisai() { events.push('kaisai-pop'); }, stampCard() {}, foldCard(c, fn) { fn(); },
+      bumpManualCount: () => 1, techoCompleteSfx: () => events.push('seal'), playSfx: (kind) => events.push(kind), render() {}, toast() {}, playKaisai() { events.push('kaisai-pop'); }, stampCard() {}, foldCard(c, fn) { fn(); },
       setTimeout() {},
     });
     ctx.complete({ id: 'a' }, card ? { querySelectorAll: () => [] } : null);
@@ -987,4 +990,81 @@ test('カリカリの粒は4〜6個（数は乱数）で、粒ごとに中心の
     assert.ok(grains >= 4 && grains <= 6, `粒は4〜6個（${grains}）`);
   }
   assert.ok(counts.size > 1, '粒の数は毎回同じではない');
+});
+
+// ---- 手帳風の音の追加分（D18）：完了の回数・朱肉・夜・削除・皆済の件数連動 ----
+test('sealLevel: その日の完了の回数ごとに、鳴らす音と音量が決まる（既定は "first"：初回だけ「ぺたっ」、以降は無音）', () => {
+  const { ctx } = sfxWorld();
+  const lv = (n, m) => JSON.parse(JSON.stringify(ctx.sealLevel(n, m)));
+  assert.deepEqual([1, 2, 3, 10].map((n) => lv(n, 'first').kind), ['seal', null, null, null]);
+  assert.deepEqual([1, 5].map((n) => lv(n, 'kaisai-only').kind), [null, null]);
+  assert.deepEqual([1, 3, 4, 9].map((n) => lv(n, 'fade').vol), [1, 1, .5, .5]);
+  assert.deepEqual([1, 2].map((n) => lv(n, 'knock').kind), ['seal', 'knock']);
+  assert.deepEqual([1, 3, 4].map((n) => lv(n, 'three').kind), ['seal', 'seal', null]);
+});
+
+test('nightHour: 22時〜7時が夜。境目は 21→昼、22→夜、6→夜、7→昼', () => {
+  const { ctx } = sfxWorld();
+  assert.deepEqual([0, 6, 7, 12, 21, 22, 23].map(ctx.nightHour), [true, true, false, false, false, true, true]);
+});
+
+test('夜（22時〜7時）の手帳風：脇役の音は鳴らさず、皆済は半分の音量で鳴る。確認音（always）は鳴る。ゲーム風は夜でも変わらない', () => {
+  const night = sfxWorld('on', { hour: 23 });
+  ['seal', 'knock', 'pencil', 'tick', 'pita', 'turn', 'ton', 'crumple', 'unfold'].forEach((k) => night.ctx.playSfx(k));
+  assert.equal(night.log.ctxCount, 0, '脇役は、AudioContext も作らず鳴らさない');
+  night.ctx.playSfx('seal', { always: true });
+  assert.ok(night.log.starts.length > 0, '確認音は夜でも鳴る');
+  const k = sfxWorld('on', { hour: 23 }); k.ctx.playSfx('kaisai', { count: 1 });
+  const busK = k.log.connects.find(([from, to]) => from.type === 'gain' && from.gain.value !== .6 && to.gain && to.gain.value === .6);
+  assert.ok(busK && busK[0].gain.value <= .5 * 1.15 + 1e-9, `皆済は半分の音量（${busK && busK[0].gain.value}）`);
+  const day = sfxWorld('on', { hour: 12 }); day.ctx.playSfx('kaisai', { count: 1 });
+  const busD = day.log.connects.find(([from, to]) => from.type === 'gain' && from.gain.value !== .6 && to.gain && to.gain.value === .6);
+  assert.ok(busD[0].gain.value > .5 * 1.15, '昼は半分にならない');
+  const game = sfxWorld('on', { hour: 23, motion: 'on' }); game.ctx.playSfx('tap');
+  assert.ok(game.log.starts.length > 0, 'ゲーム風は夜でも鳴る');
+});
+
+test('皆済「ぺたぺた…どん」：件数ぶん（上限3）の「ぺたっ」のあとに「どん」。0.8秒以内', () => {
+  const lengthOf = (count) => {
+    const { ctx, log } = sfxWorld();
+    ctx.playSfx('kaisai', { count });
+    const ends = [...log.starts.filter(([n]) => n.type === 'source').map(([, w, , d]) => w + d), ...log.stops.filter(([n]) => n.type === 'osc').map(([, t]) => t)];
+    return Math.max(...ends) - .02;
+  };
+  [1, 2, 3, 9].forEach((c) => assert.ok(lengthOf(c) <= .8, `件数${c}でも0.8秒以内（${lengthOf(c)}）`));
+  assert.ok(lengthOf(3) > lengthOf(1), '件数が多いほど「どん」が後ろに延びる');
+  const grains = (c) => { const w = sfxWorld(); w.ctx.playSfx('kaisai', { count: c }); return w.log.starts.filter(([n]) => n.type === 'source').length; };
+  assert.ok(grains(3) > grains(1), '件数ぶん「ぺたっ」の粒が増える');
+  assert.equal(grains(9), grains(3), '上限は3');
+});
+
+test('朱肉「とんとん」は2回（90ms 間隔）。削除「くしゃっ」は12〜16粒・0.15秒以内で、粒の間に粒の2倍以上の無音。戻す「かさっ」は6粒', () => {
+  const t = sfxWorld(); t.ctx.playSfx('ton');
+  const tons = t.log.starts.filter(([n]) => n.type === 'source');
+  assert.equal(tons.length, 2);
+  assert.ok(Math.abs((tons[1][1] - tons[0][1]) - .09) < 1e-9, '90ms 間隔');
+  for (let i = 0; i < 40; i++) {
+    const c = sfxWorld(); c.ctx.playSfx('crumple');
+    const starts = c.log.starts.filter(([n]) => n.type === 'source').map(([, w]) => w).sort((a, b) => a - b);
+    assert.ok(starts.length >= 12 && starts.length <= 16, `くしゃっ：${starts.length}粒`);
+    assert.ok(starts[starts.length - 1] - starts[0] <= .15 + .003, '0.15秒以内');
+    for (let j = 1; j < starts.length; j++) assert.ok(starts[j] - starts[j - 1] >= .006 - 1e-9, `粒の間は 6ms 以上（${starts[j] - starts[j - 1]}）`);
+  }
+  const u = sfxWorld(); u.ctx.playSfx('unfold');
+  assert.equal(u.log.starts.filter(([n]) => n.type === 'source').length, 6);
+});
+
+test('完了の回数：その日の手動の完了を端末内で数え、日付が変わると0に戻る。5の倍数のとき朱肉が先に鳴り、続けて「ぺたっ」（初回以外は無音）', () => {
+  const mem = new Map();
+  const store = { get: (k) => (mem.has(k) ? mem.get(k) : null), set: (k, v) => mem.set(k, String(v)) };
+  const a = sfxWorld('on', { store });
+  assert.deepEqual([1, 2, 3].map(() => a.ctx.bumpManualCount()), [1, 2, 3]);
+  mem.set('sfx-day', JSON.stringify({ date: '2025-12-31', manual: 7 })); // 昨日の記録
+  assert.equal(a.ctx.bumpManualCount(), 1, '日付が変わったので 1 から');
+  const five = sfxWorld(); five.ctx.techoCompleteSfx(5, 0);
+  assert.equal(five.log.starts.filter(([n]) => n.type === 'source').length, 2, '5回目：初回ではないので「ぺたっ」は無音、朱肉の2回だけ');
+  const first = sfxWorld(); first.ctx.techoCompleteSfx(1, 0);
+  assert.ok(first.log.starts.length > 0, '初回は「ぺたっ」');
+  const second = sfxWorld(); second.ctx.techoCompleteSfx(2, 0);
+  assert.equal(second.log.starts.length, 0, '2回目は無音');
 });
