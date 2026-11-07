@@ -852,3 +852,36 @@ test('ボタンの共通の音は、専用の音がある操作（data-sfx="own"
   assert.match(src, /label==="完了にする"\|\|label==="削除"\)\s*b\.setAttribute\("data-sfx","own"\)/, '完了・削除のボタンに印が付く');
   assert.match(src, /dlgSave\.setAttribute\("data-sfx","own"\)/, '新しく登録する保存ボタンに印が付く');
 });
+
+// ---- 手帳風の完了：動きを減らす設定でも印を出す（D19） ----
+function completeWorld({ reduced }) {
+  const events = [], timers = [];
+  const ctx = loadAppFunctions(['complete', 'techoStyle', 'motionOn'], {
+    db: { items: [{ id: 'a' }], settings: { motion: 'techo' } },
+    window: { matchMedia: () => ({ matches: reduced }) },
+    applyCompletion: () => ({ log: { exp: 5, kind: 'manual' }, repeating: false }),
+    grantAllClearBonus: () => null, totalExp: () => 0, toLocalISO: () => 'k', parseItemDate: () => new Date(),
+    rewardOf: () => ({ gain: 5 }), save() {}, scheduleAutoSync() {},
+    playSfx: (kind, opts) => events.push(['sfx', kind, opts && opts.delay]),
+    render: () => events.push('render'), toast: () => events.push('toast'), playKaisai() {},
+    stampCard: () => events.push('stamp'), foldCard: (c, fn) => { events.push('fold'); timers.push(fn); },
+    setTimeout: (fn, ms) => { timers.push(fn); events.push(`timer${ms}`); },
+  });
+  const card = { querySelectorAll: () => [{ disabled: false }] };
+  return { ctx, events, timers, card };
+}
+
+test('手帳風・動きを減らす設定で完了：印を先に出し、畳まずに、あとから一覧を描き直す（音の遅れは 0）', () => {
+  const w = completeWorld({ reduced: true });
+  w.ctx.complete({ id: 'a' }, w.card);
+  assert.deepEqual(w.events, [['sfx', 'done', 0], 'stamp', 'timer400'], '印が先で、描き直しはまだ');
+  assert.ok(!w.events.includes('fold'), '畳まない');
+  w.timers.forEach((f) => f());
+  assert.deepEqual(w.events.slice(-2), ['render', 'toast'], '印を見せたあとに描き直す');
+});
+
+test('手帳風・動きありで完了：今までどおり印を押してから畳む（音は印の着地に 0.04 秒合わせる）', () => {
+  const w = completeWorld({ reduced: false });
+  w.ctx.complete({ id: 'a' }, w.card);
+  assert.deepEqual(w.events, [['sfx', 'done', .04], 'stamp', 'fold']);
+});
