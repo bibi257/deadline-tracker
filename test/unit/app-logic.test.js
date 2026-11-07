@@ -2,6 +2,7 @@
 // 画面まわりに依存しない関数だけを test/support/appFns.js で取り出して、「今」を固定した vm の中で動かす。
 // 月末・うるう年・取りやめた回・回数指定は、間違えやすい境目。Worker の .ics（buildIcs）とのずれも、ここで気づけるようにする。
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildIcs } from '../../worker/src/ics.js';
@@ -772,14 +773,14 @@ test('cleanCompletions: 同じ id の記録は1件だけ残す（先に出たも
 });
 
 // ---- 効果音の土台（D15） ----
-const SFX_FNS = ['jitter', 'sfxGain', 'soundOn', 'audioCtx', 'audioOut', 'noiseBuffer', 'noiseShot', 'playSfx', 'stampTap', 'pageTurn'];
+const SFX_FNS = ['jitter', 'sfxGain', 'soundOn', 'audioCtx', 'audioOut', 'noiseBuffer', 'noiseShot', 'playSfx', 'stampTap', 'pageTurn', 'stampSound', 'kaisaiSound', 'knockSound'];
 /** 偽の AudioContext：作った部品と、つなぎ先を記録する */
 function fakeAudio() {
-  const log = { created: [], buffers: 0, connects: [], starts: [], ctxCount: 0 };
+  const log = { created: [], buffers: 0, connects: [], starts: [], stops: [], ctxCount: 0 };
   const node = (type, extra = {}) => {
     const n = { type, gain: { value: 1, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} },
       threshold: { value: 0 }, knee: { value: 0 }, ratio: { value: 0 }, attack: { value: 0 }, release: { value: 0 }, Q: { value: 0 },
-      connect(to) { log.connects.push([n, to]); return to; }, start(...a) { log.starts.push([n, ...a]); }, stop() {}, ...extra };
+      connect(to) { log.connects.push([n, to]); return to; }, start(...a) { log.starts.push([n, ...a]); }, stop(t) { log.stops.push([n, t]); }, ...extra };
     log.created.push(type);
     return n;
   };
@@ -802,6 +803,9 @@ function sfxWorld(sound = 'on') {
     _audioCtx: null, _sfxOut: null, _noiseBuf: null, _lastSfxAt: 0,
     SFX: { done: [[523.25, 0, .8], [659.25, .12, .9]] }, // 音の表は複数行の定義なので、テスト用の小さな表を渡す
   });
+  // 複数行で書いてある音の値（手帳風の「ぺたっ」「どん」）は、app.js のソースからそのまま取り出して読み込む
+  const appSrc = readFileSync(new URL('../../app.js', import.meta.url), 'utf8');
+  for (const name of ['SEAL_PARAMS', 'DON_PARAMS']) vm.runInContext(new RegExp(`\\nvar ${name}=\\{[\\s\\S]*?\\n\\};`).exec(appSrc)[0], ctx);
   return { ctx, log };
 }
 
@@ -874,7 +878,7 @@ function completeWorld({ reduced }) {
 test('手帳風・動きを減らす設定で完了：印を先に出し、畳まずに、あとから一覧を描き直す（音の遅れは 0）', () => {
   const w = completeWorld({ reduced: true });
   w.ctx.complete({ id: 'a' }, w.card);
-  assert.deepEqual(w.events, [['sfx', 'done', 0], 'stamp', 'timer400'], '印が先で、描き直しはまだ');
+  assert.deepEqual(w.events, [['sfx', 'seal', 0], 'stamp', 'timer400'], '印が先で、描き直しはまだ。手帳風の完了の音は「ぺたっ」');
   assert.ok(!w.events.includes('fold'), '畳まない');
   w.timers.forEach((f) => f());
   assert.deepEqual(w.events.slice(-2), ['render', 'toast'], '印を見せたあとに描き直す');
@@ -883,5 +887,73 @@ test('手帳風・動きを減らす設定で完了：印を先に出し、畳�
 test('手帳風・動きありで完了：今までどおり印を押してから畳む（音は印の着地に 0.04 秒合わせる）', () => {
   const w = completeWorld({ reduced: false });
   w.ctx.complete({ id: 'a' }, w.card);
-  assert.deepEqual(w.events, [['sfx', 'done', .04], 'stamp', 'fold']);
+  assert.deepEqual(w.events, [['sfx', 'seal', .04], 'stamp', 'fold']);
+});
+
+test('手帳風の音：ぺたっ（完了）・とんとん…どん（皆済）・こつ（ボタン）は、決めた長さを超えない', () => {
+  const lengthOf = (kind) => {
+    const { ctx, log } = sfxWorld();
+    ctx.playSfx(kind);
+    const ends = [
+      ...log.starts.filter(([n]) => n.type === 'source').map(([, when, , dur]) => when + dur),
+      ...log.stops.filter(([n]) => n.type === 'osc').map(([, t]) => t),
+    ];
+    assert.ok(ends.length > 0, `${kind} が鳴る`);
+    return Math.max(...ends) - .02; // 鳴らし始めの 0.02 秒を除く
+  };
+  assert.ok(lengthOf('seal') <= .16, `ぺたっ は約0.15秒以内（${lengthOf('seal')}）`);
+  assert.ok(lengthOf('kaisai') <= .6, `皆済は約0.55秒以内（${lengthOf('kaisai')}）`);
+  assert.ok(lengthOf('knock') <= .05, `こつ は40ms前後（${lengthOf('knock')}）`);
+});
+
+test('手帳風の音も、マスター→コンプレッサー経由で、出力へ直接つながない。皆済の「どん」には 320・480・640Hz の倍音が入る', () => {
+  const { ctx, log } = sfxWorld();
+  ['seal', 'kaisai', 'knock'].forEach((k) => ctx.playSfx(k));
+  assert.equal(log.connects.filter(([, to]) => to && to.type === 'destination').length, 1, '出力につながるのはコンプレッサーだけ');
+  const partials = Array.from(ctx.DON_PARAMS.partials, (p) => p[0]);
+  assert.ok(partials.every((f) => f >= 200 && f <= 800), '倍音は 200〜800Hz');
+  assert.deepEqual(partials, [320, 480, 640]);
+});
+
+test('皆済のボーナスは1日1回だけ：完了→戻す→もう一度完了しても、2回目は皆済にならない（皆済の音は2回鳴らない）', () => {
+  const db = { completions: [] };
+  const { grantAllClearBonus } = loadAppFunctions(['grantAllClearBonus'], {
+    db, todayItems: () => ({ due: [], routines: [] }), toLocalISO: () => 'd', ALL_CLEAR_BONUS: 20, trimCompletions() {}, save() {},
+  });
+  assert.ok(grantAllClearBonus(), '1回目はボーナスが付く');
+  assert.equal(grantAllClearBonus(), null, '同じ日の2回目は付かない');
+});
+
+test('手帳風の完了：皆済の日（印が出るカードがあるとき）は「ぺたっ」を鳴らさず、皆済の音だけ。ゲーム風は今の「done」のまま', () => {
+  const run = (motion, allClear, card) => {
+    const events = [];
+    const ctx = loadAppFunctions(['complete', 'techoStyle', 'motionOn'], {
+      db: { items: [{ id: 'a' }], settings: { motion } }, window: { matchMedia: () => ({ matches: false }) },
+      applyCompletion: () => ({ log: { exp: 5, kind: 'manual' }, repeating: false }),
+      grantAllClearBonus: () => (allClear ? { exp: 20 } : null), totalExp: () => 0, toLocalISO: () => 'k', parseItemDate: () => new Date(),
+      rewardOf: (l) => ({ gain: l.exp }), save() {}, scheduleAutoSync() {},
+      playSfx: (kind) => events.push(kind), render() {}, toast() {}, playKaisai() {}, stampCard() {}, foldCard() {}, playQuestClear() {}, playAllClear() {},
+      setTimeout() {},
+    });
+    ctx.complete({ id: 'a' }, card ? { querySelectorAll: () => [] } : null);
+    return events;
+  };
+  assert.deepEqual(run('techo', false, true), ['seal']);
+  assert.deepEqual(run('on', false, true), ['done'], 'ゲーム風は今のまま');
+  // 皆済：rewardOf が allClear を返す形にして、皆済の日は seal を鳴らさない
+  const withAllClear = (card) => {
+    const events = [];
+    const ctx = loadAppFunctions(['complete', 'techoStyle', 'motionOn'], {
+      db: { items: [{ id: 'a' }], settings: { motion: 'techo' } }, window: { matchMedia: () => ({ matches: false }) },
+      applyCompletion: () => ({ log: { exp: 5, kind: 'manual' }, repeating: false }),
+      grantAllClearBonus: () => ({ exp: 20 }), totalExp: () => 0, toLocalISO: () => 'k', parseItemDate: () => new Date(),
+      rewardOf: () => ({ gain: 25 }), save() {}, scheduleAutoSync() {},
+      playSfx: (kind) => events.push(kind), render() {}, toast() {}, playKaisai() { events.push('kaisai-pop'); }, stampCard() {}, foldCard(c, fn) { fn(); },
+      setTimeout() {},
+    });
+    ctx.complete({ id: 'a' }, card ? { querySelectorAll: () => [] } : null);
+    return events;
+  };
+  assert.deepEqual(withAllClear(true), ['kaisai-pop'], 'カードがあるとき：皆済の印（と音）だけ。ぺたっ は鳴らさない');
+  assert.deepEqual(withAllClear(false), ['seal'], 'カードが無い（リンクからの完了）：皆済の印が出ないので、ぺたっ');
 });

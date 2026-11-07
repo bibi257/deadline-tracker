@@ -2578,7 +2578,7 @@ function renderSettings(){
   put("display",s3b);
 
   // 効果音
-  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします（手帳風の画面の切り替えでは紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
+  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします。手帳風の演出を選んでいるときは、ハンコ・朱肉・紙・机の物音（完了は「ぺたっ」、今日の締切を全部片付けた日は「とん、とん…どん」、画面の切り替えは紙をめくる音、ボタンは「こつ」）になります。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip" data-sfx="own">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
@@ -3637,7 +3637,9 @@ function complete(it, cardEl){
   scheduleAutoSync();
   var techo=techoStyle();
   // 手帳風でカードがあるときは、印が紙に着く時刻に合わせて鳴らす（動きがあるとき 0.04 秒、動きがないとき 0 秒）
-  playSfx("done", {delay:(cardEl && techo && motionOn())?.04:0});
+  // 手帳風は「ぺたっ」（全部片付けた日は、あとで鳴らす皆済の音だけにして、同じ操作で2つ鳴らさない）。ゲーム風は今の「done」
+  if(!techo) playSfx("done");
+  else if(!(reward.allClear && cardEl)) playSfx("seal", {delay:(cardEl && motionOn())?.04:0}); // 皆済の印が出るとき（カードがあるとき）だけ、皆済の音に任せる
   var msg=techo
     ? (sub?"済。"+sub:"済の印を押しました")+"（+"+reward.gain+" EXP"+(reward.allClear?"・今日の締切は皆済":"")+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）"
     : (sub?"完了。"+sub:"完了にしました")+"（EXP +"+reward.gain+(reward.allClear?"・本日のクエスト全クリア":"")+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）";
@@ -3676,6 +3678,7 @@ function stampCard(card){
 }
 /* 手帳風の全クリア：画面の中央に「皆済」の丸印を押す。タップでもすぐ閉じる */
 function playKaisai(exp){
+  playSfx("kaisai"); // 皆済の印が出るのに合わせて「とんとん…どん」
   var old=document.querySelector(".seal-pop"); if(old) old.remove();
   var el=h('<div class="seal-pop" role="status" aria-live="polite">'+
     '<div class="seal" aria-hidden="true"><span>皆済</span></div>'+
@@ -3772,7 +3775,7 @@ var SFX={
 /* 音を鳴らす。opts.delay（秒）で鳴らす時刻を遅らせられる（印のアニメーションの着地に合わせるため）。
    音ごとに高さ（±6%）と音量（±15%）を少しずつばらつかせる */
 function playSfx(kind, opts){
-  if(!soundOn() || !(SFX[kind] || kind==="turn" || kind==="tap")) return;
+  if(!soundOn() || !(SFX[kind] || ["turn","tap","seal","kaisai","knock"].indexOf(kind)>=0)) return;
   try{
     var ctx=audioCtx(); if(!ctx) return;
     if(ctx.state==="suspended") ctx.resume().catch(function(){});
@@ -3794,12 +3797,70 @@ function playSfx(kind, opts){
     };
     if(kind==="turn"){ pageTurn(ctx, t0, bus); return; }
     if(kind==="tap"){ stampTap(ctx, t0, bus, pitch); return; }
+    if(kind==="seal"){ stampSound(ctx, bus, t0, SEAL_PARAMS); return; }
+    if(kind==="kaisai"){ kaisaiSound(ctx, bus, t0); return; }
+    if(kind==="knock"){ knockSound(ctx, bus, t0); return; }
     SFX[kind].forEach(function(n){
       var s=t0+n[1], peak=n[3]||.16;
       tone(n[0], s, n[2], peak);         // 基音
       tone(n[0]*2, s, n[2]*.5, peak/4);  // 倍音（早めに消えて、余韻は丸く残る）
     });
   }catch(e){ /* 音が出せなくても操作は止めない */ }
+}
+
+/* ---- 手帳風の音（手帳風の演出を選んでいるときだけ。ゲーム風は上の音のまま） ----
+   ハンコ・朱肉・机の物音を、雑音と短い正弦波で合成する。iPhone のスピーカーは約200Hz未満をほとんど出せないので、
+   重さは 300〜600Hz の帯域で出す。1つの合成関数 stampSound(p) に、長さ・高さ・音量などの値を渡して「ぺたっ」「どん」を作る */
+var SEAL_PARAMS={ // 完了「ぺたっ」：ゴム印の柔らかい押しつぶし。小さく短く（約0.15秒）
+  lp:{f0:1200, f1:350, time:.08, q:1.5, peak:.12, decay:.12},  // 胴：雑音をローパスに通し、通す高さを下げる
+  body:{f0:300, f1:200, time:.06, peak:.05, decay:.1},         // 補助の胴：正弦波を下げる
+  grain:{f:2500, q:1, peak:.05}                                // 刻印：6ms の粒
+};
+var DON_PARAMS={ // 皆済の「どん」：「ぺたっ」と同じ作りで、重く長い（約0.25秒）
+  lp:{f0:1000, f1:250, time:.12, q:1.5, peak:.18, decay:.25},
+  body:{f0:250, f1:160, time:.12, peak:.09, decay:.25},
+  // 200〜800Hz の倍音を小さく足して、脳に低音を補わせる（iPhone で聞こえない帯域を避ける）。3kHz を超える成分は刻印の粒だけ
+  partials:[[320,.02],[480,.015],[640,.012]],
+  grain:{f:2500, q:1, peak:.06}
+};
+function stampSound(ctx, dst, t0, p){
+  var k=jitter(1, .08); // 毎回、フィルターの高さを少しばらつかせる
+  if(p.lp){
+    var lp=ctx.createBiquadFilter(); lp.type="lowpass"; lp.Q.value=p.lp.q;
+    lp.frequency.setValueAtTime(p.lp.f0*k, t0); lp.frequency.exponentialRampToValueAtTime(p.lp.f1*k, t0+p.lp.time);
+    noiseShot(ctx, dst, t0, p.lp.decay, p.lp.peak, lp);
+  }
+  var sine=function(f0, f1, time, peak, dec){
+    var o=ctx.createOscillator(), g=ctx.createGain();
+    o.type="sine"; o.frequency.setValueAtTime(f0*k, t0); o.frequency.exponentialRampToValueAtTime(f1*k, t0+time);
+    g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(peak, t0+.004); g.gain.exponentialRampToValueAtTime(.0001, t0+dec);
+    o.connect(g); g.connect(dst); o.start(t0); o.stop(t0+dec+.02);
+  };
+  if(p.body) sine(p.body.f0, p.body.f1, p.body.time, p.body.peak, p.body.decay);
+  (p.partials||[]).forEach(function(q){ sine(q[0], q[0]*.97, p.body.time, q[1], p.body.decay); });
+  if(p.grain){
+    var bp=ctx.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=p.grain.f*k; bp.Q.value=p.grain.q;
+    noiseShot(ctx, dst, t0, .006, p.grain.peak, bp);
+  }
+}
+/* 皆済「とん、とん…どん」（約0.55秒）：朱肉に印を付ける「とん」を90ms間隔で2回、そのあとに重い「どん」 */
+function kaisaiSound(ctx, dst, t0){
+  var ton=function(at){
+    var lp=ctx.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=500*jitter(1,.08);
+    noiseShot(ctx, dst, at, .04, .07, lp);
+  };
+  ton(t0); ton(t0+.09);
+  stampSound(ctx, dst, t0+.27, DON_PARAMS);
+}
+/* ボタン共通「こつ」（40ms 以内）：指先や鉛筆の尻で机を軽く叩く音 */
+function knockSound(ctx, dst, t0){
+  var k=jitter(1, .08);
+  var bp=ctx.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=1800*k; bp.Q.value=4;
+  noiseShot(ctx, dst, t0, .004, .035, bp);
+  var o=ctx.createOscillator(), g=ctx.createGain();
+  o.type="sine"; o.frequency.setValueAtTime(900*k, t0);
+  g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(.02, t0+.003); g.gain.exponentialRampToValueAtTime(.0001, t0+.03);
+  o.connect(g); g.connect(dst); o.start(t0); o.stop(t0+.04);
 }
 
 /* ボタンを押したときの音：ゲームの決定音のような、明るく弾む「ぽこっ」（約0.5秒）。
@@ -3827,7 +3888,7 @@ document.addEventListener("click",function(e){
   if(!soundOn()) return;
   var t=e.target && e.target.closest ? e.target.closest("button, summary, input[type=checkbox], [role=button]") : null;
   if(!t || t.disabled || t.getAttribute("aria-disabled")==="true" || t.closest('[inert], .tab, [data-sfx="own"]')) return;
-  playSfx("tap");
+  playSfx(techoStyle()?"knock":"tap"); // 手帳風は机を叩く「こつ」、ゲーム風は明るい「ぽこっ」
 });
 
 /* 手帳風の画面の切り替え：紙をめくる「さっ」という音。雑音を帯域フィルターに通し、
