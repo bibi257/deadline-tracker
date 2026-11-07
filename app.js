@@ -3635,15 +3635,23 @@ function complete(it, cardEl){
   // データは先に保存する（演出中に閉じても完了は残る）。描き直しだけ演出のあとに回す
   save();
   scheduleAutoSync();
-  playSfx("done");
   var techo=techoStyle();
+  // 手帳風でカードがあるときは、印が紙に着く時刻に合わせて鳴らす（動きがあるとき 0.04 秒、動きがないとき 0 秒）
+  playSfx("done", {delay:(cardEl && techo && motionOn())?.04:0});
   var msg=techo
     ? (sub?"済。"+sub:"済の印を押しました")+"（+"+reward.gain+" EXP"+(reward.allClear?"・今日の締切は皆済":"")+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）"
     : (sub?"完了。"+sub:"完了にしました")+"（EXP +"+reward.gain+(reward.allClear?"・本日のクエスト全クリア":"")+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）";
-  if(cardEl && motionOn() && techo){
-    // 手帳風：帯は出さず、カードに「済」の印を押してから畳む。全部片付いた日は畳んだあとに「皆済」の印
+  if(cardEl && techo){
+    // 手帳風：帯は出さず、カードに「済」の印を押してから畳む。全部片付いた日は畳んだあとに「皆済」の印。
+    // 動きを減らす設定のときも印は出す（動きなしで 0.4 秒見せてから、畳まずに一覧を描き直す）。消音中・電車の中でも手応えが画面に残る
+    var after=function(){ render(); toast(msg); if(reward.allClear) playKaisai(reward.allClear); };
     stampCard(cardEl);
-    foldCard(cardEl, function(){ render(); toast(msg); if(reward.allClear) playKaisai(reward.allClear); });
+    if(motionOn()){
+      foldCard(cardEl, after);
+    } else {
+      cardEl.querySelectorAll("button").forEach(function(b){ b.disabled=true; }); // 印を見せている間の二重操作を防ぐ
+      setTimeout(after, 400);
+    }
   } else if(cardEl && motionOn()){
     // 今日の全クリアは、達成の帯が閉じたあと（自動でもタップでも）続けて出す
     playQuestClear(it.title, reward, sub, reward.allClear?function(){ playAllClear(reward.allClear); }:null);
