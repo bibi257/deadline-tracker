@@ -2584,7 +2584,7 @@ function renderSettings(){
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
     b.onclick=function(){
       db.settings.sound=p[0]; saveRaw(); render(); // 設定は同期対象外なのでupdatedAtは進めない
-      if(p[0]==="on"){ unlockAudio(); playSfx("done"); } // 押した操作の中で鳴らして、音が出ることを確かめられるようにする
+      if(p[0]==="on"){ unlockAudio(); playSfx(techoStyle()?"seal":"done"); } // 押した操作の中で鳴らして、音が出ることを確かめられるようにする（手帳風なら手帳風の完了の音）
     };
     s3c.querySelector(".row").appendChild(b);
   });
