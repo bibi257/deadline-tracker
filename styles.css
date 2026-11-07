@@ -769,6 +769,10 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .ach .g4{background:var(--grass-4)}
 .ach .early{outline:2px solid var(--blue);outline-offset:-2px}
 .ach-grid i.now{border-color:var(--ink)}
+/* 皆済した日：マスの上に朱色の小さな丸印（件数の濃さはそのまま）。朱色は手帳の印の色だけに使う */
+.ach-grid i.kaisai::after,.ach-sw.kaisai::after{content:"";position:absolute;left:50%;top:50%;box-sizing:border-box;height:74%;aspect-ratio:1;transform:translate(-50%,-50%);
+  border:1.5px solid var(--red);border-radius:50%;background:transparent}
+.ach-key{display:inline-flex;align-items:center;gap:4px;margin-left:10px}
 .ach-pick{min-height:1.4em;margin:8px 0 0}
 .ach-legend{display:flex;flex-wrap:wrap;align-items:center;gap:2px 3px;margin-top:6px}
 .ach-sw{display:inline-block;width:12px;height:12px}
