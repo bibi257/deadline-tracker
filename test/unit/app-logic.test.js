@@ -773,7 +773,7 @@ test('cleanCompletions: 同じ id の記録は1件だけ残す（先に出たも
 });
 
 // ---- 効果音の土台（D15） ----
-const SFX_FNS = ['jitter', 'sfxGain', 'soundOn', 'audioCtx', 'audioOut', 'noiseBuffer', 'noiseShot', 'playSfx', 'stampTap', 'pageTurn', 'stampSound', 'kaisaiSound', 'knockSound'];
+const SFX_FNS = ['jitter', 'sfxGain', 'soundOn', 'audioCtx', 'audioOut', 'noiseBuffer', 'noiseShot', 'playSfx', 'stampTap', 'pageTurn', 'stampSound', 'kaisaiSound', 'knockSound', 'pencilSound', 'tickSound', 'pitaSound'];
 /** 偽の AudioContext：作った部品と、つなぎ先を記録する */
 function fakeAudio() {
   const log = { created: [], buffers: 0, connects: [], starts: [], stops: [], ctxCount: 0 };
@@ -853,7 +853,7 @@ test('opts.delay で、鳴らす時刻を遅らせられる', () => {
 test('ボタンの共通の音は、専用の音がある操作（data-sfx="own"）と、タブでは鳴らさない', () => {
   const src = readFileSync(new URL('../../app.js', import.meta.url), 'utf8');
   assert.match(src, /t\.closest\('\[inert\], \.tab, \[data-sfx="own"\]'\)/, '共通の音の除外に data-sfx="own" がある');
-  assert.match(src, /label==="完了にする"\|\|label==="削除"\)\s*b\.setAttribute\("data-sfx","own"\)/, '完了・削除のボタンに印が付く');
+  assert.match(src, /label==="完了にする"\|\|label==="削除"\|\|\(techoStyle\(\) && \["今日の一手にする","明日の一手にする","明日に延期","この回は休み"\]\.indexOf\(label\)>=0\)\) b\.setAttribute\("data-sfx","own"\)/, '完了・削除（と、手帳風のときの一手・延期・休み）のボタンに印が付く');
   assert.match(src, /dlgSave\.setAttribute\("data-sfx","own"\)/, '新しく登録する保存ボタンに印が付く');
 });
 
@@ -956,4 +956,35 @@ test('手帳風の完了：皆済の日（印が出るカードがあるとき�
   };
   assert.deepEqual(withAllClear(true), ['kaisai-pop'], 'カードがあるとき：皆済の印（と音）だけ。ぺたっ は鳴らさない');
   assert.deepEqual(withAllClear(false), ['seal'], 'カードが無い（リンクからの完了）：皆済の印が出ないので、ぺたっ');
+});
+
+test('手帳風の細かい音：鉛筆「カリカリ」・レ点「シュッ」・「ぴたっ」は、決めた長さを超えない。出力へ直接つながない', () => {
+  const lengthOf = (kind) => {
+    const { ctx, log } = sfxWorld();
+    ctx.playSfx(kind);
+    const ends = [
+      ...log.starts.filter(([n]) => n.type === 'source').map(([, when, , dur]) => when + dur),
+      ...log.stops.filter(([n]) => n.type === 'osc').map(([, t]) => t),
+    ];
+    assert.ok(ends.length > 0, `${kind} が鳴る`);
+    return Math.max(...ends) - .02;
+  };
+  for (let i = 0; i < 30; i++) assert.ok(lengthOf('pencil') <= .45, `カリカリは約0.3秒（乱数で最大でも0.45秒以内）: ${lengthOf('pencil')}`);
+  assert.ok(lengthOf('tick') <= .08, `シュッは60ms前後（${lengthOf('tick')}）`);
+  assert.ok(lengthOf('pita') <= .05, `ぴたっは25ms前後（${lengthOf('pita')}）`);
+  const { ctx, log } = sfxWorld();
+  ['pencil', 'tick', 'pita'].forEach((k) => ctx.playSfx(k));
+  assert.equal(log.connects.filter(([, to]) => to && to.type === 'destination').length, 1, '出力につながるのはコンプレッサーだけ');
+});
+
+test('カリカリの粒は4〜6個（数は乱数）で、粒ごとに中心の高さは 3〜5.5kHz', () => {
+  const counts = new Set();
+  for (let i = 0; i < 80; i++) {
+    const { ctx, log } = sfxWorld();
+    ctx.playSfx('pencil');
+    const grains = log.starts.filter(([n]) => n.type === 'source').length;
+    counts.add(grains);
+    assert.ok(grains >= 4 && grains <= 6, `粒は4〜6個（${grains}）`);
+  }
+  assert.ok(counts.size > 1, '粒の数は毎回同じではない');
 });

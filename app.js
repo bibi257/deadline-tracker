@@ -693,6 +693,7 @@ function setPick(id, dateKey){
   it.pick=dateKey;
   store.set("pick-days", JSON.stringify(addPickDay(pickDays(), dateKey, 60)));
   save(); render(); scheduleAutoSync();
+  if(techoStyle()) playSfx("tick"); // 手帳風：印を付ける「シュッ」
   toast("「"+it.title+"」を"+(dateKey===tk?"今日":"明日")+"の一手にしました");
 }
 function clearPick(id){
@@ -1074,7 +1075,7 @@ function cardOf(it){
     '</div></article>');
   wireChecklist(el, it);
   var acts=el.querySelector(".acts");
-  function add(label,cls,fn){ var b=h('<button class="act '+(cls||"")+'">'+label+'</button>'); if(label==="完了にする"||label==="削除") b.setAttribute("data-sfx","own"); /* 専用の音がある（共通の音は鳴らさない） */ b.onclick=fn; acts.appendChild(b); }
+  function add(label,cls,fn){ var b=h('<button class="act '+(cls||"")+'">'+label+'</button>'); if(label==="完了にする"||label==="削除"||(techoStyle() && ["今日の一手にする","明日の一手にする","明日に延期","この回は休み"].indexOf(label)>=0)) b.setAttribute("data-sfx","own"); /* 専用の音がある（共通の音は鳴らさない） */ b.onclick=fn; acts.appendChild(b); }
   if(!it.done){
     if(isCopy){
       // 2回目以降の表示専用コピー：この回の取りやめと、.ics書き出しのみ許可
@@ -1157,6 +1158,7 @@ function wireChecklist(el, it){
   var more=el.querySelector(".memo-more");
   if(more) more.onclick=function(){ el.querySelector(".memo-rest").hidden=false; more.hidden=true; };
   Array.prototype.forEach.call(el.querySelectorAll("input.chk-in"), function(cb){
+    if(techoStyle()) cb.setAttribute("data-sfx","own"); // 手帳風は専用の音（シュッ）。共通の音を重ねない
     cb.onchange=function(){
       // 同期で一覧が差し替わっていると、渡された項目は古いことがある。いまの項目のメモを書き換える
       var cur=db.items.find(function(x){ return x.id===it.id; });
@@ -1164,6 +1166,7 @@ function wireChecklist(el, it){
       var next=cur?toggleChecklist(cur.memo, line):null;
       if(!cur || next===cur.memo){ cb.checked=!cb.checked; render(); return; }
       cur.memo=next; save(); scheduleAutoSync();
+      if(techoStyle()) playSfx("tick"); // 手帳風：赤ペンでレ点を入れる「シュッ」
       showProgress(next);
     };
   });
@@ -1390,6 +1393,7 @@ function postpone(it){
   if(it.start) it.start=new Date(new Date(it.start).getTime()+shift).toISOString();
   it.seq=(it.seq||0)+1;
   save(); render();
+  if(techoStyle()) playSfx("pita"); // 手帳風：付箋を貼り直す控えめな「ぴたっ」
   toast("締切を "+fmtDue(nd,it.allDay)+" に延期しました", "元に戻す", function(){
     it.due=before.due;
     if(before.start) it.start=before.start; else delete it.start;
@@ -2578,7 +2582,7 @@ function renderSettings(){
   put("display",s3b);
 
   // 効果音
-  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします。手帳風の演出を選んでいるときは、ハンコ・朱肉・紙・机の物音（完了は「ぺたっ」、今日の締切を全部片付けた日は「とん、とん…どん」、画面の切り替えは紙をめくる音、ボタンは「こつ」）になります。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
+  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします。手帳風の演出を選んでいるときは、ハンコ・朱肉・紙・机の物音（完了は「ぺたっ」、今日の締切を全部片付けた日は「とん、とん…どん」、画面の切り替えは紙をめくる音、ボタンは「こつ」、登録は鉛筆の「カリカリ」、チェックと今日の一手の印は「シュッ」、延期・休みは「ぴたっ」）になります。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip" data-sfx="own">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
@@ -3511,7 +3515,7 @@ dlgForm.addEventListener("submit",function(e){
     if(dlgColor) it.color=dlgColor;
     db.items.push(it);
     justAddedId=it.id;
-    playSfx("add");
+    playSfx(techoStyle()?"pencil":"add"); // 手帳風：鉛筆で書く「カリカリ」
     if(motionOn() && !techoStyle()) playQuestAccept(it);
     else toast(rep==="none"?"登録しました":"登録しました。繰り返しの回もカレンダーに出ます");
     // 隔離項目の修復中だった場合は、保存できたので隔離から取り除く
@@ -3746,11 +3750,12 @@ function noiseBuffer(ctx){
   return _noiseBuf;
 }
 /* 雑音の一部（長さ len 秒）を、乱数の位置から鳴らす。立ち上がりと消え際に短い傾き（3ms）を付けて「プツッ」を防ぐ */
-function noiseShot(ctx, dst, t0, len, peak, filter){
+function noiseShot(ctx, dst, t0, len, peak, filter, att){
+  att=att||.003;
   var src=ctx.createBufferSource(), g=ctx.createGain();
   src.buffer=noiseBuffer(ctx);
   g.gain.setValueAtTime(.0001, t0);
-  g.gain.exponentialRampToValueAtTime(Math.max(peak,.0002), t0+.003);
+  g.gain.exponentialRampToValueAtTime(Math.max(peak,.0002), t0+att);
   g.gain.exponentialRampToValueAtTime(.0001, t0+len);
   if(filter){ src.connect(filter); filter.connect(g); } else src.connect(g);
   g.connect(dst);
@@ -3775,7 +3780,7 @@ var SFX={
 /* 音を鳴らす。opts.delay（秒）で鳴らす時刻を遅らせられる（印のアニメーションの着地に合わせるため）。
    音ごとに高さ（±6%）と音量（±15%）を少しずつばらつかせる */
 function playSfx(kind, opts){
-  if(!soundOn() || !(SFX[kind] || ["turn","tap","seal","kaisai","knock"].indexOf(kind)>=0)) return;
+  if(!soundOn() || !(SFX[kind] || ["turn","tap","seal","kaisai","knock","pencil","tick","pita"].indexOf(kind)>=0)) return;
   try{
     var ctx=audioCtx(); if(!ctx) return;
     if(ctx.state==="suspended") ctx.resume().catch(function(){});
@@ -3800,6 +3805,9 @@ function playSfx(kind, opts){
     if(kind==="seal"){ stampSound(ctx, bus, t0, SEAL_PARAMS); return; }
     if(kind==="kaisai"){ kaisaiSound(ctx, bus, t0); return; }
     if(kind==="knock"){ knockSound(ctx, bus, t0); return; }
+    if(kind==="pencil"){ pencilSound(ctx, bus, t0); return; }
+    if(kind==="tick"){ tickSound(ctx, bus, t0); return; }
+    if(kind==="pita"){ pitaSound(ctx, bus, t0); return; }
     SFX[kind].forEach(function(n){
       var s=t0+n[1], peak=n[3]||.16;
       tone(n[0], s, n[2], peak);         // 基音
@@ -3860,6 +3868,34 @@ function knockSound(ctx, dst, t0){
   var o=ctx.createOscillator(), g=ctx.createGain();
   o.type="sine"; o.frequency.setValueAtTime(900*k, t0);
   g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(.02, t0+.003); g.gain.exponentialRampToValueAtTime(.0001, t0+.03);
+  o.connect(g); g.connect(dst); o.start(t0); o.stop(t0+.04);
+}
+
+/* 手帳風の細かい音。どれも雑音の粒が中心で、音程はない */
+/* 登録：鉛筆「カリカリ」（約0.3秒）。ざらついた紙の上の黒鉛の引っかき音：雑音の粒を4〜6個、粒ごとに帯域・間隔・音量をばらつかせる */
+function pencilSound(ctx, dst, t0){
+  var n=4+Math.floor(Math.random()*3), at=t0;
+  for(var i=0;i<n;i++){
+    var bp=ctx.createBiquadFilter(); bp.type="bandpass"; bp.Q.value=3;
+    bp.frequency.value=3000+Math.random()*2500;          // 中心 3〜5.5kHz
+    noiseShot(ctx, dst, at, .015+Math.random()*.015, jitter(.05,.3), bp); // 1粒 15〜30ms、音量 ±30%
+    at+=.04+Math.random()*.025;                          // 粒の間隔 40〜65ms
+  }
+}
+/* メモのチェック・今日の一手の印：レ点「シュッ」（60ms）。赤ペンでレ点を入れる音：通す高さを 3.5→6kHz に上げる */
+function tickSound(ctx, dst, t0){
+  var k=jitter(1,.1);
+  var bp=ctx.createBiquadFilter(); bp.type="bandpass"; bp.Q.value=2;
+  bp.frequency.setValueAtTime(3500*k, t0); bp.frequency.exponentialRampToValueAtTime(6000*k, t0+.06);
+  noiseShot(ctx, dst, t0, .06, .04, bp, .01);
+}
+/* 延期・この回は休み：控えめな「ぴたっ」（25ms、高い音なし）。付箋を貼り直す音 */
+function pitaSound(ctx, dst, t0){
+  var lp=ctx.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=800*jitter(1,.08);
+  noiseShot(ctx, dst, t0, .025, .04, lp);
+  var o=ctx.createOscillator(), g=ctx.createGain();
+  o.type="sine"; o.frequency.setValueAtTime(320*jitter(1,.08), t0);
+  g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(.02, t0+.004); g.gain.exponentialRampToValueAtTime(.0001, t0+.03);
   o.connect(g); g.connect(dst); o.start(t0); o.stop(t0+.04);
 }
 
@@ -4351,6 +4387,7 @@ function skipOccurrence(id, dateKey){
     i.seq=(i.seq||0)+1;
   });
   save(); render();
+  if(techoStyle()) playSfx("pita");
   toast(ended?dateKey+" の回を取りやめました（これが最終回でした）":dateKey+" の回を取りやめました");
   scheduleAutoSync();
 }
