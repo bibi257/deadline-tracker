@@ -2578,7 +2578,7 @@ function renderSettings(){
   put("display",s3b);
 
   // 効果音
-  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたときに短い音を鳴らします（手帳風では紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
+  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします（手帳風の画面の切り替えでは紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
@@ -3691,7 +3691,7 @@ main.addEventListener("animationend", function(e){
 });
 
 /* 効果音：Web Audio API でその場で作る（音声ファイルは使わない）。設定でオン/オフ、初期値はオフ。
-   音を出す操作は、登録・完了・削除と画面の切り替え。端末の設定（演出とは別）なので同期の対象外 */
+   音を出す操作は、登録・完了・削除と画面の切り替えと、ボタンを押したとき。端末の設定（演出とは別）なので同期の対象外 */
 var _audioCtx=null;
 function soundOn(){ return db.settings.sound==="on"; }
 function audioCtx(){
@@ -3718,7 +3718,7 @@ var SFX={
   page:   [[1046.5,0,.16,.06],[1567.98,.05,.22,.045]]          // 画面の切り替え：ごく短い2音
 };
 function playSfx(kind){
-  if(!soundOn() || !(SFX[kind] || kind==="turn")) return;
+  if(!soundOn() || !(SFX[kind] || kind==="turn" || kind==="tap")) return;
   try{
     var ctx=audioCtx(); if(!ctx) return;
     if(ctx.state==="suspended") ctx.resume().catch(function(){});
@@ -3734,6 +3734,7 @@ function playSfx(kind){
       osc.start(s); osc.stop(e+.02);
     };
     if(kind==="turn"){ pageTurn(ctx, t0); return; }
+    if(kind==="tap"){ stampTap(ctx, t0); return; }
     SFX[kind].forEach(function(n){
       var s=t0+n[1], peak=n[3]||.16;
       tone(n[0], s, n[2], peak);         // 基音
@@ -3741,6 +3742,38 @@ function playSfx(kind){
     });
   }catch(e){ /* 音が出せなくても操作は止めない */ }
 }
+
+/* ボタンを押したときの音：ゲームの決定音のような、明るく弾む「ぽこっ」（約0.5秒）。
+   音程が下から跳ね上がる三角波に、低めの胴の音と、きらめく高音、当たった瞬間の短い雑音を重ねる。
+   スマホのスピーカーでも聞こえるよう、300Hz 以上を主にする。音は全体を少し絞って、続けて押しても割れないようにする */
+function stampTap(ctx, t0){
+  var master=ctx.createGain(); master.gain.value=.6; master.connect(ctx.destination);
+  var k=.75; // 基準の高さ（試聴で選んだ高さ）
+  var tone=function(f0, f1, bend, peak, dec, type){
+    var o=ctx.createOscillator(), g=ctx.createGain();
+    o.type=type; o.frequency.setValueAtTime(f0*k, t0); o.frequency.exponentialRampToValueAtTime(f1*k, t0+bend);
+    g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(peak, t0+.003); g.gain.exponentialRampToValueAtTime(.0001, t0+dec);
+    o.connect(g); g.connect(master); o.start(t0); o.stop(t0+dec+.02);
+  };
+  tone(700, 1180, .045, .26, .5, "triangle");  // 跳ね上がる主な音
+  tone(330, 250, .1, .22, .4, "sine");         // 胴
+  tone(2360, 2360, .01, .07, .25, "sine");     // きらめき
+  // 当たった瞬間の短い雑音
+  var len=.012, n=Math.floor(ctx.sampleRate*len), buf=ctx.createBuffer(1, n, ctx.sampleRate), d=buf.getChannelData(0);
+  for(var i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n, 2);
+  var s=ctx.createBufferSource(), bp=ctx.createBiquadFilter(), g=ctx.createGain();
+  s.buffer=buf; bp.type="bandpass"; bp.frequency.value=3800; bp.Q.value=.6; g.gain.value=.1;
+  s.connect(bp); bp.connect(g); g.connect(master); s.start(t0);
+}
+
+/* ボタンを押したときの短い音。登録・完了・削除や画面の切り替え（タブ）は専用の音があるので、タブには重ねない。
+   無効のボタンと、操作できない間（読み込み中の inert）は鳴らさない */
+document.addEventListener("click",function(e){
+  if(!soundOn()) return;
+  var t=e.target && e.target.closest ? e.target.closest("button, summary, input[type=checkbox], [role=button]") : null;
+  if(!t || t.disabled || t.getAttribute("aria-disabled")==="true" || t.closest("[inert], .tab")) return;
+  playSfx("tap");
+});
 
 /* 手帳風の画面の切り替え：紙をめくる「さっ」という音。ノイズを帯域フィルターに通し、
    通す高さを上げながら短く鳴らす（約0.2秒） */

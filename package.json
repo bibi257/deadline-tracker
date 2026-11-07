@@ -1,6 +1,6 @@
 {
   "name": "deadline-tracker",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "description": "締切トラッカー（個人用の締切管理 Web アプリと、データ保管用の Cloudflare Worker）",
   "private": true,
   "type": "module",
