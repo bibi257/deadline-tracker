@@ -1074,7 +1074,7 @@ function cardOf(it){
     '</div></article>');
   wireChecklist(el, it);
   var acts=el.querySelector(".acts");
-  function add(label,cls,fn){ var b=h('<button class="act '+(cls||"")+'">'+label+'</button>'); b.onclick=fn; acts.appendChild(b); }
+  function add(label,cls,fn){ var b=h('<button class="act '+(cls||"")+'">'+label+'</button>'); if(label==="完了にする"||label==="削除") b.setAttribute("data-sfx","own"); /* 専用の音がある（共通の音は鳴らさない） */ b.onclick=fn; acts.appendChild(b); }
   if(!it.done){
     if(isCopy){
       // 2回目以降の表示専用コピー：この回の取りやめと、.ics書き出しのみ許可
@@ -2580,7 +2580,7 @@ function renderSettings(){
   // 効果音
   var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします（手帳風の画面の切り替えでは紙をめくる音）。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
-    var b=h('<button class="chip">'+p[1]+'</button>');
+    var b=h('<button class="chip" data-sfx="own">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
     b.onclick=function(){
       db.settings.sound=p[0]; saveRaw(); render(); // 設定は同期対象外なのでupdatedAtは進めない
@@ -3266,6 +3266,9 @@ function openDialog(item){
   editingId=item?item.id:null;
   editingSeq=item?(item.seq||0):0; // 開いた時点の版。保存の前に、他の端末や自動処理で変わっていないか確かめる
   document.getElementById("dlgTitle").textContent=item?"締切を編集":"締切を登録";
+  // 新しく登録するときの保存は、専用の音（登録）が鳴るので共通の音を重ねない。編集の保存には専用の音が無いので、共通の音のまま
+  var dlgSave=dlgForm.querySelector('button[value="save"]');
+  if(item) dlgSave.removeAttribute("data-sfx"); else dlgSave.setAttribute("data-sfx","own");
   var catSel=document.getElementById("fCat");
   catSel.innerHTML="";
   db.categories.forEach(function(c){ var o=document.createElement("option"); o.value=c; o.textContent=c; catSel.appendChild(o); });
@@ -3691,8 +3694,11 @@ main.addEventListener("animationend", function(e){
 });
 
 /* 効果音：Web Audio API でその場で作る（音声ファイルは使わない）。設定でオン/オフ、初期値はオフ。
-   音を出す操作は、登録・完了・削除と画面の切り替えと、ボタンを押したとき。端末の設定（演出とは別）なので同期の対象外 */
-var _audioCtx=null;
+   音を出す操作は、登録・完了・削除と画面の切り替えと、ボタンを押したとき。端末の設定（演出とは別）なので同期の対象外。
+   土台の決まり：1操作1音（専用の音があるボタンには data-sfx="own" を付け、共通の音を重ねない）、
+   すべての音をマスター→コンプレッサーに通す（続けて鳴っても割れない）、雑音は1秒ぶんを1回だけ作って使い回す、
+   1秒以内に続けて鳴ったら小さくする、音ごとに高さと音量を少しずつばらつかせる */
+var _audioCtx=null, _sfxOut=null, _noiseBuf=null, _lastSfxAt=0;
 function soundOn(){ return db.settings.sound==="on"; }
 function audioCtx(){
   if(_audioCtx) return _audioCtx;
@@ -3700,6 +3706,44 @@ function audioCtx(){
   if(!AC) return null;
   try{ _audioCtx=new AC(); }catch(e){ _audioCtx=null; }
   return _audioCtx;
+}
+/* 値を ±ratio の範囲でばらつかせる（rnd は 0〜1 を返す関数。テストでは差し替える） */
+function jitter(value, ratio, rnd){
+  var r=(rnd||Math.random)();
+  return value*(1+(r*2-1)*ratio);
+}
+/* 前に鳴らした時刻から1秒以内なら、音量を半分にする */
+function sfxGain(lastAt, now){
+  return (lastAt && now-lastAt<1000) ? .5 : 1;
+}
+/* すべての音の出口：マスター（0.6）→ コンプレッサー → 出力。一度だけ作る */
+function audioOut(ctx){
+  if(_sfxOut) return _sfxOut;
+  var master=ctx.createGain(); master.gain.value=.6;
+  var comp=ctx.createDynamicsCompressor();
+  comp.threshold.value=-18; comp.knee.value=12; comp.ratio.value=4; comp.attack.value=.003; comp.release.value=.15;
+  master.connect(comp); comp.connect(ctx.destination);
+  _sfxOut=master;
+  return _sfxOut;
+}
+/* 雑音（1秒・モノラル）は一度だけ作る。使うときは読み出す位置を乱数で変える */
+function noiseBuffer(ctx){
+  if(_noiseBuf) return _noiseBuf;
+  var n=ctx.sampleRate, buf=ctx.createBuffer(1, n, ctx.sampleRate), d=buf.getChannelData(0);
+  for(var i=0;i<n;i++) d[i]=Math.random()*2-1;
+  _noiseBuf=buf;
+  return _noiseBuf;
+}
+/* 雑音の一部（長さ len 秒）を、乱数の位置から鳴らす。立ち上がりと消え際に短い傾き（3ms）を付けて「プツッ」を防ぐ */
+function noiseShot(ctx, dst, t0, len, peak, filter){
+  var src=ctx.createBufferSource(), g=ctx.createGain();
+  src.buffer=noiseBuffer(ctx);
+  g.gain.setValueAtTime(.0001, t0);
+  g.gain.exponentialRampToValueAtTime(Math.max(peak,.0002), t0+.003);
+  g.gain.exponentialRampToValueAtTime(.0001, t0+len);
+  if(filter){ src.connect(filter); filter.connect(g); } else src.connect(g);
+  g.connect(dst);
+  src.start(t0, Math.random()*(1-len-.01), len+.01);
 }
 /* ブラウザは画面の操作がないと音を出せない（特にiPhone）。最初のタップ/キー入力で用意しておく */
 function unlockAudio(){
@@ -3717,24 +3761,31 @@ var SFX={
   remove: [[440,0,.65],[329.63,.12,1.2]],                     // 削除：2音（下がる）
   page:   [[1046.5,0,.16,.06],[1567.98,.05,.22,.045]]          // 画面の切り替え：ごく短い2音
 };
-function playSfx(kind){
+/* 音を鳴らす。opts.delay（秒）で鳴らす時刻を遅らせられる（印のアニメーションの着地に合わせるため）。
+   音ごとに高さ（±6%）と音量（±15%）を少しずつばらつかせる */
+function playSfx(kind, opts){
   if(!soundOn() || !(SFX[kind] || kind==="turn" || kind==="tap")) return;
   try{
     var ctx=audioCtx(); if(!ctx) return;
     if(ctx.state==="suspended") ctx.resume().catch(function(){});
-    var t0=ctx.currentTime+.02;
-    // 重なっても音割れしないよう、音量は控えめにする（3音が重なっても合計1を超えない）
+    var now=Date.now();
+    var bus=ctx.createGain(); // この音ぜんたいの音量（続けて鳴ったときは小さく、毎回少しばらつかせる）
+    bus.gain.value=sfxGain(_lastSfxAt, now)*jitter(1, .15);
+    bus.connect(audioOut(ctx));
+    _lastSfxAt=now;
+    var t0=ctx.currentTime+.02+((opts&&opts.delay)||0);
+    var pitch=jitter(1, .06);
     var tone=function(freq, s, len, peak){
       var osc=ctx.createOscillator(), g=ctx.createGain(), e=s+len;
-      osc.type="sine"; osc.frequency.setValueAtTime(freq, s);
+      osc.type="sine"; osc.frequency.setValueAtTime(freq*pitch, s);
       g.gain.setValueAtTime(.0001, s);
       g.gain.exponentialRampToValueAtTime(peak, s+.015);
       g.gain.exponentialRampToValueAtTime(.0001, e);
-      osc.connect(g); g.connect(ctx.destination);
+      osc.connect(g); g.connect(bus);
       osc.start(s); osc.stop(e+.02);
     };
-    if(kind==="turn"){ pageTurn(ctx, t0); return; }
-    if(kind==="tap"){ stampTap(ctx, t0); return; }
+    if(kind==="turn"){ pageTurn(ctx, t0, bus); return; }
+    if(kind==="tap"){ stampTap(ctx, t0, bus, pitch); return; }
     SFX[kind].forEach(function(n){
       var s=t0+n[1], peak=n[3]||.16;
       tone(n[0], s, n[2], peak);         // 基音
@@ -3745,51 +3796,41 @@ function playSfx(kind){
 
 /* ボタンを押したときの音：ゲームの決定音のような、明るく弾む「ぽこっ」（約0.5秒）。
    音程が下から跳ね上がる三角波に、低めの胴の音と、きらめく高音、当たった瞬間の短い雑音を重ねる。
-   スマホのスピーカーでも聞こえるよう、300Hz 以上を主にする。音は全体を少し絞って、続けて押しても割れないようにする */
-function stampTap(ctx, t0){
-  var master=ctx.createGain(); master.gain.value=.6; master.connect(ctx.destination);
-  var k=.75; // 基準の高さ（試聴で選んだ高さ）
+   スマホのスピーカーでも聞こえるよう、300Hz 以上を主にする。出口（マスター→コンプレッサー）は playSfx が用意する */
+function stampTap(ctx, t0, dst, pitch){
+  var k=.75*(pitch||1); // 基準の高さ（試聴で選んだ高さ）に、毎回のばらつきを掛ける
   var tone=function(f0, f1, bend, peak, dec, type){
     var o=ctx.createOscillator(), g=ctx.createGain();
     o.type=type; o.frequency.setValueAtTime(f0*k, t0); o.frequency.exponentialRampToValueAtTime(f1*k, t0+bend);
     g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(peak, t0+.003); g.gain.exponentialRampToValueAtTime(.0001, t0+dec);
-    o.connect(g); g.connect(master); o.start(t0); o.stop(t0+dec+.02);
+    o.connect(g); g.connect(dst); o.start(t0); o.stop(t0+dec+.02);
   };
   tone(700, 1180, .045, .26, .5, "triangle");  // 跳ね上がる主な音
   tone(330, 250, .1, .22, .4, "sine");         // 胴
   tone(2360, 2360, .01, .07, .25, "sine");     // きらめき
-  // 当たった瞬間の短い雑音
-  var len=.012, n=Math.floor(ctx.sampleRate*len), buf=ctx.createBuffer(1, n, ctx.sampleRate), d=buf.getChannelData(0);
-  for(var i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n, 2);
-  var s=ctx.createBufferSource(), bp=ctx.createBiquadFilter(), g=ctx.createGain();
-  s.buffer=buf; bp.type="bandpass"; bp.frequency.value=3800; bp.Q.value=.6; g.gain.value=.1;
-  s.connect(bp); bp.connect(g); g.connect(master); s.start(t0);
+  // 当たった瞬間の短い雑音（使い回す雑音の一部を、帯域フィルターに通す）
+  var bp=ctx.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=3800; bp.Q.value=.6;
+  noiseShot(ctx, dst, t0, .012, .1, bp);
 }
 
-/* ボタンを押したときの短い音。登録・完了・削除や画面の切り替え（タブ）は専用の音があるので、タブには重ねない。
+/* ボタンを押したときの短い音。専用の音がある操作（data-sfx="own"）と、画面の切り替え（タブ）には重ねない（1操作1音）。
    無効のボタンと、操作できない間（読み込み中の inert）は鳴らさない */
 document.addEventListener("click",function(e){
   if(!soundOn()) return;
   var t=e.target && e.target.closest ? e.target.closest("button, summary, input[type=checkbox], [role=button]") : null;
-  if(!t || t.disabled || t.getAttribute("aria-disabled")==="true" || t.closest("[inert], .tab")) return;
+  if(!t || t.disabled || t.getAttribute("aria-disabled")==="true" || t.closest('[inert], .tab, [data-sfx="own"]')) return;
   playSfx("tap");
 });
 
-/* 手帳風の画面の切り替え：紙をめくる「さっ」という音。ノイズを帯域フィルターに通し、
+/* 手帳風の画面の切り替え：紙をめくる「さっ」という音。雑音を帯域フィルターに通し、
    通す高さを上げながら短く鳴らす（約0.2秒） */
-function pageTurn(ctx, t0){
-  var len=.22, n=Math.floor(ctx.sampleRate*len), buf=ctx.createBuffer(1, n, ctx.sampleRate), d=buf.getChannelData(0);
-  for(var i=0;i<n;i++) d[i]=Math.random()*2-1;
-  var src=ctx.createBufferSource(), bp=ctx.createBiquadFilter(), g=ctx.createGain();
-  src.buffer=buf;
+function pageTurn(ctx, t0, dst){
+  var len=.22;
+  var bp=ctx.createBiquadFilter();
   bp.type="bandpass"; bp.Q.value=1.2;
   bp.frequency.setValueAtTime(1800, t0);
   bp.frequency.exponentialRampToValueAtTime(5200, t0+len);
-  g.gain.setValueAtTime(.0001, t0);
-  g.gain.exponentialRampToValueAtTime(.09, t0+.05);
-  g.gain.exponentialRampToValueAtTime(.0001, t0+len);
-  src.connect(bp); bp.connect(g); g.connect(ctx.destination);
-  src.start(t0); src.stop(t0+len+.02);
+  noiseShot(ctx, dst, t0, len, .09, bp);
 }
 
 /* 経験値：期限内に早く終えるほど多い。100 EXP ごとにレベルが1上がる（この端末だけの記録） */
