@@ -56,10 +56,10 @@ test('達成カレンダー: 日ごとの件数と、前倒しの日。自動完
   ];
   const g = app.buildActivityGrid(list, TODAY);
   const at = (k) => plain(g.cells.find((c) => c.key === k));
-  assert.deepEqual(at('2026-01-30'), { key: '2026-01-30', dow: 5, n: 2, level: 2, early: true, future: false, today: true }, '自分で完了した2件。前倒しを含む');
-  assert.deepEqual(at('2026-01-29'), { key: '2026-01-29', dow: 4, n: 1, level: 1, early: false, future: false, today: false });
+  assert.deepEqual(at('2026-01-30'), { key: '2026-01-30', dow: 5, n: 2, level: 2, early: true, allClear: true, future: false, today: true }, '自分で完了した2件。前倒しを含む。ボーナスの記録がある日は皆済');
+  assert.deepEqual(at('2026-01-29'), { key: '2026-01-29', dow: 4, n: 1, level: 1, early: false, allClear: false, future: false, today: false });
   assert.equal(at('2025-08-03').n, 1, '期間の先頭のマス');
-  assert.deepEqual(at('2026-01-31'), { key: '2026-01-31', dow: 6, n: 0, level: 0, early: false, future: true, today: false }, '未来は数えない');
+  assert.deepEqual(at('2026-01-31'), { key: '2026-01-31', dow: 6, n: 0, level: 0, early: false, allClear: false, future: true, today: false }, '未来は数えない');
   assert.deepEqual([g.activeDays, g.total], [3, 4], '完了した日 3 日・4 件');
 });
 
@@ -108,4 +108,16 @@ test('バッジ: Lv.10 は累計 EXP（繰り越し分を含む）が 900 以上
   assert.equal(badge([done('2026-01-01 09:00', 'ontime', 900)]).lv10.done, true);
   assert.equal(badge([done('2026-01-01 09:00', 'ontime', 400)], 500).lv10.done, true, '古い記録を捨てたときの繰り越し（expCarry）も足す');
   assert.deepEqual([badge([], 0).lv10.current, badge([done('2026-01-01 09:00', 'ontime', 250)]).lv10.current], [1, 3]);
+});
+
+test('達成カレンダー: 皆済した日（kind:"bonus" の記録がある日）だけ allClear が付く。件数は変わらない。未来・期間の外・自分の完了だけの日には付かない', () => {
+  const base = [done('2026-01-29 09:00', 'ontime'), done('2026-01-30 09:00', 'ontime')];
+  const withBonus = [...base, done('2026-01-30 18:00', 'bonus', 20), done('2026-01-28 18:00', 'bonus', 20), done('2026-01-31 10:00', 'bonus', 20), done('2025-08-02 10:00', 'bonus', 20)];
+  const a = app.buildActivityGrid(base, TODAY), b = app.buildActivityGrid(withBonus, TODAY);
+  assert.deepEqual(plain(b.cells.filter((c) => c.allClear).map((c) => c.key)), ['2026-01-28', '2026-01-30'], '過去の皆済の日だけ（未来と期間の外は付かない）');
+  assert.equal(b.kaisaiDays, 2);
+  assert.equal(a.kaisaiDays, 0);
+  assert.deepEqual([b.activeDays, b.total], [a.activeDays, a.total], 'ボーナスは件数・日数に数えない');
+  assert.deepEqual(plain(b.cells.map((c) => [c.n, c.level])), plain(a.cells.map((c) => [c.n, c.level])), '色の濃さ（件数）は変わらない');
+  assert.equal(b.cells.find((c) => c.key === '2026-01-28').n, 0, '自分の完了が無い日でも、皆済の印は付く（件数は0のまま）');
 });

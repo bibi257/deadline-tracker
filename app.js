@@ -3898,8 +3898,12 @@ function activityLevel(n){ return n<=0?0:n===1?1:n===2?2:n<=4?3:4; }
 /* 達成カレンダー：今日を含む週までの26週（日曜はじまり・182マス）。マスごとに、その日の完了件数・色の段階（level 0〜4）・前倒しで終えた日か。
    cells は週ごとに7つずつ（日〜土）並ぶ。今日より先のマスは future:true */
 function buildActivityGrid(completions, today){
-  var byDay={};
+  var byDay={}, clearDays={};
   (completions||[]).forEach(function(c){
+    // 皆済した日（全クリアのボーナス kind:"bonus" の記録がある日）。件数には含めず、印だけ付ける。
+    // 完了の記録は COMPLETION_LIMIT（500件）を超えると古いものから消える（trimCompletions）ので、
+    // 1日に完了する件数が多い人ほど、古い週の皆済の印は残らない（目安：1日5件なら約100日＝14週ぶん）
+    if(c.kind==="bonus") clearDays[toLocalISO(new Date(c.doneAt))]=true;
     if(!isOwnCompletion(c)) return;
     var k=toLocalISO(new Date(c.doneAt));
     var e=byDay[k]||(byDay[k]={n:0, early:false});
@@ -3907,14 +3911,15 @@ function buildActivityGrid(completions, today){
   });
   var t=startOfDay(today);
   var first=new Date(t.getFullYear(), t.getMonth(), t.getDate()-t.getDay()-(ACTIVITY_WEEKS-1)*7);
-  var todayKey=toLocalISO(t), cells=[], activeDays=0, total=0;
+  var todayKey=toLocalISO(t), cells=[], activeDays=0, total=0, kaisaiDays=0;
   for(var k=0;k<ACTIVITY_WEEKS*7;k++){
     var d=new Date(first.getFullYear(), first.getMonth(), first.getDate()+k), key=toLocalISO(d);
     var future=key>todayKey, e=byDay[key]||{n:0, early:false}, n=future?0:e.n;
     if(n){ activeDays++; total+=n; }
-    cells.push({key:key, dow:d.getDay(), n:n, level:activityLevel(n), early:!future&&e.early, future:future, today:key===todayKey});
+    if(!future && clearDays[key]) kaisaiDays++;
+    cells.push({key:key, dow:d.getDay(), n:n, level:activityLevel(n), early:!future&&e.early, allClear:!future&&!!clearDays[key], future:future, today:key===todayKey});
   }
-  return {cells:cells, weeks:ACTIVITY_WEEKS, activeDays:activeDays, total:total};
+  return {cells:cells, weeks:ACTIVITY_WEEKS, activeDays:activeDays, total:total, kaisaiDays:kaisaiDays};
 }
 /* 上の「月」の目盛り：月が替わる週の列に月の数字を置く（列は 1 から数える）。
    最初の列が月の途中で、次の目盛りが近すぎる（3列未満）ときは、最初の目盛りを省く */
@@ -3961,18 +3966,18 @@ function achievementGrid(){
   var el=h('<section class="ach" aria-label="達成カレンダー"><div class="ach-head"><b>達成カレンダー</b><span class="note">直近'+g.weeks+'週・完了した日 '+g.activeDays+' 日／'+g.total+' 件</span></div>'+
     '<div class="ach-board"><span></span><div class="ach-months" aria-hidden="true"></div>'+
     '<div class="ach-dows" aria-hidden="true"><span>月</span><span>水</span><span>金</span></div>'+
-    '<div class="ach-grid" role="img" aria-label="直近'+g.weeks+'週に完了した日は '+g.activeDays+' 日、合計 '+g.total+' 件"></div></div>'+
+    '<div class="ach-grid" role="img" aria-label="直近'+g.weeks+'週に完了した日は '+g.activeDays+' 日、合計 '+g.total+' 件'+(g.kaisaiDays?'、その日の締切を全部片付けた（皆済の）日は '+g.kaisaiDays+' 日':'')+'"></div></div>'+
     '<p class="ach-pick note" role="status">マスを押すと、その日の件数が出ます</p>'+
     '<div class="ach-legend note">少<span class="ach-sw g0"></span><span class="ach-sw g1"></span><span class="ach-sw g2"></span><span class="ach-sw g3"></span><span class="ach-sw g4"></span>多'+
-    '<span class="ach-sw g1 early"></span>前倒しで完了した日</div></section>');
+    '<span class="ach-sw g1 early"></span>前倒しで完了した日<span class="ach-key"><span class="ach-sw kaisai"></span>朱印＝その日の締切を全部片付けた日</span></div></section>');
   var grid=el.querySelector(".ach-grid"), months=el.querySelector(".ach-months"), pick=el.querySelector(".ach-pick");
   activityMonthLabels(g.cells).forEach(function(l){
     months.appendChild(h('<span data-st="grid-column:'+l.col+'">'+l.month+'月</span>'));
   });
   g.cells.forEach(function(c){
     var d=new Date(c.key+"T00:00:00");
-    var label=(d.getMonth()+1)+"/"+d.getDate()+"（"+DOW[d.getDay()]+"）"+(c.future?"":" "+c.n+"件"+(c.early?"・前倒し":""));
-    var cell=h('<i class="'+(c.future?"gf":"g"+c.level)+(c.early?" early":"")+(c.today?" now":"")+'" title="'+escHtml(label)+'" data-label="'+escHtml(label)+'"></i>');
+    var label=(d.getMonth()+1)+"/"+d.getDate()+"（"+DOW[d.getDay()]+"）"+(c.future?"":" "+c.n+"件"+(c.early?"・前倒し":"")+(c.allClear?"・皆済":""));
+    var cell=h('<i class="'+(c.future?"gf":"g"+c.level)+(c.early?" early":"")+(c.allClear?" kaisai":"")+(c.today?" now":"")+'" title="'+escHtml(label)+'" data-label="'+escHtml(label)+'"></i>');
     cell.onclick=function(){ pick.textContent=label; };
     grid.appendChild(cell);
   });
