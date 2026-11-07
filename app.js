@@ -1361,7 +1361,7 @@ function deleteItem(it){
   db.trash.push({trashId:trashId, item:lastDeleted.item, deletedAt:new Date().toISOString()});
   if(db.trash.length>30) db.trash.shift(); // 上限を超えたら最も古いものから消える
   save(); render();
-  playSfx("remove");
+  playSfx(techoStyle()?"crumple":"remove"); // 手帳風：紙を丸める「くしゃっ」
   toast("「"+it.title+"」を削除しました", "元に戻す", undoDelete);
   scheduleAutoSync();
 }
@@ -1418,6 +1418,7 @@ function restoreFromTrash(trashId){
   db.items.push(entry.item);
   db.trash.splice(idx,1);
   save(); render();
+  if(techoStyle()) playSfx("unfold"); // 手帳風：紙を広げる「かさっ」
   toast("「"+entry.item.title+"」を元に戻しました");
   scheduleAutoSync();
 }
@@ -2451,6 +2452,7 @@ function renderSettings(){
         '<br><span class="note">'+escHtml(when)+'</span></span>'+
         '<div class="cat-btns"></div></div>');
       var back=h('<button class="act" title="元に戻す">戻す</button>');
+      if(techoStyle()) back.setAttribute("data-sfx","own"); // 手帳風は専用の音（かさっ）。共通の音を重ねない
       back.onclick=function(){ restoreFromTrash(t.trashId); };
       var del=h('<button class="act" title="完全に削除">×</button>');
       del.onclick=function(){
@@ -2582,13 +2584,13 @@ function renderSettings(){
   put("display",s3b);
 
   // 効果音
-  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします。手帳風の演出を選んでいるときは、ハンコ・朱肉・紙・机の物音（完了は「ぺたっ」、今日の締切を全部片付けた日は「とん、とん…どん」、画面の切り替えは紙をめくる音、ボタンは「こつ」、登録は鉛筆の「カリカリ」、チェックと今日の一手の印は「シュッ」、延期・休みは「ぴたっ」）になります。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
+  var s3c=h('<div class="sec"><h3>効果音</h3><p>締切を登録・完了・削除したときと、画面を切り替えたとき、ボタンを押したときに短い音（ゲームの決定音のような「ぽこっ」）を鳴らします。手帳風の演出を選んでいるときは、ハンコ・朱肉・紙・机の物音（完了は「ぺたっ」、今日の締切を全部片付けた日は「とん、とん…どん」、画面の切り替えは紙をめくる音、ボタンは「こつ」、登録は鉛筆の「カリカリ」、チェックと今日の一手の印は「シュッ」、延期・休みは「ぴたっ」、削除は「くしゃっ」）になります。完了の音は、その日の初回だけです。この端末だけの設定で、初めは「なし」です。端末がマナーモードのときや、ブラウザが音を許可していないときは鳴りません。</p><div class="row"></div></div>');
   [["on","あり"],["off","なし"]].forEach(function(p){
     var b=h('<button class="chip" data-sfx="own">'+p[1]+'</button>');
     b.setAttribute("aria-pressed", (soundOn()?"on":"off")===p[0]?"true":"false");
     b.onclick=function(){
       db.settings.sound=p[0]; saveRaw(); render(); // 設定は同期対象外なのでupdatedAtは進めない
-      if(p[0]==="on"){ unlockAudio(); playSfx(techoStyle()?"seal":"done"); } // 押した操作の中で鳴らして、音が出ることを確かめられるようにする（手帳風なら手帳風の完了の音）
+      if(p[0]==="on"){ unlockAudio(); playSfx(techoStyle()?"seal":"done", {always:true}); } // 押した操作の中で鳴らして、音が出ることを確かめられるようにする（手帳風なら手帳風の完了の音）
     };
     s3c.querySelector(".row").appendChild(b);
   });
@@ -3642,15 +3644,16 @@ function complete(it, cardEl){
   var techo=techoStyle();
   // 手帳風でカードがあるときは、印が紙に着く時刻に合わせて鳴らす（動きがあるとき 0.04 秒、動きがないとき 0 秒）
   // 手帳風は「ぺたっ」（全部片付けた日は、あとで鳴らす皆済の音だけにして、同じ操作で2つ鳴らさない）。ゲーム風は今の「done」
+  var nToday=bumpManualCount(); // 今日、自分で完了にした回数（この端末だけ・同期しない）
   if(!techo) playSfx("done");
-  else if(!(reward.allClear && cardEl)) playSfx("seal", {delay:(cardEl && motionOn())?.04:0}); // 皆済の印が出るとき（カードがあるとき）だけ、皆済の音に任せる
+  else if(!(reward.allClear && cardEl)) techoCompleteSfx(nToday, (cardEl && motionOn())?.04:0); // 皆済の印が出るとき（カードがあるとき）だけ、皆済の音に任せる
   var msg=techo
     ? (sub?"済。"+sub:"済の印を押しました")+"（+"+reward.gain+" EXP"+(reward.allClear?"・今日の締切は皆済":"")+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）"
     : (sub?"完了。"+sub:"完了にしました")+"（EXP +"+reward.gain+(reward.allClear?"・本日のクエスト全クリア":"")+(reward.levelUp?"・Lv."+reward.level+" に上がりました":"")+"）";
   if(cardEl && techo){
     // 手帳風：帯は出さず、カードに「済」の印を押してから畳む。全部片付いた日は畳んだあとに「皆済」の印。
     // 動きを減らす設定のときも印は出す（動きなしで 0.4 秒見せてから、畳まずに一覧を描き直す）。消音中・電車の中でも手応えが画面に残る
-    var after=function(){ render(); toast(msg); if(reward.allClear) playKaisai(reward.allClear); };
+    var after=function(){ render(); toast(msg); if(reward.allClear) playKaisai(reward.allClear, nToday); };
     stampCard(cardEl);
     if(motionOn()){
       foldCard(cardEl, after);
@@ -3681,8 +3684,8 @@ function stampCard(card){
   card.appendChild(h('<span class="done-stamp" aria-hidden="true">済</span>'));
 }
 /* 手帳風の全クリア：画面の中央に「皆済」の丸印を押す。タップでもすぐ閉じる */
-function playKaisai(exp){
-  playSfx("kaisai"); // 皆済の印が出るのに合わせて「とんとん…どん」
+function playKaisai(exp, count){
+  playSfx("kaisai", {count:count}); // 皆済の印が出るのに合わせて「ぺたぺた…どん」（その日の完了の件数ぶん）
   var old=document.querySelector(".seal-pop"); if(old) old.remove();
   var el=h('<div class="seal-pop" role="status" aria-live="polite">'+
     '<div class="seal" aria-hidden="true"><span>皆済</span></div>'+
@@ -3780,16 +3783,21 @@ var SFX={
 /* 音を鳴らす。opts.delay（秒）で鳴らす時刻を遅らせられる（印のアニメーションの着地に合わせるため）。
    音ごとに高さ（±6%）と音量（±15%）を少しずつばらつかせる */
 function playSfx(kind, opts){
-  if(!soundOn() || !(SFX[kind] || ["turn","tap","seal","kaisai","knock","pencil","tick","pita"].indexOf(kind)>=0)) return;
+  opts=opts||{};
+  if(!soundOn() || !(SFX[kind] || ["turn","tap","seal","kaisai","knock","pencil","tick","pita","ton","crumple","unfold"].indexOf(kind)>=0)) return;
+  // 夜（22時〜7時）は、手帳風の脇役の音を鳴らさない（皆済は半分の音量で残す）。確認音（opts.always）は鳴らす
+  var night=NIGHT_QUIET && techoStyle() && nightHour(new Date().getHours()) && !opts.always;
+  if(night && TECHO_SIDE_KINDS.indexOf(kind)>=0) return;
   try{
     var ctx=audioCtx(); if(!ctx) return;
     if(ctx.state==="suspended") ctx.resume().catch(function(){});
     var now=Date.now();
     var bus=ctx.createGain(); // この音ぜんたいの音量（続けて鳴ったときは小さく、毎回少しばらつかせる）
-    bus.gain.value=sfxGain(_lastSfxAt, now)*jitter(1, .15);
+    // 続けて鳴らす音（opts.follow：朱肉のあとの「ぺたっ」など）は、前の音の続きなので小さくしない
+    bus.gain.value=(opts.follow?1:sfxGain(_lastSfxAt, now))*jitter(1, .15)*(opts.vol===undefined?1:opts.vol)*((night && kind==="kaisai")?.5:1);
     bus.connect(audioOut(ctx));
-    _lastSfxAt=now;
-    var t0=ctx.currentTime+.02+((opts&&opts.delay)||0);
+    if(!opts.follow) _lastSfxAt=now;
+    var t0=ctx.currentTime+.02+(opts.delay||0);
     var pitch=jitter(1, .06);
     var tone=function(freq, s, len, peak){
       var osc=ctx.createOscillator(), g=ctx.createGain(), e=s+len;
@@ -3803,7 +3811,10 @@ function playSfx(kind, opts){
     if(kind==="turn"){ pageTurn(ctx, t0, bus); return; }
     if(kind==="tap"){ stampTap(ctx, t0, bus, pitch); return; }
     if(kind==="seal"){ stampSound(ctx, bus, t0, SEAL_PARAMS); return; }
-    if(kind==="kaisai"){ kaisaiSound(ctx, bus, t0); return; }
+    if(kind==="kaisai"){ kaisaiSound(ctx, bus, t0, opts.count); return; }
+    if(kind==="ton"){ tonPair(ctx, bus, t0); return; }
+    if(kind==="crumple"){ crumpleSound(ctx, bus, t0, 12+Math.floor(Math.random()*5)); return; }
+    if(kind==="unfold"){ crumpleSound(ctx, bus, t0, 6); return; }
     if(kind==="knock"){ knockSound(ctx, bus, t0); return; }
     if(kind==="pencil"){ pencilSound(ctx, bus, t0); return; }
     if(kind==="tick"){ tickSound(ctx, bus, t0); return; }
@@ -3814,6 +3825,44 @@ function playSfx(kind, opts){
       tone(n[0]*2, s, n[2]*.5, peak/4);  // 倍音（早めに消えて、余韻は丸く残る）
     });
   }catch(e){ /* 音が出せなくても操作は止めない */ }
+}
+
+/* 完了の音の回数：毎日何十回も鳴る「ぺたっ」をどう控えるか。次の5つから1つ選ぶ（円卓の批評で最も点が高かった "first"）。
+   first=その日の初回だけ「ぺたっ」、以降は無音／kaisai-only=完了は無音で皆済だけ／fade=1〜3回目は通常、4回目以降は半分の音量／
+   knock=初回は「ぺたっ」、2件目以降は半分の「こつ」／three=先頭の3回だけ。皆済の「どん」はこの制限の外で、いつも全部鳴る */
+var SEAL_MODE="first";
+/* 手帳風の脇役の音（夜は鳴らさない）。皆済は含めない */
+var TECHO_SIDE_KINDS=["seal","knock","pencil","tick","pita","turn","ton","crumple","unfold"];
+/* 夜の静音（22時〜7時は、皆済以外の手帳風の音を止め、皆済は半分の音量）を使うか。既定はオフ（夜でも昼と同じに鳴る）。使うときは true にする */
+var NIGHT_QUIET=false;
+/* 夜（22時〜7時）か。時刻だけで決まる */
+function nightHour(h){ return h>=22 || h<7; }
+/* その日の n 回目（1から数える）の完了で、鳴らす音と音量を返す。{kind:"seal"|"knock"|null, vol} */
+function sealLevel(n, mode){
+  switch(mode){
+    case "kaisai-only": return {kind:null, vol:0};
+    case "fade":        return {kind:"seal", vol:n<=3?1:.5};
+    case "knock":       return n<=1 ? {kind:"seal", vol:1} : {kind:"knock", vol:.5};
+    case "three":       return n<=3 ? {kind:"seal", vol:1} : {kind:null, vol:0};
+    default:            return n<=1 ? {kind:"seal", vol:1} : {kind:null, vol:0}; // "first"
+  }
+}
+/* 今日、自分で完了にした回数（日付と組で端末内に覚える。日付が変わると0に戻る。同期しない） */
+function sfxDay(){
+  var today=toLocalISO(new Date());
+  try{ var o=JSON.parse(store.get("sfx-day")); if(o && o.date===today && typeof o.manual==="number") return o; }catch(e){}
+  return {date:today, manual:0};
+}
+function bumpManualCount(){
+  var o=sfxDay(); o.manual++;
+  store.set("sfx-day", JSON.stringify(o));
+  return o.manual;
+}
+/* 手帳風の完了の音：朱肉（5回ごと）→ 回数に応じた「ぺたっ」 */
+function techoCompleteSfx(n, delay){
+  var lv=sealLevel(n, SEAL_MODE);
+  if(n>0 && n%5===0){ playSfx("ton", {delay:delay}); delay+=.2; } // 朱肉を付け直す「とんとん」のあとに、ハンコ
+  if(lv.kind) playSfx(lv.kind, {delay:delay, vol:lv.vol, follow:n%5===0});
 }
 
 /* ---- 手帳風の音（手帳風の演出を選んでいるときだけ。ゲーム風は上の音のまま） ----
@@ -3831,34 +3880,51 @@ var DON_PARAMS={ // 皆済の「どん」：「ぺたっ」と同じ作りで、
   partials:[[320,.02],[480,.015],[640,.012]],
   grain:{f:2500, q:1, peak:.06}
 };
-function stampSound(ctx, dst, t0, p){
+function stampSound(ctx, dst, t0, p, vol){
+  var v=vol===undefined?1:vol; // 音量の倍率（皆済の「ぺたぺた」は、だんだん小さくする）
   var k=jitter(1, .08); // 毎回、フィルターの高さを少しばらつかせる
   if(p.lp){
     var lp=ctx.createBiquadFilter(); lp.type="lowpass"; lp.Q.value=p.lp.q;
     lp.frequency.setValueAtTime(p.lp.f0*k, t0); lp.frequency.exponentialRampToValueAtTime(p.lp.f1*k, t0+p.lp.time);
-    noiseShot(ctx, dst, t0, p.lp.decay, p.lp.peak, lp);
+    noiseShot(ctx, dst, t0, p.lp.decay, p.lp.peak*v, lp);
   }
   var sine=function(f0, f1, time, peak, dec){
     var o=ctx.createOscillator(), g=ctx.createGain();
     o.type="sine"; o.frequency.setValueAtTime(f0*k, t0); o.frequency.exponentialRampToValueAtTime(f1*k, t0+time);
-    g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(peak, t0+.004); g.gain.exponentialRampToValueAtTime(.0001, t0+dec);
+    g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(peak*v, t0+.004); g.gain.exponentialRampToValueAtTime(.0001, t0+dec);
     o.connect(g); g.connect(dst); o.start(t0); o.stop(t0+dec+.02);
   };
   if(p.body) sine(p.body.f0, p.body.f1, p.body.time, p.body.peak, p.body.decay);
   (p.partials||[]).forEach(function(q){ sine(q[0], q[0]*.97, p.body.time, q[1], p.body.decay); });
   if(p.grain){
     var bp=ctx.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=p.grain.f*k; bp.Q.value=p.grain.q;
-    noiseShot(ctx, dst, t0, .006, p.grain.peak, bp);
+    noiseShot(ctx, dst, t0, .006, p.grain.peak*v, bp);
   }
 }
-/* 皆済「とん、とん…どん」（約0.55秒）：朱肉に印を付ける「とん」を90ms間隔で2回、そのあとに重い「どん」 */
-function kaisaiSound(ctx, dst, t0){
+/* 朱肉「とんとん」：朱肉に印を付け直す音。ローパス 500Hz・40ms を 90ms 間隔で2回（その日の完了が5の倍数になったとき、「ぺたっ」の前に入る） */
+function tonPair(ctx, dst, t0){
   var ton=function(at){
     var lp=ctx.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=500*jitter(1,.08);
     noiseShot(ctx, dst, at, .04, .07, lp);
   };
   ton(t0); ton(t0+.09);
-  stampSound(ctx, dst, t0+.27, DON_PARAMS);
+}
+/* 皆済「ぺたぺた…どん」（0.8秒以内）：その日に完了した件数（上限3）ぶん、「ぺたっ」を60ms間隔でだんだん小さく鳴らしてから、重い「どん」 */
+function kaisaiSound(ctx, dst, t0, count){
+  var pets=Math.max(1, Math.min(3, count||1)), vols=[1, .7, .5];
+  for(var i=0;i<pets;i++) stampSound(ctx, dst, t0+i*.06, SEAL_PARAMS, vols[i]);
+  stampSound(ctx, dst, t0+pets*.06+.12, DON_PARAMS);
+}
+/* 削除「くしゃっ」・ゴミ箱から戻す「かさっ」（0.15秒）：紙を丸める・広げる音。3ms の雑音の粒を、
+   粒の長さの2倍以上の無音をはさんでまばらに並べる（砂嵐に聞こえないように）。粒ごとに中心 2〜5kHz の乱数 */
+function crumpleSound(ctx, dst, t0, grains){
+  var span=.15, slot=span/grains;
+  for(var i=0;i<grains;i++){
+    var bp=ctx.createBiquadFilter(); bp.type="bandpass"; bp.Q.value=2;
+    bp.frequency.value=2000+Math.random()*3000;
+    // 粒は 3ms。次の粒との間に 6ms 以上の無音が残るよう、枠の中の前のほうに置く
+    noiseShot(ctx, dst, t0+i*slot+Math.random()*Math.max(0,slot-.009), .003, .05, bp);
+  }
 }
 /* ボタン共通「こつ」（40ms 以内）：指先や鉛筆の尻で机を軽く叩く音 */
 function knockSound(ctx, dst, t0){
