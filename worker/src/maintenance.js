@@ -1,6 +1,7 @@
-// 毎日の掃除。世代バックアップ（snapshots）を間引き、期限切れの回数制限の記録（limits）を消す。
+// 毎日の掃除。世代バックアップ（snapshots）を間引き、期限切れの回数制限の記録（limits）と、30日より古い通知の記録（notify_log）を消す。
 // 間引きの規則は deadline-data の prune_backups.py と同じ（直近14日は全部、〜90日は週1つ、それ以前は月1つ）。
 import { jstParts } from './time.js';
+import { pruneNotifyLog } from './notify.js';
 
 const DAY_S = 86400;
 const BATCH = 50;
@@ -50,5 +51,6 @@ export async function runMaintenance(env, nowSec) {
     await env.DB.prepare(`DELETE FROM snapshots WHERE id IN (${ids.map(() => '?').join(',')})`).bind(...ids).run();
   }
   const limits = await env.DB.prepare('DELETE FROM limits WHERE until < ?').bind(nowSec).run();
-  return { snapshots: drop.length, kept: results.length - drop.length, limits: limits.meta.changes };
+  const notifyLog = await pruneNotifyLog(env, nowSec);
+  return { snapshots: drop.length, kept: results.length - drop.length, limits: limits.meta.changes, notifyLog };
 }

@@ -893,3 +893,6 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .srvbar{max-width:var(--wrap,860px);margin:var(--spacing-2) auto 0;padding:var(--spacing-2) 14px;border:1px solid var(--color-border);border-radius:var(--radius-element);font-size:var(--font-size-m);color:var(--color-text-secondary);background:var(--color-background-surface)}
 .srvbar.srv-off{color:var(--color-warning)}
 main[inert],.fab[inert]{opacity:.55}
+/* 定時の通知が届いたか（設定） */
+.notify-log{margin-top:var(--spacing-2);font-size:var(--font-size-m);color:var(--color-text-secondary)}
+.notify-log .notify-fail{margin-top:var(--spacing-1);color:var(--color-danger);font-weight:var(--font-weight-bold)}
