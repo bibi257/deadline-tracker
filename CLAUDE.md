@@ -5,6 +5,7 @@
 ## 1. 構成
 
 - 画面: HTML 1枚 + `app.js` + `styles.css`。フレームワークなし・ビルドなし（ES5 風の素の JavaScript）。ルートに置く
+- 画面に依存しない計算（日付・繰り返し）は `app-calc.js` に置く（`DTCalc` だけを外に出す即時関数）。`db`・`store`・`document` などに触れる関数は入れない
 - 保管 API: Cloudflare Worker + D1（`worker/src/index.js`）。設定はルートの `wrangler.jsonc`。利用者は自分1人
 - 配信: Cloudflare の Workers Builds が `main` から自動デプロイする（PR では「Workers Builds」のチェックが走る）。`web/` は `scripts/build.mjs` が作る生成物でコミットしない
 - Cloudflare への移行は完了（2026-11-04）。経緯は `docs/cloudflare-migration.md`。旧環境（GitHub Pages・`deadline-data`）は終了していて、守る必要はない

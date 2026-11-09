@@ -152,6 +152,8 @@
 deadline-tracker（Public）
 ├── index.html / app.js / styles.css   画面（フレームワークなし・ビルドなしの素の JavaScript）
 │                                       CSP で inline script と <style> 要素を許さないため、JS と CSS は別ファイル
+├── app-calc.js         画面・保存・通信に触れない計算（日付・繰り返し）。app.js より先に読み、DTCalc から受け取る
+├── theme-boot.js       画面を描く前にテーマを決める（ちらつき防止）
 ├── privacy.html / privacy.css          プライバシーポリシー（Google の OAuth の公開に必要）
 ├── manifest.webmanifest / service-worker.js / assets/   ホーム画面追加・オフライン起動・アイコン
 ├── worker/src/                         Worker（外部依存なし）

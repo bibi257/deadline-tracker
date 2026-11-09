@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const SRC = readFileSync(new URL('../../app.js', import.meta.url), 'utf8');
+// 画面に依存しない計算は app-calc.js にある（即時関数の中で定義し、DTCalc だけを外に出す）
+const CALC_SRC = readFileSync(new URL('../../app-calc.js', import.meta.url), 'utf8');
 
 /**
  * app.js の行頭から始まる関数 `function name(...){ ... }` のソースを返す。
@@ -44,8 +46,13 @@ export function extractVar(name) {
  */
 export function loadAppFunctions(names, globals = {}, vars = []) {
   const ctx = vm.createContext({ Date, Math, JSON, Object, Array, String, Number, Promise, setTimeout, clearTimeout, ...globals });
+  // app-calc.js を同じコンテキストで読む（偽の Date などもそのまま効く）。app.js と同じく、計算の関数は DTCalc から受け取る
+  vm.runInContext(CALC_SRC, ctx, { filename: 'app-calc.js' });
+  const calc = ctx.DTCalc || ctx.window?.DTCalc; // 偽の window を渡したテストでは、そちらに付く
+  for (const k of Object.keys(calc)) if (!(k in globals)) ctx[k] = calc[k];
   for (const v of vars) vm.runInContext(extractVar(v), ctx, { filename: `app.js:var ${v}` });
   for (const n of names) {
+    if (Object.hasOwn(calc, n)) continue; // app-calc.js から受け取り済み
     const code = extractFunction(n);
     vm.runInContext(code, ctx, { filename: `app.js:${n}` });
     if (typeof ctx[n] !== 'function') throw new Error(`app.js の ${n} を関数として読み込めませんでした`);
