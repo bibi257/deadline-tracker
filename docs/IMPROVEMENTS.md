@@ -1963,7 +1963,7 @@ Worker で、アプリが隔離する条件と同じものを確かめ、合わ�
 > 対象ファイル：新規 `app-calc.js`、`app.js`、`index.html`（`app.js` の直前で読む）、`scripts/build.mjs`（`files`・`STAMP_SOURCES`、`?v=` の書き換え）、`service-worker.js`（`CORE_FILES`）、`test/support/appFns.js`、`test/unit/app-logic.test.js`、`test/unit/build.test.js`、`test/unit/service-worker.test.js`。
 > やること：
 > 1. 上の候補の関数を1つずつ調べ、`app.js` の即時関数の中の変数（`db`・`store`・設定値など）や画面に触れていないものだけを選ぶ。選んだ一覧と、外したものとその理由をコミットメッセージに書く
-> 2. `app-calc.js` を `theme-boot.js` と同じ形（`(function(root){ ... })(this)` で、`"use strict"`、ES5）で作り、選んだ関数を `root.DTCalc` にまとめて出す
+> 2. `app-calc.js` を `theme-boot.js` と同じ形（`(function(root){ ... })(typeof window!=="undefined"?window:this);` で、`"use strict"`、ES5）で作り、選んだ関数を `root.DTCalc` にまとめて出す
 > 3. `app.js` から、その関数の本体を消し、即時関数の先頭で `var nextOccurrence=DTCalc.nextOccurrence;` のように受け取る（呼び出し側は変えない）
 > 4. `index.html` で `app.js` の直前に `<script src="app-calc.js?v=dev"></script>` を足し、ビルドが `?v=` を内容のハッシュに書き換えるようにする。`service-worker.js` の `CORE_FILES` と、`build.mjs` の配信・版の計算の対象にも足す
 > 5. `test/support/appFns.js` を、移した関数は `app-calc.js` を vm で読んで `DTCalc` から取るように変える。`test/unit/app-logic.test.js` の期待値は変えない（動作を変えていないことの確かめになる）
