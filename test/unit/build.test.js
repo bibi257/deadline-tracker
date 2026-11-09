@@ -83,7 +83,7 @@ test('build: web/ の index.html と service-worker.js に、ファイルの内�
   assert.ok(web.includes(`<link rel="stylesheet" href="styles.css?v=${hash10(read('styles.css'))}">`), '実際の link タグ');
   assert.doesNotMatch(web, /(?:app\.js|styles\.css)\?v=\d{8}-\d{4}/, '手書きの日時の版番号が残っていない');
   assert.doesNotMatch(web, /\?v=dev|content="dev"/, 'web/ には、ルートの dev が残らない');
-  const all = hash10(rootIndex, read('app.js'), read('styles.css'), rootSw);
+  const all = hash10(rootIndex, read('app.js'), read('styles.css'), rootSw, read('theme-boot.js'));
   assert.match(web, new RegExp(`<meta name="build-stamp" content="\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} \\[${all}\\]">`), '日時とハッシュ（ルートの dev は説明として残さない）');
   assert.match(read('web/service-worker.js'), new RegExp(`const CACHE_NAME = "deadline-tracker-${all}";`));
   assert.equal(read('index.html'), rootIndex, 'ルートの index.html は書き換えない');

@@ -102,7 +102,7 @@ function secretGet(name){
   });
 }
 
-var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},catColors:Object.create(null),settings:{dayHour:9,theme:"auto"},updatedAt:null};
+var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},catColors:Object.create(null),settings:{dayHour:9},updatedAt:null};
 /* 読めなかった保存データの元の文字列。次に保存して上書きされる前に退避する（writeDb を参照） */
 var _unreadableRaw=null;
 function load(){
@@ -2553,11 +2553,11 @@ function renderSettings(){
   s2.appendChild(addRow); put("cat",s2);
 
   // 表示
-  var s3=h('<div class="sec"><h3>表示テーマ</h3><p>「自動」は端末の設定に合わせます。</p><div class="row"></div></div>');
-  [["auto","自動"],["light","ライト"],["dark","ダーク"]].forEach(function(p){
-    var b=h('<button class="chip">'+p[1]+'</button>');
-    b.setAttribute("aria-pressed", db.settings.theme===p[0]?"true":"false");
-    b.onclick=function(){ db.settings.theme=p[0]; saveRaw(); applyTheme(); render(); }; // 設定は同期対象外なのでupdatedAtは進めない
+  var s3=h('<div class="sec"><h3>表示テーマ</h3><p>見出しの右上の ◐ でも切り替えられます。まだ選んでいないときは、端末がダークモードなら墨、それ以外は抹茶です。この端末だけの設定です。</p><div class="row"></div></div>');
+  THEMES.forEach(function(name){
+    var b=h('<button class="chip">'+THEME_NAMES[name]+'</button>');
+    b.setAttribute("aria-pressed", currentTheme()===name?"true":"false");
+    b.onclick=function(){ setTheme(name); render(); };
     s3.querySelector(".row").appendChild(b);
   });
   put("display",s3);
@@ -2629,7 +2629,8 @@ function renderSettings(){
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
         adoptCompletions(d);
         if(d.settings) db.settings=Object.assign(db.settings,d.settings);
-        save(); applyTheme(); render();
+        delete db.settings.theme; // テーマは端末ごとの設定で、データには入れない
+        save(); render();
         toast("読み込みました"+(check.quarantined.length?"（"+check.quarantined.length+"件は形式が不正のため隔離）":""));
       }catch(e){ toast("このファイルは読み込めません。書き出したJSONを選んでください"); }
       file.value="";
@@ -4470,13 +4471,40 @@ function unskipOccurrence(id, dateKey){
 }
 
 /* ========== テーマ・トースト ========== */
-function applyTheme(){
-  var t=db.settings.theme;
-  if(t==="auto") t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";
-  document.documentElement.setAttribute("data-theme",t);
-  document.querySelector('meta[name="theme-color"]').setAttribute("content", t==="dark"?"#141311":"#F3F0E8");
+function currentTheme(){
+  var t=document.documentElement.getAttribute("data-theme");
+  return THEMES.indexOf(t)>=0 ? t : resolveTheme(readSavedTheme(), themePrefersDark());
 }
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){ if(db.settings.theme==="auto"){ applyTheme(); render(); } }); // 色の表示（ダーク用の補正）を描き直す
+/* 画面に反映する（<html data-theme>・ブラウザ上端の色・◐ ボタンの説明）。保存はしない */
+function applyTheme(t){
+  t=t||currentTheme();
+  document.documentElement.setAttribute("data-theme",t);
+  var bg=getComputedStyle(document.documentElement).getPropertyValue("--color-background-body").trim();
+  var meta=document.querySelector('meta[name="theme-color"]');
+  if(meta && bg) meta.setAttribute("content",bg);
+  var btn=document.getElementById("themeBtn");
+  if(btn){
+    var next=THEMES[(THEMES.indexOf(t)+1)%THEMES.length];
+    btn.setAttribute("aria-label","テーマ："+THEME_NAMES[t]+"（押すと"+THEME_NAMES[next]+"に切り替え）");
+  }
+}
+/* 選んだテーマを、この端末に保存して反映する。保存できなくても、その回は切り替わる */
+function setTheme(t){ saveTheme(t); applyTheme(t); }
+/* 旧設定（自動／ライト／ダーク）を一度だけ引き継ぐ：ライト→抹茶、ダーク→墨、自動はまだ選んでいない扱い */
+function migrateLegacyTheme(){
+  var old=db.settings && db.settings.theme;
+  if(old===undefined) return;
+  if(!readSavedTheme()){
+    if(old==="light") saveTheme("matcha");
+    else if(old==="dark") saveTheme("dark");
+  }
+  delete db.settings.theme; saveRaw();
+}
+try{
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){
+    if(!readSavedTheme()){ applyTheme(resolveTheme(null, themePrefersDark())); render(); } // まだ選んでいない端末だけ、端末の設定に合わせる
+  });
+}catch(e){}
 
 var toastEl=document.getElementById("toast"), toastTimer=null;
 var toastMsgEl=document.getElementById("toastMsg"), toastActionEl=document.getElementById("toastAction");
@@ -4626,8 +4654,12 @@ document.querySelectorAll(".tab").forEach(function(t){
   t.onclick=function(){ view=t.dataset.view; window.scrollTo(0,0); render(); };
 });
 document.getElementById("gearBtn").onclick=function(){ view=(view==="set")?"list":"set"; window.scrollTo(0,0); render(); };
+document.getElementById("themeBtn").onclick=function(){
+  var next=THEMES[(THEMES.indexOf(currentTheme())+1)%THEMES.length];
+  setTheme(next); render(); toast("テーマ："+THEME_NAMES[next]);
+};
 document.getElementById("fabAdd").onclick=function(){ openDialog(null); };
-load(); applyTheme();
+load(); migrateLegacyTheme(); applyTheme();
 forgetLegacySettings();
 render();
 handleExportParam();
