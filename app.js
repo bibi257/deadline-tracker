@@ -2357,6 +2357,46 @@ function copyText(text){
     ta.remove(); ok?resolve():reject(new Error("copy"));
   });
 }
+/* 定時の通知（Discord・メール）が届いたか。押したときだけ Worker の記録（notify_log）を読む */
+var NOTIFY_ROWS=[["morning","朝の締切一覧"],["evening","夜の再通知"],["weekly","週次レビュー"],["mail-morning","朝のメール"],["mail-evening","夜のメール"]];
+function fmtNotifyAt(sec){
+  var d=new Date(sec*1000);
+  return (d.getMonth()+1)+"/"+d.getDate()+" "+d.getHours()+":"+pad(d.getMinutes());
+}
+function notifyLogSection(){
+  var el=h('<div class="sec"><h3>定時の通知が届いたか</h3>'+
+    '<p>朝・夜の Discord の通知とメールを、最後にいつ送れたかを確かめます。届かなかった日は、次に届いた Discord の通知の最後にも1行で出ます。</p>'+
+    '<div class="row"></div><div class="notify-log" role="status"></div></div>');
+  var out=el.querySelector(".notify-log");
+  var b=h('<button class="btn">前回届いた日時を確かめる</button>');
+  b.onclick=function(){
+    out.textContent="確認しています…";
+    getStoredCfConfig().then(function(cfg){
+      if(!cfg){ out.textContent="先に「同期とアクセスキー」でアクセスキーを入れてください。"; return; }
+      return cfGetJson(cfg, cfg.api.replace(/\/data$/,"/notify-log")).then(function(j){
+        out.textContent="";
+        NOTIFY_ROWS.forEach(function(r){
+          var at=j && j.last ? j.last[r[0]] : null;
+          var line=document.createElement("div");
+          line.textContent=r[1]+"："+(at ? fmtNotifyAt(at) : "記録なし");
+          out.appendChild(line);
+        });
+        var fails=(j && Array.isArray(j.failures)) ? j.failures : [];
+        var label={}; NOTIFY_ROWS.forEach(function(r){ label[r[0]]=r[1]; });
+        var f=document.createElement("div");
+        f.className=fails.length ? "notify-fail" : "note";
+        f.textContent=fails.length
+          ? "届いていない通知（直近7日）："+fails.map(function(x){ var p=String(x.day).split("-"); return Number(p[1])+"/"+Number(p[2])+" "+(label[x.kind]||x.kind); }).join("、")
+          : "直近7日で、届かなかった通知はありません。";
+        out.appendChild(f);
+      });
+    }).catch(function(err){
+      out.textContent=(err && err.status===401) ? "アクセスキーが違います。" : "確かめられませんでした："+((err && err.message)||"");
+    });
+  };
+  el.querySelector(".row").appendChild(b);
+  return el;
+}
 function feedUrlSection(){
   var el=h('<div class="sec"><h3>カレンダーで購読する</h3>'+
     '<p>iPhone の「設定 → カレンダー → アカウント → アカウントを追加 → その他 → 照会カレンダーを追加」に購読用 URL を入れると、締切が標準カレンダーに自動で並びます（メモは含みません。約1時間ごとに更新されます）。</p>'+
@@ -2730,6 +2770,7 @@ function renderSettings(){
   put("notify",h('<div class="sec"><h3>通知のしくみ</h3><p>このアプリ自体は通知を出しません。「カレンダーへ」で書き出した .ics を iPhone で開くと、標準カレンダーに予定と通知（1週間前・前日・当日）が登録され、アプリを閉じていても通知が届きます。締切の日時を変更したときは、もう一度書き出して取り込み直してください（同じ予定が上書きされます）。</p>'+
     '<p><b>iPhoneで取り込むときの注意：</b>Discordなどの添付ファイルを直接タップすると「照会カレンダー」として登録され、更新がすぐ反映されません。長押しして「ファイルに保存」してから開き、「カレンダーに追加」を選んでください。このアプリの「カレンダーへ」ボタンから書き出したファイルは、その心配がありません。</p></div>'));
   if(CF===true) put("notify", feedUrlSection());
+  if(CF===true) put("notify", notifyLogSection());
   settingsAssemble(groups);
 
 }

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import worker from '../../worker/src/index.js';
 import { CRON_DIGEST, CRON_MAIL_EVENING, CRON_MAIL_MORNING, readConfig, runScheduled, sendDigest } from '../../worker/src/jobs.js';
 import { pruneSnapshots, runMaintenance } from '../../worker/src/maintenance.js';
-import { parseNow, fromJst } from '../../worker/src/time.js';
+import { parseNow, fromJst, dateStr } from '../../worker/src/time.js';
 import { createD1 } from '../support/d1Shim.js';
 
 // Worker は「未設定のため送りません」などをログに出す。テスト中に出力が混ざると、node --test の結果の受け渡しが
@@ -192,8 +192,13 @@ test('runMaintenance: 古い世代バックアップを消し、期限切れの�
     env.DB.prepare('INSERT INTO limits (k, n, until) VALUES (?, 1, ?)').bind('old', NOW - 10),
     env.DB.prepare('INSERT INTO limits (k, n, until) VALUES (?, 1, ?)').bind('new', NOW + 600),
   ]);
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO notify_log (kind, day, at, ok) VALUES ('morning', ?, 0, 1)").bind(dateStr((NOW - 31 * 86400) * 1000)),
+    env.DB.prepare("INSERT INTO notify_log (kind, day, at, ok) VALUES ('morning', ?, 0, 1)").bind(dateStr((NOW - 29 * 86400) * 1000)),
+  ]);
   const out = await runMaintenance(env, NOW);
-  assert.deepEqual(out, { snapshots: 1, kept: 2, limits: 1 });
+  assert.deepEqual(out, { snapshots: 1, kept: 2, limits: 1, notifyLog: 1 });
+  assert.equal((await env.DB.prepare('SELECT COUNT(*) AS n FROM notify_log').first('n')), 1, '30日より古い通知の記録だけを消す');
   const left = (await env.DB.prepare('SELECT rev FROM snapshots ORDER BY rev').all()).results.map((r) => r.rev);
   assert.deepEqual(left, [1, 2]);
   assert.deepEqual((await env.DB.prepare('SELECT k FROM limits').all()).results.map((r) => r.k), ['new']);
@@ -510,4 +515,61 @@ test('大きめのデータ（締切300件・繰り返し50件・完了500件）
     t.diagnostic(`${name}: 合計 ${sum.toFixed(2)}ms（目安 ${LIMIT_MS}ms。Node と Workers の速さは同じではない）`);
     if (sum > LIMIT_MS) t.diagnostic(`⚠️ ${name} は目安（${LIMIT_MS}ms）を超えました。無料プランの CPU 時間の上限は 10ms です`);
   }
+});
+
+// ---- 定時の通知が届いたかの記録（notify_log） ----
+
+const logRows = async (env) => (await env.DB.prepare('SELECT kind, day, ok FROM notify_log ORDER BY day, kind').all()).results;
+
+test('通知の記録: Cron で送れたら ok = 1 になり、GET /api/notify-log に最新の成功の時刻が出る', async () => {
+  const { env, call } = await setup();
+  await runScheduled(CRON_DIGEST, env, MORNING);
+  assert.deepEqual(await logRows(env), [{ kind: 'morning', day: '2026-01-30', ok: 1 }]);
+  const r = await call('GET', '/api/notify-log');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.last.morning, MORNING);
+  assert.equal(r.body.last.evening, null);
+  assert.deepEqual(r.body.failures, []);
+  assert.equal((await call('GET', '/api/notify-log', null)).status, 401, '認証が要る');
+});
+
+test('通知の記録: 同じ日の同じ通知は、2回目を送らない（Cron が2回動いても二重に届かない）', async () => {
+  const { env, discord } = await setup();
+  await runScheduled(CRON_DIGEST, env, MORNING);
+  const n = discord.calls.length;
+  const out = await runScheduled(CRON_DIGEST, env, MORNING + 30);
+  assert.deepEqual(out.digest, { skipped: true });
+  assert.equal(discord.calls.length, n);
+});
+
+test('通知の記録: 届かなかった通知は ok = 0 のまま残り、次に届いた通知の末尾に1行で出る', async () => {
+  const { env, clock } = await setup();
+  const fail = fakeDiscord(500, 500, 500, 500);
+  env.FETCH = fail.fetchFn;
+  await assert.rejects(runScheduled(CRON_DIGEST, env, MORNING));
+  assert.deepEqual(await logRows(env), [{ kind: 'morning', day: '2026-01-30', ok: 0 }]);
+  const next = fakeDiscord();
+  env.FETCH = next.fetchFn;
+  clock.t = MORNING + 86400;
+  await runScheduled(CRON_DIGEST, env, MORNING + 86400);
+  const last = next.calls.at(-1).body;
+  assert.equal(last.content, '⚠️ 届いていない通知：1/30 朝の締切一覧');
+  assert.deepEqual(last.allowed_mentions, { parse: [] });
+  assert.ok(!next.calls.slice(0, -1).some((c) => c.body.content.includes('届いていない')), '本文には混ぜない');
+});
+
+test('通知の記録: 手動の送信（POST /api/digest）は記録しない。Webhook が未設定で送らなかったときも記録を残さない', async () => {
+  const { env, call } = await setup();
+  assert.equal((await call('POST', '/api/digest')).status, 200);
+  assert.deepEqual(await logRows(env), []);
+  delete env.DISCORD_WEBHOOK_URL;
+  assert.equal((await runScheduled(CRON_DIGEST, env, MORNING)).digest, null);
+  assert.deepEqual(await logRows(env), []);
+});
+
+test('通知の記録: 夜の Cron はメールと夜の再通知を別々に記録する（メールが未設定なら、メールの行は残さない）', async () => {
+  const { env } = await setup();
+  const evening = parseNow('2026-01-30 20:23') / 1000; // 金曜
+  await runScheduled(CRON_MAIL_EVENING, env, evening);
+  assert.deepEqual(await logRows(env), [{ kind: 'evening', day: '2026-01-30', ok: 1 }]);
 });
