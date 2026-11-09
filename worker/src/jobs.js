@@ -5,6 +5,7 @@ import { jstDow, zonedData } from './time.js';
 import { buildFeed } from './feed.js';
 import { gmailConfig, sendGmail, subjectFor, targetDate, buildMailBody } from './mail.js';
 import { runMaintenance } from './maintenance.js';
+import { failureNote, recentFailures, withNotifyLog } from './notify.js';
 
 export const CRON_DIGEST = '47 21 * * *'; // 毎朝 6:47（JST）。Cron は UTC で書く
 // 無料プランの Cron Triggers はアカウント全体で5本まで。時刻を3本にまとめ、1本で複数の仕事をする
@@ -60,8 +61,11 @@ export async function previewDigest(env, nowMs, kind = 'morning', loaded) {
 
 const sendOpts = (env) => ({ fetchFn: env.FETCH ?? fetch, ...(env.SLEEP ? { sleep: env.SLEEP } : {}) });
 
-/** Discord に送る。送った通数を返す（夜の再通知で対象が0件なら 0）。Webhook が未設定なら何もしない（null） */
-export async function sendDigest(env, nowMs, kind = 'morning', loaded) {
+/**
+ * Discord に送る。送った通数を返す（夜の再通知で対象が0件なら 0）。Webhook が未設定なら何もしない（null）。
+ * note（届かなかった通知の1行など）があれば、送る本文の最後に1通足す（送る本文が無い日は足さない）
+ */
+export async function sendDigest(env, nowMs, kind = 'morning', loaded, note = null) {
   const cfg = readConfig(env);
   if (!cfg.webhook) {
     console.log(cfg.webhookSet ? 'DISCORD_WEBHOOK_URL が Discord の URL の形ではないため送りません' : 'DISCORD_WEBHOOK_URL が未設定のため送りません');
@@ -76,7 +80,13 @@ export async function sendDigest(env, nowMs, kind = 'morning', loaded) {
     await postDiscord(cfg.webhook, [{ content: `⚠️ ${KIND_LABEL[kind]}を作れませんでした（Worker）。ログを確認してください。` }], sendOpts(env)).catch(() => {});
     throw e;
   }
+  if (note && bodies.length) bodies = [...bodies, { content: note, allowed_mentions: { parse: [] } }];
   return postDiscord(cfg.webhook, bodies, sendOpts(env));
+}
+
+/** Cron の通知を、届いたかの記録（notify_log）をつけて送る。Discord には、直近7日で届かなかった通知を末尾に添える */
+function notified(env, kind, nowSec, send) {
+  return withNotifyLog(env, kind, nowSec, async () => send(failureNote(await recentFailures(env, nowSec, kind))));
 }
 
 
@@ -142,17 +152,21 @@ async function runAll(jobs) {
 /** Cron から呼ばれる。cron は発火した式 */
 export async function runScheduled(cron, env, nowSec) {
   const nowMs = nowSec * 1000;
-  if (cron === CRON_DIGEST) return { digest: await sendDigest(env, nowMs) };
+  if (cron === CRON_DIGEST) return { digest: await notified(env, 'morning', nowSec, (note) => sendDigest(env, nowMs, 'morning', undefined, note)) };
   if (cron === CRON_MAIL_EVENING) {
     // 日曜(JST)は週次レビュー、それ以外は夜の再通知
     // 締切データは1回だけ読み、メールと夜の通知で共有する（D1 の読み込みと JSON の解析を、1回の実行で2回しないため）。
     // 読み込みの失敗は、それぞれの仕事の中で受ける（メールの失敗も、夜の通知の失敗も、今までどおり Discord に知らせる）
     const data = loadData(env);
     data.catch(() => {}); // どちらの仕事も受け取るが、受け取る前に失敗しても未処理の失敗にしない
-    return runAll({ mail: () => runMail(env, nowMs, data), review: () => sendDigest(env, nowMs, jstDow(nowMs) === 0 ? 'weekly' : 'evening', data) });
+    const kind = jstDow(nowMs) === 0 ? 'weekly' : 'evening';
+    return runAll({
+      mail: () => notified(env, 'mail-evening', nowSec, () => runMail(env, nowMs, data)),
+      review: () => notified(env, kind, nowSec, (note) => sendDigest(env, nowMs, kind, data, note)),
+    });
   }
   if (cron === CRON_MAIL_MORNING) {
-    return runAll({ mail: () => runMail(env, nowMs), maintenance: () => runMaintenance(env, nowSec) });
+    return runAll({ mail: () => notified(env, 'mail-morning', nowSec, () => runMail(env, nowMs)), maintenance: () => runMaintenance(env, nowSec) });
   }
   console.log(`知らない Cron の式です: ${cron}`);
   return {};

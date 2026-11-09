@@ -12,6 +12,7 @@
 //   POST /api/mail              締切のメールを今すぐ自分宛てに送る（手動）
 //   GET  /api/digest            Discord に送る文面を作る（送らない。確認用）。?kind=morning（朝の一覧。既定）|evening（夜の再通知）|weekly（週次レビュー）
 //   POST /api/digest            今すぐ Discord に送る（手動）。?kind= は同じ
+//   GET  /api/notify-log        定時の通知が届いたか（種類ごとの最新の成功の時刻と、直近7日の失敗）
 //
 // 定時の処理（scheduled）: 毎朝 6:47 に締切一覧を Discord へ。20:23 に翌日分のメールと、夜の再通知（日曜は週次レビュー）。
 // 5:23 に当日分のメールと、世代バックアップの間引き・掃除。
@@ -20,6 +21,7 @@
 // キーが長いランダム値なので、パスワードのような重いハッシュは使わず（無料プランの CPU 時間 10ms に収める）、定数時間で比べる。
 // 認証の失敗が続いたら、IP ごとに一時的に止める。
 import { buildFeed } from './feed.js';
+import { notifyStatus } from './notify.js';
 import { buildIcs, SUBSCRIBE_HEADERS } from './ics.js';
 import { gmailConfig } from './mail.js';
 import { DIGEST_KINDS, previewDigest, previewMail, runScheduled, sendDigest, sendMail } from './jobs.js';
@@ -40,6 +42,8 @@ const SCHEMA = [
   // 保存のたびの MAX(at) が、バックアップの件数だけ行を読まないように（D1 の無料枠は読んだ行数で数える）
   'CREATE INDEX IF NOT EXISTS snapshots_at ON snapshots(at)',
   'CREATE TABLE IF NOT EXISTS limits (k TEXT PRIMARY KEY, n INTEGER NOT NULL, until INTEGER NOT NULL)',
+  // 定時の通知が届いたかの記録（worker/src/notify.js）。kind は morning・evening・weekly・mail-morning・mail-evening、day は JST の日付
+  'CREATE TABLE IF NOT EXISTS notify_log (kind TEXT NOT NULL, day TEXT NOT NULL, at INTEGER NOT NULL, ok INTEGER NOT NULL, PRIMARY KEY (kind, day))',
 ];
 
 const DOC_ID = 'main';
@@ -143,7 +147,7 @@ const ARRAY_KEYS = ['items', 'templates', 'trash', 'categories', 'completions'];
 const OBJECT_KEYS = ['catReminders', 'catColors'];
 
 /** 保存するデータの形を確かめる。値の細かい検査はアプリ側（読み込み時）に任せ、ここでは壊れた形だけを弾く */
-function checkData(data) {
+export function checkData(data) {
   const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
   if (!isObj(data)) throw new HttpError(400, '締切データの形式が正しくありません');
   if (!Array.isArray(data.items)) throw new HttpError(400, 'items（締切の配列）がありません');
@@ -389,6 +393,7 @@ async function route(env, request) {
   if (path === '/api/data' && method === 'GET') return getData(env);
   if (path === '/api/data' && method === 'PUT') return putData(env, request, url);
   if (path === '/api/snapshots' && method === 'GET') return listSnapshots(env);
+  if (path === '/api/notify-log' && method === 'GET') return json({ ok: true, ...(await notifyStatus(env, now(env))) });
   const m = /^\/api\/snapshots\/(\d+)$/.exec(path);
   if (m && method === 'GET') return getSnapshot(env, Number(m[1]));
   throw new HttpError(404, '見つかりません');
