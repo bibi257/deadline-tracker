@@ -1,6 +1,9 @@
 (function(){
 "use strict";
 
+/* 画面に依存しない計算は app-calc.js（index.html で先に読む）。今までどおりの名前で受け取る */
+var pad=DTCalc.pad, toLocalISO=DTCalc.toLocalISO, startOfDay=DTCalc.startOfDay, daysBetween=DTCalc.daysBetween, parseItemDate=DTCalc.parseItemDate, refDate=DTCalc.refDate, isRepeating=DTCalc.isRepeating, anchorDayOf=DTCalc.anchorDayOf, nextOccurrence=DTCalc.nextOccurrence, prevOccurrence=DTCalc.prevOccurrence, advanceRepeating=DTCalc.advanceRepeating, expandOccurrences=DTCalc.expandOccurrences, monthEndRule=DTCalc.monthEndRule, toHalfWidth=DTCalc.toHalfWidth;
+
 /* ========== 保存領域（localStorage が使えない環境ではメモリに退避） ========== */
 var KEY="deadline-tracker-v1";
 var mem={}, hasLS=false;
@@ -269,14 +272,7 @@ function sanitizeIncomingMeta(d){
 }
 
 /* ========== 日付ユーティリティ ========== */
-function pad(n){ return (n<10?"0":"")+n; }
-function toLocalISO(d){ return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
-function parseItemDate(it){ return new Date(it.due); }
-function startOfDay(d){ return new Date(d.getFullYear(),d.getMonth(),d.getDate()); }
-function daysBetween(a,b){ return Math.round((startOfDay(b)-startOfDay(a))/86400000); }
 var DOW=["日","月","火","水","木","金","土"];
-/* 残り日数の基準になる日時。期間つきの予定は「開始日」までを数える */
-function refDate(it){ return it.start?new Date(it.start):parseItemDate(it); }
 
 function fmtDue(d,allDay){
   var s=(d.getMonth()+1)+"/"+d.getDate()+"（"+DOW[d.getDay()]+"）";
@@ -1467,7 +1463,6 @@ function purgeQuarantineItem(qid){
   save(); render();
 }
 
-function isRepeating(it){ return !!(it.rep&&it.rep!=="none"); }
 
 /* タイトル・メモの部分一致で絞り込む検索欄 */
 var searchOpen=false;
@@ -1524,9 +1519,6 @@ function renderList(){
    登録ダイアログに下書きとして入れて開く。読み取れなかった部分はダイアログで直してもらう */
 var quickText="", quickHelpOpen=false, fromQuick=false;
 var QUICK_DOW={"日":0,"月":1,"火":2,"水":3,"木":4,"金":5,"土":6};
-function toHalfWidth(s){
-  return s.replace(/[０-９Ａ-Ｚａ-ｚ：／＃]/g,function(c){ return String.fromCharCode(c.charCodeAt(0)-0xFEE0); }).replace(/\u3000/g," ");
-}
 function parseQuick(text, now){
   now=now||new Date();
   var t=" "+toHalfWidth(text)+" ";
@@ -3626,41 +3618,9 @@ function applyCompletionCore(it){
 
 /* 繰り返しの締切を1回分進める。取りやめた回(skip)は飛ばし、回数指定があれば残り回数も減らす。
    もう次の回が無い（最終回だった）ときは何も変えずに false を返す */
-function advanceRepeating(it){
-  var skip=it.skip||[];
-  var anchor=anchorDayOf(it);
-  var due=parseItemDate(it), span=it.start?(due-new Date(it.start)):0;
-  var left=it.repCount||0;
-  do{
-    if(left===1) return false; // 残り1回＝今の回が最終回
-    if(left>1) left--;
-    due=nextOccurrence(due, it.rep, anchor);
-  } while(skip.indexOf(toLocalISO(due))>=0);
-  // 月末(31日など)で丸めた後も元の日付に戻れるよう、基準の日を覚えておく
-  if((it.rep==="monthly"||it.rep==="yearly") && !it.repDay) it.repDay=anchor;
-  it.due=due.toISOString();
-  if(it.start) it.start=new Date(due.getTime()-span).toISOString();
-  if(it.repCount) it.repCount=left;
-  it.seq=(it.seq||0)+1;
-  return true;
-}
-/* 月・年単位の繰り返しの基準日（何日の予定か） */
-function anchorDayOf(it){ return it.repDay || parseItemDate(it).getDate(); }
 /* 毎月・毎年で基準日が29〜31日のとき、無い月は月末に丸める（アプリの nextOccurrence と同じ）ための RRULE の追加分。
    素の FREQ=MONTHLY は31日が無い月を飛ばすので、「基準日」と「月末」の早い方（BYSETPOS=1）を指定する。
    DTSTART は時刻つきなら UTC、終日なら日付で書くため、締切日との日数差 diff を引いて合わせる（build_ics.py と同じ計算） */
-function monthEndRule(it, due, begin){
-  if(it.rep!=="monthly" && it.rep!=="yearly") return "";
-  var a=anchorDayOf(it);
-  if(a<29) return "";
-  var first;
-  if(it.allDay){ var s0=it.start?new Date(it.start):due; first={y:s0.getFullYear(), m:s0.getMonth(), d:s0.getDate()}; }
-  else first={y:begin.getUTCFullYear(), m:begin.getUTCMonth(), d:begin.getUTCDate()};
-  var diff=Math.round((Date.UTC(due.getFullYear(),due.getMonth(),due.getDate())-Date.UTC(first.y,first.m,first.d))/86400000);
-  if(diff<0 || a-diff<1 || first.m!==due.getMonth()) return ""; // 月をまたぐ期間つきなどは従来どおり
-  var rule=";BYMONTHDAY="+(a-diff)+","+(-(1+diff))+";BYSETPOS=1";
-  return it.rep==="yearly" ? ";BYMONTH="+(first.m+1)+rule : rule;
-}
 
 /* 次に来る回の締切。完了にし忘れて締切が過ぎている定期予定でも「今より先の回」を返す（表示用・元データは変えない）。
    回数指定を使い切っていれば null */
@@ -4430,57 +4390,8 @@ function runDeferredRefresh(){ if(_deferRefresh && !editingBusy()) refreshThenAu
 /* 繰り返し1回分だけ日付を進める。月・年単位は基準日(anchorDay)を保ち、
    その月に無い日(31日・2/29など)は月末に丸める。
    （setMonthのままだと 1/31 の翌月が 3/3 になってしまうため） */
-function nextOccurrence(d, rep, anchorDay){
-  var n=new Date(d);
-  if(rep==="weekly") n.setDate(d.getDate()+7);
-  else if(rep==="biweekly") n.setDate(d.getDate()+14);
-  else if(rep==="monthly"||rep==="yearly"){
-    var y=d.getFullYear()+(rep==="yearly"?1:0), m=d.getMonth()+(rep==="monthly"?1:0);
-    var last=new Date(y,m+1,0).getDate();
-    n=new Date(y,m,Math.min(anchorDay||d.getDate(),last),d.getHours(),d.getMinutes(),d.getSeconds());
-  }
-  return n;
-}
 
-/* nextOccurrence の逆。ひとつ前の回（月・年は基準日を保ち、その月に無い日は月末に丸める） */
-function prevOccurrence(d, rep, anchorDay){
-  var n=new Date(d);
-  if(rep==="weekly") n.setDate(d.getDate()-7);
-  else if(rep==="biweekly") n.setDate(d.getDate()-14);
-  else if(rep==="monthly"||rep==="yearly"){
-    var y=d.getFullYear()-(rep==="yearly"?1:0), m=d.getMonth()-(rep==="monthly"?1:0);
-    var last=new Date(y,m+1,0).getDate();
-    n=new Date(y,m,Math.min(anchorDay||d.getDate(),last),d.getHours(),d.getMinutes(),d.getSeconds());
-  }
-  return n;
-}
 
-/* 表示用に、繰り返しの回を指定範囲まで展開する（保存はせず、その場で作る） */
-function expandOccurrences(it, fromDate, toDate){
-  var out=[];
-  if(!it.rep||it.rep==="none"){ out.push(it); return out; }
-  var skip=it.skip||[];  // 「この回だけ休み」にした日（YYYY-MM-DD）
-  var d=parseItemDate(it), anchor=anchorDayOf(it);
-  var span=it.start?(d-new Date(it.start)):0;
-  var limit=(it.repCount&&it.repCount>0)?it.repCount:60; // 無期限でも60回で打ち切る
-  // 無期限の繰り返しは、締切が古くても表示範囲の手前まで先に送ってから数える。
-  // 数え始めを保存された締切にすると、放置された予定は60回分が過去で尽きて将来の回が出ない
-  var k0=0;
-  if(!(it.repCount>0)){ for(;d<fromDate && k0<5000;k0++) d=nextOccurrence(d,it.rep,anchor); }
-  for(var k=k0;k<k0+limit;k++){
-    if(d>toDate) break;
-    if(d>=fromDate && skip.indexOf(toLocalISO(d))<0){
-      var copy=Object.assign({},it);
-      copy.due=d.toISOString();
-      copy.isExpanded=true; // カレンダー表示用の複製であることを示す（元データではない）
-      if(it.start) copy.start=new Date(d.getTime()-span).toISOString();
-      if(k>0){ copy.occurrence=k; copy.done=false; } // 2回目以降は未完了として扱う
-      out.push(copy);
-    }
-    d=nextOccurrence(d, it.rep, anchor);
-  }
-  return out;
-}
 
 /* 繰り返しのうち、指定日の回だけを取りやめる。
    取りやめたのが「次の回」そのものなら、締切を次の回へ進める

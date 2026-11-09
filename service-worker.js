@@ -8,6 +8,7 @@ const CACHE_NAME = "deadline-tracker-dev";
 const CORE_FILES = [
   "./",
   "./index.html",
+  "./app-calc.js",
   "./app.js",
   "./theme-boot.js",
   "./styles.css",
