@@ -1835,12 +1835,12 @@ Scriptable（iOS の無料アプリ）のスクリプトで、iPhone がすで�
 
 **改善案**
 
-Worker で、アプリが隔離する条件と同じものを確かめ、合わなければ `400` にする。範囲は、アプリが書く値より広めにとる（正しいデータを止めないため）。
+Worker で、アプリが隔離する条件と同じものを確かめ、合わなければ `400` にする。**Worker の条件は、アプリが保存できる値より厳しくしない**（厳しくすると、その項目を含む端末の同期が全部止まる）。範囲は、アプリが書く値より広めにとる。
 
 | 値 | 確かめること | 根拠 |
 |---|---|---|
 | `title` | 空白を除いて1文字以上 | `sanitizeIncomingItems` が空の題名を隔離する |
-| `due` | 通知が受け付ける形：`withZone`（`worker/src/time.js`）でタイムゾーンを補ったあと、`parsable`（`worker/src/digest.js:28`。末尾 Z の ISO 形式で `Date.parse` で読める）を満たす | アプリは締切日が読めない項目を隔離し、通知・`.ics` はこの条件に合わない項目を除く。同じ関数を使い、条件を二重に書かない |
+| `due` | 文字列で、`Date.parse` で読める（アプリの `sanitizeIncomingItems` と同じ条件） | アプリは `new Date` で読めない項目を隔離し、読めれば `toISOString()` で保存する。通知側の `parsable`（`worker/src/digest.js:28`。末尾 Z・年は4桁）にはそろえない：年を5桁に打ち間違えた日付など、アプリが保存できる値を Worker が `400` にすると、ほかの変更を含めて同期が全部止まるため。`parsable` に合わない項目は、今までどおり通知・`.ics` が除いて知らせる |
 | `start` | あれば `due` と同じ条件 | アプリは読めない開始日を消して使う |
 | `repCount` | 0 以上 | 0 は「終わりを決めない」（`index.html:106`） |
 | `repDay` | 1〜31 | 月の日 |
@@ -1894,12 +1894,12 @@ Worker で、アプリが隔離する条件と同じものを確かめ、合わ�
 > 目的：定時の通知（朝・夜・週次・メール）が最後に成功した時刻を D1 に記録し、持ち主がアプリの設定で確かめられるようにする。
 > 対象ファイル：`worker/src/index.js`（`SCHEMA`・ルート）、`worker/src/jobs.js`（`runScheduled` から呼ぶ仕事）、`app.js`（設定の表示）、`test/unit/jobs.test.js`、`test/unit/worker.test.js`、`README.md`。
 > やること：
-> 1. `SCHEMA` に `CREATE TABLE IF NOT EXISTS notify_last (kind TEXT PRIMARY KEY, at INTEGER NOT NULL, sent INTEGER NOT NULL)` を足す。`kind` は Cron の式ごとの4種類：`morning`（朝の Discord）、`night`（夜の Discord。月〜土は夜の再通知、日曜は週次レビュー。同じ Cron で1つだけ送るので1種類にまとめる。`worker/src/jobs.js:152`）、`mail-night`（夜のメール）、`mail-morning`（早朝のメール）。`at` は成功した時刻（epoch 秒）。`sent` は Discord なら送った通数、メールなら送れたら 1
+> 1. `SCHEMA` に `CREATE TABLE IF NOT EXISTS notify_last (kind TEXT PRIMARY KEY, at INTEGER NOT NULL, sent INTEGER NOT NULL)` を足す。`kind` は Cron の式ごとの4種類で、名前はコードに合わせる：`morning`（朝の Discord。`CRON_DIGEST`）、`evening`（夜の Discord。`CRON_MAIL_EVENING` の分で、月〜土は夜の再通知、日曜は週次レビュー。同じ Cron で1つだけ送るので、週次も `evening` として記録する。`worker/src/jobs.js:152`）、`mail-evening`（夜のメール。`CRON_MAIL_EVENING`）、`mail-morning`（早朝のメール。`CRON_MAIL_MORNING`）。`at` は成功した時刻（epoch 秒）。`sent` は Discord なら送った通数、メールなら送れたら 1
 > 2. Cron の仕事が例外なく終わったら、`INSERT ... ON CONFLICT(kind) DO UPDATE` で `at` と `sent` を上書きする。**送る対象が0件で送らなかった場合（夜の再通知の `bodies` が空、`worker/src/jobs.js:52`）も成功として記録し、`sent` を 0 にする**（送らなかった日を「届かなかった」と見誤らないため）。**送る手段やデータが無くて送らなかった場合は記録しない**：`sendDigest` が `null` を返す（Webhook が未設定）、`sendMail` が `null` を返す（Gmail が未設定、または締切データがまだ無い。`worker/src/jobs.js:96-108`）。手動の送信（`POST /api/digest`・`POST /api/mail`）は記録しない（試しに送る用途のため）
 > 3. 記録の書き込みに失敗しても、通知そのものの成否には影響させない（`catch` してログに出すだけ）
 > 4. 認証つきの `GET /api/notify-last` を足し、表の全行を返す。認証のない API は増やさない
 > 5. `app.js` の設定（「通知」の近く）に「前回届いた日時を確かめる」ボタンを足し、押したときだけ読む。表示は日本語で「朝の通知：11/9 6:47（3通）」のようにする。今の時刻と、その種類の `at`（最後に成功した時刻）の差が 26 時間以上なら「⚠️ 届いていない可能性があります」と、色だけでなく文字でも示す（どの種類も毎日1回動くので、しきい値は1つでよい。行がまだ無い種類は「記録なし」と出す）
-> 6. `test/unit/jobs.test.js` に、(1) 成功で行ができる・上書きされる (2) 0件で送らなかったときも `sent = 0` で記録される (3) 送信に失敗したときは記録されない (4) 手動の送信は記録しない、のテストを足す（`test/support/d1Shim.js` を使う）。`test/unit/worker.test.js` に、`GET /api/notify-last` が認証なしで `401` になるテストを足す
+> 6. `test/unit/jobs.test.js` に、(1) 成功で行ができる・上書きされる (2) 0件で送らなかったときも `sent = 0` で記録される (3) 送信に失敗したときは記録されない (4) 手動の送信は記録しない (5) `sendDigest`・`sendMail` が `null` を返したとき（Webhook・Gmail が未設定、データが無い）は記録しない (6) 日曜の週次レビューも `evening` として記録される、のテストを足す（`test/support/d1Shim.js` を使う）。`test/unit/worker.test.js` に、`GET /api/notify-last` が認証なしで `401` になるテストを足す
 > 7. `README.md` の API の表と、通知の節に1行ずつ足す
 > 制約：Worker は依存 0 のまま。Cron 1回あたりの D1 の書き込みは、種類ごとに1回まで。Webhook の URL・トークンをログや D1 に書かない。認証のない API を増やさない。
 > 完了の条件：`npm test` と `npm run build` が成功する。コミットメッセージは `feat: 要約`。
