@@ -1871,16 +1871,18 @@ function renderWeek(){
     var dowCls=(d.getDay()===0||hol?" sun":d.getDay()===6?" sat":"");
     var label=(k===0?"今日":k===1?"明日":"");
     // 予定のない日は細い行に詰める（予定のある日を一画面に収めやすくする）
+    // 見出しは「日付／曜日／今日・明日」の3つの欄に分け（styles.css の .wday-head）、どの行も同じ位置から始める。
+    // 予定のない日の祝日名は、見出しの欄を増やさないよう「予定なし」の側に出す
     var row=h('<div class="wday'+(k===0?" is-today":"")+(hit.length?"":" wday-empty")+'">'+
-      '<div class="wday-head tap'+dowCls+'" title="この日を時間軸で見る"><span class="num">'+(d.getMonth()+1)+'/'+d.getDate()+'</span>'+
-      '<span class="wdow">（'+DOW[d.getDay()]+'）</span><span class="wgo">›</span>'+
-      (label?'<span class="wtag">'+label+'</span>':'')+
-      (hol?'<span class="wdow'+(hit.length?' w-full':'')+'">'+escHtml(hol)+'</span>':'')+'</div>'+
+      '<div class="wday-head tap'+dowCls+'" title="この日を時間軸で見る"><span class="num wcol-date">'+(d.getMonth()+1)+'/'+d.getDate()+'</span>'+
+      '<span class="wcol-dow"><span class="wdow">（'+DOW[d.getDay()]+'）</span><span class="wgo">›</span></span>'+
+      '<span class="wcol-tag">'+(label?'<span class="wtag">'+label+'</span>':'')+'</span>'+
+      (hol&&hit.length?'<span class="wdow w-full">'+escHtml(hol)+'</span>':'')+'</div>'+
       '<div class="wday-body"></div></div>');
     row.querySelector(".wday-head").onclick=(function(key){ return function(){ openDayView(key); }; })(key);
     var body=row.querySelector(".wday-body");
     if(!hit.length){
-      body.appendChild(h('<div class="wnone">予定なし</div>'));
+      body.appendChild(h('<div class="wnone">予定なし'+(hol?'<span class="wnone-hol">'+escHtml(hol)+'</span>':'')+'</div>'));
     } else {
       hit.forEach(function(i){
         var isDue=(toLocalISO(parseItemDate(i))===key);
