@@ -33,7 +33,9 @@ function label(days) {
 }
 
 async function load(now) {
-  const cal = await Calendar.forEventsByTitle(CAL_NAME).catch(() => null);
+  // iOS は購読カレンダーの名前を、.ics の名前でなく購読 URL にすることがある。URL の形（/ics/ を含む）でも探す
+  const cals = await Calendar.forEvents();
+  const cal = cals.find((c) => c.title === CAL_NAME) || cals.find((c) => /\/ics\/[^/]+\.ics$/.test(c.title));
   if (!cal) return null;
   // 締切を過ぎた未完了の締切も購読に残るので、30日前から読む
   const events = await CalendarEvent.between(new Date(now.getTime() - 30 * DAY), new Date(now.getTime() + 14 * DAY), [cal]);
