@@ -18,12 +18,21 @@ test('itemValueProblems: 正しい項目は問題なし。範囲の端（repCoun
 test('itemValueProblems: 表の各行の「だめな値」を1つずつ見つける', () => {
   const cases = [
     [{ title: '  ' }, 'title'], [{ title: '' }, 'title'], [{ due: 'あした' }, 'due'], [{ due: undefined }, 'due'],
-    [{ start: 'x' }, 'start'], [{ repCount: -1 }, 'repCount'], [{ repDay: 99 }, 'repDay'], [{ repDay: 0 }, 'repDay'], [{ seq: -3 }, 'seq'],
+    [{ start: 'x' }, 'start'], [{ start: '2026-02-30' }, 'start'], [{ repCount: -1 }, 'repCount'], [{ repDay: 99 }, 'repDay'], [{ repDay: 0 }, 'repDay'], [{ seq: -3 }, 'seq'],
   ];
   for (const [patch, key] of cases) {
     const p = itemValueProblems({ ...ok, ...patch });
     assert.equal(p.length, 1, key);
     assert.ok(p[0].startsWith(key), p[0]);
+  }
+});
+
+test('itemValueProblems: ISO 日付の実在日と、うるう年を確認する', () => {
+  for (const due of ['2026-02-30', '2026-02-29', '1900-02-29', '2100-02-29', '2026-13-01', '2026-04-31', '2026-02-30T09:00']) {
+    assert.ok(itemValueProblems({ ...ok, due }).some((reason) => reason.startsWith('due')), due);
+  }
+  for (const due of ['2000-02-29', '2024-02-29', '2026-02-28', '2026-04-30', '2026-11-10T09:00', '2026-11-10T00:00:00.000Z']) {
+    assert.deepEqual(itemValueProblems({ ...ok, due }), [], due);
   }
 });
 
@@ -60,3 +69,4 @@ test('scripts/check-data.mjs: 問題なければ終了コード 0、あれば 1�
   assert.match(r.stdout, /合わない項目: 1 件/);
   assert.ok(!r.stdout.includes('ひみつ'));
 });
+

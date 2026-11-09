@@ -1,8 +1,19 @@
-// 締切 1 件の「値の意味」の検査（日付として読めるか・範囲）。アプリの sanitizeIncomingItems（app.js）が隔離する条件と、
-// 範囲を少し広めにそろえたもの。いまは scripts/check-data.mjs が、手元のデータで合わない項目を数えるためだけに使う。
+// 締切 1 件の「値の意味」の監査（実在する日付・範囲）。アプリの取り込み形式を保ちつつ、Date.parse が丸める不正日も見つける。
+// 数値の範囲を少し広めに確認する。いまは scripts/check-data.mjs が、手元のデータを調べるためだけに使う。
 // Worker の保存 API（PUT /api/data）には、持ち主の確認（合わない項目が 0 件）が済むまで組み込まない（docs/IMPROVEMENTS.md の 37）。
 const unset = (v) => v === undefined || v === null;
-const readable = (s) => typeof s === 'string' && !Number.isNaN(Date.parse(s));
+
+function readable(s) {
+  if (typeof s !== 'string' || Number.isNaN(Date.parse(s))) return false;
+  // Date.parse は 2026-02-30 のような日付を翌月へ丸める実装があるため、ISO 形式の日付部分を別に確かめる。
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?=$|[Tt ])/.exec(s);
+  if (!m) return true; // 既存データの ISO 以外の Date.parse 対応形式は、従来どおり許容する。
+  const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]);
+  if (month < 1 || month > 12) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day >= 1 && day <= days[month - 1];
+}
 
 /** 合わない理由の一覧（日本語の短い文。題名・メモなど締切の内容は含めない）。空なら問題なし */
 export function itemValueProblems(it) {
@@ -20,3 +31,4 @@ export function itemValueProblems(it) {
 export function startAfterDue(it) {
   return readable(it.start) && readable(it.due) && Date.parse(it.start) > Date.parse(it.due);
 }
+
