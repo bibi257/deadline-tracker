@@ -1840,8 +1840,8 @@ Worker で、アプリが隔離する条件と同じものを確かめ、合わ�
 | 値 | 確かめること | 根拠 |
 |---|---|---|
 | `title` | 空白を除いて1文字以上 | `sanitizeIncomingItems` が空の題名を隔離する |
-| `due` | `Date.parse` で読める | 同上（締切日が読めない項目を隔離する） |
-| `start` | あれば `Date.parse` で読める | アプリは読めない開始日を消して使う |
+| `due` | 通知が受け付ける形：`withZone`（`worker/src/time.js`）でタイムゾーンを補ったあと、`parsable`（`worker/src/digest.js:28`。末尾 Z の ISO 形式で `Date.parse` で読める）を満たす | アプリは締切日が読めない項目を隔離し、通知・`.ics` はこの条件に合わない項目を除く。同じ関数を使い、条件を二重に書かない |
+| `start` | あれば `due` と同じ条件 | アプリは読めない開始日を消して使う |
 | `repCount` | 0 以上 | 0 は「終わりを決めない」（`index.html:106`） |
 | `repDay` | 1〜31 | 月の日 |
 | `seq` | 0 以上 | |
@@ -1854,9 +1854,9 @@ Worker で、アプリが隔離する条件と同じものを確かめ、合わ�
 > 目的：Worker の保存 API（`PUT /api/data`）で、締切の値が日付として読めるか・範囲に収まるかも確かめ、アプリが隔離する条件とそろえる。
 > 対象ファイル：`worker/src/index.js`（`checkItemValues`）、`test/unit/worker.test.js`、`README.md`（API の表の `PUT /api/data` の説明）。
 > やること（この順に進める）：
-> 1. 項目1件を受け取り、合わない理由の配列を返す関数（例 `itemProblems(it)`）を `worker/src/index.js` に作って export する。上の表の条件をすべて入れる。この段階では、保存の検査（`checkData`）からはまだ呼ばない。`checkData` は最初の誤りで例外を投げるため、数える用途には使えない
+> 1. 項目1件を受け取り、合わない理由の配列を返す関数（例 `itemProblems(it)`）を `worker/src/index.js` に作って export する。上の表の条件を入れる（「`start` が `due` より後」の行は要確認のため、ここでは入れない。手順4で決める）。この段階では、保存の検査（`checkData`）からはまだ呼ばない。`checkData` は最初の誤りで例外を投げるため、数える用途には使えない
 > 2. `test/unit/worker.test.js` に、表の各行の「問題なしの値」と「理由が返る値」のテストを足す
-> 3. 持ち主に、D1 の今のデータで件数を数えてもらう。手順は PR の説明に書く（ファイルとしては残さない）：`curl -H "Authorization: Bearer $APP_KEY" https://<Worker>/api/data` の結果をファイルに保存し、`node --input-type=module -e` で `itemProblems` を各項目に当て、**id と理由だけ**を出す（題名・メモは出さない）。端末に未同期の変更があれば、先に同期してから数える
+> 3. 持ち主に、D1 の今のデータで件数を数えてもらう。手順は PR の説明に書く（ファイルとしては残さない）：`curl -H "Authorization: Bearer $APP_KEY" https://<Worker>/api/data` の結果を**リポジトリの外**（例 `/tmp`）のファイルに保存し、`node --input-type=module -e` で `itemProblems` を各項目に当て、**id と理由だけ**を出す（題名・メモは出さない）。端末に未同期の変更があれば、先に同期してから数える。数え終わったら、保存したファイルを消す（締切の内容を含むため。リポジトリの中に置くと、公開リポジトリにコミットされうる）
 > 4. 0件でなければ、ここで手を止めて持ち主に報告する。0件なら、`checkItemValues` から `itemProblems` を呼び、理由があれば `400` にする（エラー文は日本語で、id の先頭20文字だけを入れる。今の書き方に合わせる）。`start` が `due` より後の扱いは、手順3の結果と、登録の画面（`app.js` の保存処理）が防いでいるかを見てから決め、持ち主に確認する
 > 5. `test/unit/worker.test.js` に、`PUT /api/data` が表の不正な値で `400` になるテストを足す。今のテストで使っている正しいデータが、すべて通ることも確かめる
 > 6. `README.md` の `PUT /api/data` の説明に、確かめる内容を1行で足す
@@ -1894,11 +1894,11 @@ Worker で、アプリが隔離する条件と同じものを確かめ、合わ�
 > 目的：定時の通知（朝・夜・週次・メール）が最後に成功した時刻を D1 に記録し、持ち主がアプリの設定で確かめられるようにする。
 > 対象ファイル：`worker/src/index.js`（`SCHEMA`・ルート）、`worker/src/jobs.js`（`runScheduled` から呼ぶ仕事）、`app.js`（設定の表示）、`test/unit/jobs.test.js`、`test/unit/worker.test.js`、`README.md`。
 > やること：
-> 1. `SCHEMA` に `CREATE TABLE IF NOT EXISTS notify_last (kind TEXT PRIMARY KEY, at INTEGER NOT NULL, sent INTEGER NOT NULL)` を足す。`kind` は `morning`・`evening`・`weekly`・`mail-morning`・`mail-evening`。`at` は成功した時刻（epoch 秒）、`sent` は送った通数
-> 2. Cron の仕事が例外なく終わったら、`INSERT ... ON CONFLICT(kind) DO UPDATE` で `at` と `sent` を上書きする。**送る対象が0件で送らなかった場合（夜の再通知の `bodies` が空、`worker/src/jobs.js:52`）も成功として記録し、`sent` を 0 にする**（送らなかった日を「届かなかった」と見誤らないため）。Webhook が未設定で送らない場合（`sendDigest` が `null` を返す）は記録しない。手動の送信（`POST /api/digest`・`POST /api/mail`）は記録しない（試しに送る用途のため）
+> 1. `SCHEMA` に `CREATE TABLE IF NOT EXISTS notify_last (kind TEXT PRIMARY KEY, at INTEGER NOT NULL, sent INTEGER NOT NULL)` を足す。`kind` は Cron の式ごとの4種類：`morning`（朝の Discord）、`night`（夜の Discord。月〜土は夜の再通知、日曜は週次レビュー。同じ Cron で1つだけ送るので1種類にまとめる。`worker/src/jobs.js:152`）、`mail-night`（夜のメール）、`mail-morning`（早朝のメール）。`at` は成功した時刻（epoch 秒）。`sent` は Discord なら送った通数、メールなら送れたら 1
+> 2. Cron の仕事が例外なく終わったら、`INSERT ... ON CONFLICT(kind) DO UPDATE` で `at` と `sent` を上書きする。**送る対象が0件で送らなかった場合（夜の再通知の `bodies` が空、`worker/src/jobs.js:52`）も成功として記録し、`sent` を 0 にする**（送らなかった日を「届かなかった」と見誤らないため）。**送る手段やデータが無くて送らなかった場合は記録しない**：`sendDigest` が `null` を返す（Webhook が未設定）、`sendMail` が `null` を返す（Gmail が未設定、または締切データがまだ無い。`worker/src/jobs.js:96-108`）。手動の送信（`POST /api/digest`・`POST /api/mail`）は記録しない（試しに送る用途のため）
 > 3. 記録の書き込みに失敗しても、通知そのものの成否には影響させない（`catch` してログに出すだけ）
 > 4. 認証つきの `GET /api/notify-last` を足し、表の全行を返す。認証のない API は増やさない
-> 5. `app.js` の設定（「通知」の近く）に「前回届いた日時を確かめる」ボタンを足し、押したときだけ読む。表示は日本語で「朝の通知：11/9 6:47（3通）」のようにする。予定の時刻（`worker/src/jobs.js` の Cron の式）から 26 時間以上たっている種類は「⚠️ 届いていない可能性があります」と、色だけでなく文字でも示す（週次は 8 日）
+> 5. `app.js` の設定（「通知」の近く）に「前回届いた日時を確かめる」ボタンを足し、押したときだけ読む。表示は日本語で「朝の通知：11/9 6:47（3通）」のようにする。今の時刻と、その種類の `at`（最後に成功した時刻）の差が 26 時間以上なら「⚠️ 届いていない可能性があります」と、色だけでなく文字でも示す（どの種類も毎日1回動くので、しきい値は1つでよい。行がまだ無い種類は「記録なし」と出す）
 > 6. `test/unit/jobs.test.js` に、(1) 成功で行ができる・上書きされる (2) 0件で送らなかったときも `sent = 0` で記録される (3) 送信に失敗したときは記録されない (4) 手動の送信は記録しない、のテストを足す（`test/support/d1Shim.js` を使う）。`test/unit/worker.test.js` に、`GET /api/notify-last` が認証なしで `401` になるテストを足す
 > 7. `README.md` の API の表と、通知の節に1行ずつ足す
 > 制約：Worker は依存 0 のまま。Cron 1回あたりの D1 の書き込みは、種類ごとに1回まで。Webhook の URL・トークンをログや D1 に書かない。認証のない API を増やさない。
