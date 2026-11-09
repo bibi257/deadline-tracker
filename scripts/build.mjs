@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const out = `${root}web/`;
-const files = ['index.html', 'privacy.html', 'privacy.css', 'app.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest'];
+const files = ['index.html', 'privacy.html', 'privacy.css', 'app.js', 'theme-boot.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest'];
 
 /** 内容から決まる短い版番号（SHA-256 の先頭10文字）。同じ内容なら、いつビルドしても同じ値になる */
 export function hash10(...texts) {
@@ -17,7 +17,7 @@ export function hash10(...texts) {
   return h.digest('hex').slice(0, 10);
 }
 
-const STAMP_SOURCES = ['index.html', 'app.js', 'styles.css', 'service-worker.js'];
+const STAMP_SOURCES = ['index.html', 'app.js', 'theme-boot.js', 'styles.css', 'service-worker.js'];
 
 /**
  * 画面に出す版の日時（JST の "YYYY-MM-DD HH:MM"）。画面のファイルを最後に変えたコミットの日時なので、ファイルを変えない
@@ -85,9 +85,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (const f of files) await cp(`${root}${f}`, `${out}${f}`);
   await cp(`${root}assets`, `${out}assets`, { recursive: true });
   const text = (f) => readFile(`${root}${f}`, 'utf8');
-  const [index, app, css, sw] = await Promise.all([text('index.html'), text('app.js'), text('styles.css'), text('service-worker.js')]);
+  const [index, app, css, sw, boot] = await Promise.all([text('index.html'), text('app.js'), text('styles.css'), text('service-worker.js'), text('theme-boot.js')]);
   // ルートのファイルは `dev` のまま（手で版番号を更新しない）。web/ には、内容のハッシュと日時を自動で入れる
-  const all = hash10(index, app, css, sw);
+  const all = hash10(index, app, css, sw, boot);
   await writeFile(`${out}index.html`, versionIndexHtml(index, { app: hash10(app), css: hash10(css), all, date: versionDate(root) }));
   await writeFile(`${out}service-worker.js`, versionServiceWorker(sw, all));
   await writeFile(`${out}_headers`, buildHeaders(index));

@@ -23,11 +23,11 @@
 <meta name="build-stamp" content="dev">
 <!-- アプリの版番号（設定の「バージョン」に「2026-11-04 12:00 v4.0」のように出る）。大きな変更のときに手で上げる。決め方は docs/VERSIONS.md。
      package.json の version（4.0.0）と major.minor をそろえる（テストで確かめる） -->
-<meta name="app-version" content="4.5">
+<meta name="app-version" content="4.6">
 <title>締切トラッカー</title>
 <meta name="description" content="仕事や生活の締切を管理して、カレンダー通知とチャット通知に渡すツール">
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#F3F0E8">
+<meta name="theme-color" content="#F0F0E0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="締切">
@@ -36,6 +36,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="theme-boot.js"></script>
 <link rel="stylesheet" href="styles.css?v=dev">
 </head>
 <body>
@@ -49,6 +50,9 @@
         <div class="lvl" id="lvlBar" aria-live="polite"></div>
       </div>
       <div class="count"><b class="num" id="cntNum">0</b><span id="cntLabel">締切 7日以内</span><span class="sub" id="cntSub"></span></div>
+      <button class="gear gear--theme" id="themeBtn" type="button" aria-label="テーマ：抹茶（押すと石に切り替え）" title="テーマを切り替え">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/></svg>
+      </button>
       <button class="gear" id="gearBtn" type="button" aria-label="設定" title="設定" aria-pressed="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
