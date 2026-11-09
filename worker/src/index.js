@@ -147,7 +147,7 @@ const ARRAY_KEYS = ['items', 'templates', 'trash', 'categories', 'completions'];
 const OBJECT_KEYS = ['catReminders', 'catColors'];
 
 /** 保存するデータの形を確かめる。値の細かい検査はアプリ側（読み込み時）に任せ、ここでは壊れた形だけを弾く */
-function checkData(data) {
+export function checkData(data) {
   const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
   if (!isObj(data)) throw new HttpError(400, '締切データの形式が正しくありません');
   if (!Array.isArray(data.items)) throw new HttpError(400, 'items（締切の配列）がありません');
