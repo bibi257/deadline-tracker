@@ -285,13 +285,13 @@ header{
 
 /* ---- 今週 ---- */
 .week{margin-top:14px;border-top:1px solid var(--color-text-primary)}
-.wday{display:grid;grid-template-columns:92px 1fr;gap:10px;padding:9px 0;border-bottom:1px solid var(--color-border)}
+.wday{display:grid;grid-template-columns:92px 1fr;gap:10px;padding:9px 0 9px 6px;border-bottom:1px solid var(--color-border);border-left:3px solid transparent}
 .wday-head{padding-left:2px;display:flex;flex-wrap:wrap;align-items:baseline;align-content:flex-start;gap:0 3px}
 .wday-head.tap{cursor:pointer}
 .wday-head.tap:hover .num{text-decoration:underline;text-underline-offset:3px}
 .wday-head .num{font-family:var(--font-family-num);font-size:var(--font-size-2xl);font-weight:600}
 /* 今日：蛍光ペン風の帯は書体の上下余白で位置がずれるため、墨の反転ブロックにする */
-.wday.is-today{border-left:3px solid var(--color-text-primary);padding-left:6px;background:var(--color-background-surface)}
+.wday.is-today{border-left-color:var(--color-text-primary);background:var(--color-background-surface)}
 .wday.is-today .wday-head .num{display:inline-block;line-height:1;padding:3px 5px 2px;background:var(--color-accent);color:var(--color-on-accent)}
 .wday.is-today .wtag{border-color:var(--color-text-primary);color:var(--color-text-primary);font-weight:var(--font-weight-bold)}
 .wday-head .wgo{font-size:var(--font-size-xs);color:var(--color-text-tertiary)}
@@ -301,9 +301,9 @@ header{
 .wtag{font-size:var(--font-size-xs);border:1px solid var(--color-text-tertiary);color:var(--color-text-secondary);border-radius:var(--radius-element);padding:0 var(--spacing-1);letter-spacing:.06em;margin-top:2px}
 .wday-body{min-width:0}
 /* 予定のない日：日付・曜日・「予定なし」を1行に詰める */
-.wday.wday-empty{grid-template-columns:auto 1fr;gap:10px;padding:5px 0;align-items:center}
+.wday.wday-empty{grid-template-columns:9.5rem 1fr;gap:10px;padding:5px 0 5px 6px;align-items:center}
 .wday-empty .wday-head{flex-wrap:nowrap;align-items:center;white-space:nowrap;gap:0 var(--spacing-1)}
-.wday-empty .wday-head .num{font-size:var(--font-size-l);font-weight:var(--font-weight-medium);color:var(--color-text-secondary)}
+.wday-empty .wday-head .num{display:inline-block;line-height:1;padding:3px 5px 2px;font-size:var(--font-size-l);font-weight:var(--font-weight-medium);color:var(--color-text-secondary)}
 .wday-empty .wtag{margin-top:0}
 .wday-empty.is-today .wday-head .num{color:var(--color-background-surface);font-weight:600}
 .wday-empty .wnone{padding:0}
