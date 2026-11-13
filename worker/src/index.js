@@ -22,6 +22,7 @@
 // 認証の失敗が続いたら、IP ごとに一時的に止める。
 import { buildFeed } from './feed.js';
 import { notifyStatus } from './notify.js';
+import { itemValueProblems, startAfterDue } from './itemrules.js';
 import { buildIcs, SUBSCRIBE_HEADERS } from './ics.js';
 import { gmailConfig } from './mail.js';
 import { DIGEST_KINDS, previewDigest, previewMail, runScheduled, sendDigest, sendMail } from './jobs.js';
@@ -181,6 +182,10 @@ export function checkData(data) {
       }
     }
     checkItemValues(it);
+    // 値の意味（題名が空でない・日付が実在する・回数や日の範囲・開始が締切より後でない）。アプリが取り込むときに隔離する条件とそろえる
+    const problems = itemValueProblems(it);
+    if (startAfterDue(it)) problems.push('start が due より後');
+    if (problems.length) throw new HttpError(400, `締切の値が正しくありません：${problems[0]}（${it.id.slice(0, 20)}）`);
   }
 }
 
@@ -188,7 +193,7 @@ const REP_KINDS = ['none', 'weekly', 'biweekly', 'monthly', 'yearly'];
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const unset = (v) => v === undefined || v === null;
 
-/** 項目の型と形を確かめる（アプリが書く形だけを許す）。繰り返し・回数・基準日・取りやめた回・今日の一手・完了など。値の範囲は見ない */
+/** 項目の型と形を確かめる（アプリが書く形だけを許す）。繰り返し・回数・基準日・取りやめた回・今日の一手・完了など。値の範囲は itemrules.js で見る */
 function checkItemValues(it) {
   const bad = (k) => new HttpError(400, `締切の ${k} の形が正しくありません（${it.id.slice(0, 20)}）`);
   if (!unset(it.rep) && !REP_KINDS.includes(it.rep)) throw bad('rep');

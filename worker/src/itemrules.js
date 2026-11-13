@@ -1,6 +1,6 @@
-// 締切 1 件の「値の意味」の監査（実在する日付・範囲）。アプリの取り込み形式を保ちつつ、Date.parse が丸める不正日も見つける。
-// 数値の範囲を少し広めに確認する。いまは scripts/check-data.mjs が、手元のデータを調べるためだけに使う。
-// Worker の保存 API（PUT /api/data）には、持ち主の確認（合わない項目が 0 件）が済むまで組み込まない（docs/IMPROVEMENTS.md の 37）。
+// 締切 1 件の「値の意味」の検査（実在する日付・範囲）。アプリの取り込み形式を保ちつつ、Date.parse が丸める不正日も見つける。
+// Worker の保存 API（PUT /api/data。index.js の checkData）と、手元のデータを調べる scripts/check-data.mjs の両方が使う。
+// 保存 API への組み込みは、持ち主のデータで合わない項目が 0 件と確かめてから行った（2026-11-13。82件中 0件）。
 const unset = (v) => v === undefined || v === null;
 
 function readable(s) {
@@ -27,7 +27,7 @@ export function itemValueProblems(it) {
   return out;
 }
 
-/** 参考：開始日が締切日より後（拒否にするかは、データを見てから決める） */
+/** 開始日が締切日より後（登録の画面が防いでいる。保存 API でも拒否する） */
 export function startAfterDue(it) {
   return readable(it.start) && readable(it.due) && Date.parse(it.start) > Date.parse(it.due);
 }
