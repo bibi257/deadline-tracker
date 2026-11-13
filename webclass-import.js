@@ -143,7 +143,7 @@ function wcToItem(e,id,now){
   if(!e.due) return null;
   var title=e.title, memo="コース："+e.courseName;
   if(title.length>WC_TITLE_MAX){ memo=title+"\n"+memo; title=title.slice(0,WC_TITLE_MAX-1)+"…"; }
-  return {id:id, title:title, due:e.due.toISOString(), cat:WC_CAT, rep:"none", repCount:0, memo:memo, done:false,
+  return {id:id, title:title, due:e.due.toISOString(), wcDue:e.dueText, cat:WC_CAT, rep:"none", repCount:0, memo:memo, done:false,
           created:now.toISOString(), wc:e.key};
 }
 
@@ -164,10 +164,46 @@ function wcCleanExcluded(arr){
   var out=order.map(function(k){ return by[k]; });
   return out.length>WC_EXCLUDED_MAX ? out.slice(out.length-WC_EXCLUDED_MAX) : out; // 多すぎたら古いものから捨てる
 }
+function wcExcludeEntry(item,today){
+  if(!item || typeof item.wc!=="string") return null;
+  var due=item.wcDue;
+  if(typeof due!=="string"){
+    var d=item.due?new Date(item.due):null;
+    due=d && !isNaN(d.getTime()) ? new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Tokyo",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).format(d).replace(", "," ") : "";
+  }
+  return {k:wcHash(item.wc),due:due,at:today};
+}
+function wcAddExcluded(arr, exclusion){
+  var current=wcCleanExcluded(arr);
+  if(!exclusion || current.some(function(x){return x.k===exclusion.k;})) return current;
+  return wcCleanExcluded(current.concat([exclusion]));
+}
+/* 削除時の同じキー除外を置き換え、復元時は削除が残した状態だけを戻す。 */
+function wcExcludeForDelete(arr, item, today){
+  var exclusion=wcExcludeEntry(item,today), current=wcCleanExcluded(arr);
+  if(!exclusion) return {excluded:current, addedDue:null, prev:null};
+  var existing=null;
+  current.forEach(function(x){if(x.k===exclusion.k) existing=x;});
+  if(!existing) return {excluded:wcAddExcluded(current,exclusion), addedDue:exclusion.due, prev:null};
+  if(existing.due===exclusion.due) return {excluded:current, addedDue:null, prev:null};
+  return {excluded:wcCleanExcluded(current.filter(function(x){return x.k!==exclusion.k;}).concat([exclusion])), addedDue:exclusion.due, prev:existing};
+}
+function wcRestoreAfterDelete(arr, item, addedDue, prev){
+  if(typeof addedDue!=='string') return wcCleanExcluded(arr);
+  var exclusion=wcExcludeEntry(item,"");
+  if(!exclusion) return wcCleanExcluded(arr);
+  var current=wcCleanExcluded(arr), existing=null;
+  current.forEach(function(x){if(x.k===exclusion.k) existing=x;});
+  if(!existing || existing.due!==addedDue) return current;
+  var restored=current.filter(function(x){return x.k!==exclusion.k;});
+  if(prev && prev.k===exclusion.k && typeof prev.due==='string' && typeof prev.at==='string') restored.push(prev);
+  return wcCleanExcluded(restored);
+}
 
 /* プレビューの行を作る。items は今の締切、excluded は除外リスト、now は今の時刻。
    各行：{e: 候補, state, item（締切が変わった既存の締切）, selected（最初から選ぶか）}
    state：new（新しい）／changed（登録済みで締切だけ変わった）／excluded（除外済みで締切も同じ。登録済みで締切の変更を見送ったものは item つき）／
+   wcDue がある項目は WebClass 側の締切が変わったときだけ changed。wcDue がない旧項目は従来どおりアプリの締切と比べる。
    registered（登録済みで同じ。出さない） */
 function wcPlan(entries, items, excluded, now){
   var byKey={}, ex={};
@@ -176,15 +212,33 @@ function wcPlan(entries, items, excluded, now){
   return entries.map(function(e){
     var it=byKey[e.key];
     var x=ex[e.hash], declined=!!(x && x.due===e.dueText); // 除外したときと締切が同じ
+    if(declined) return {e:e, state:"excluded", item:it||null, selected:false};
     if(it){
-      if(!e.due || Date.parse(it.due)===e.due.getTime()) return {e:e, state:"registered", item:it, selected:false};
+      if(!e.due || (it.wcDue ? e.dueText===it.wcDue : Date.parse(it.due)===e.due.getTime())) return {e:e, state:"registered", item:it, selected:false};
       // 締切の変更を一度見送ったもの（同じ締切のまま）は、除外済みとして隠す。選べば既存の締切を更新する
-      if(declined) return {e:e, state:"excluded", item:it, selected:false};
       return {e:e, state:"changed", item:it, selected:!e.submitted && e.due>=now};
     }
-    if(declined) return {e:e, state:"excluded", item:null, selected:false};
     return {e:e, state:"new", item:null, selected:wcDefaultSelected(e,now)};
   });
+}
+
+/* 適用時点の締切一覧を使って、登録・更新・除外を決める */
+function wcApplyPlan(rows,sel,items,excluded,today){
+  var byId={}, byKey={}, ex={};
+  (items||[]).forEach(function(it){ if(it){ byId[it.id]=it; if(typeof it.wc==="string") byKey[it.wc]=it; } });
+  (excluded||[]).forEach(function(x){ if(x) ex[x.k]=x; });
+  var plan={add:[],update:[],excluded:[],skipped:0};
+  (rows||[]).forEach(function(r,i){
+    var e=r.e, current=r.item && byId[r.item.id];
+    if(sel[i] && !e.noDue){
+      if(r.item){ if(current && current.wc===e.key) plan.update.push({id:current.id,due:e.due.toISOString(),wcDue:e.dueText}); else plan.skipped++; }
+      else if(byKey[e.key]) plan.skipped++;
+      else plan.add.push(e);
+      delete ex[e.hash];
+    } else if(!sel[i]) ex[e.hash]={k:e.hash,due:e.dueText,at:today};
+  });
+  plan.excluded=wcCleanExcluded(Object.keys(ex).map(function(k){return ex[k];}));
+  return plan;
 }
 
 /* プレビュー行を安定して並べ替える。元配列は変更しない */
@@ -222,5 +276,6 @@ function wcSortRows(rows, mode){
 root.DTWebClass={WC_CAT:WC_CAT, WC_COLS:WC_COLS, WC_MAX_BYTES:WC_MAX_BYTES, WC_MAX_ROWS:WC_MAX_ROWS,
   wcDecode:wcDecode, wcParseCsv:wcParseCsv, wcNorm:wcNorm, wcKey:wcKey, wcHash:wcHash, wcCourseName:wcCourseName,
   wcParseDue:wcParseDue, wcParse:wcParse, wcFlags:wcFlags, wcDefaultSelected:wcDefaultSelected, wcToItem:wcToItem,
-  WC_EXCLUDED_MAX:WC_EXCLUDED_MAX, wcCleanExcluded:wcCleanExcluded, wcPlan:wcPlan, wcSortRows:wcSortRows};
+  WC_EXCLUDED_MAX:WC_EXCLUDED_MAX, wcCleanExcluded:wcCleanExcluded, wcExcludeEntry:wcExcludeEntry, wcAddExcluded:wcAddExcluded,
+  wcExcludeForDelete:wcExcludeForDelete, wcRestoreAfterDelete:wcRestoreAfterDelete, wcPlan:wcPlan, wcApplyPlan:wcApplyPlan, wcSortRows:wcSortRows};
 })(typeof window!=="undefined"?window:this);
