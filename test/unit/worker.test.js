@@ -506,4 +506,5 @@ test('取り込みの除外リスト（wcExcluded）: 形と上限を確かめ�
   assert.equal((await put({ ...sample(), wcExcluded: [] }, 2)).status, 200);
   assert.deepEqual((await call('GET', '/api/data')).body.data.wcExcluded, []);
   assert.equal((await put({ ...sample(), items: [{ id: 'w1', title: 't', due: '2026-11-20T00:00:00.000Z', wc: 5 }] }, 3)).status, 400, 'wc は文字列');
+  assert.equal((await put({ ...sample(), items: [{ id: 'w1', title: 't', due: '2026-11-20T00:00:00.000Z', wc: 'course\ntitle', wcDue: 5 }] }, 3)).status, 400, 'wcDue は文字列');
 });

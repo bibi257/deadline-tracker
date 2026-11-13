@@ -31,7 +31,7 @@ import { zonedData } from './time.js';
 const MIN_KEY_LENGTH = 24;
 // D1 の1行の上限は 2,000,000 バイト。日本語は1文字3バイトなので、文字数ではなくバイト数で測る（余裕を残した値）
 const MAX_DATA_BYTES = 1_900_000;
-const ITEM_STRING_KEYS = ['title', 'due', 'start', 'memo', 'cat', 'rep', 'pick', 'wc']; // 項目の中で、あれば文字列でなければならない値
+const ITEM_STRING_KEYS = ['title', 'due', 'start', 'memo', 'cat', 'rep', 'pick', 'wc', 'wcDue']; // 項目の中で、あれば文字列でなければならない値
 const SNAPSHOT_INTERVAL = 30 * 60; // 世代バックアップを残す間隔（秒）。自動同期の連続保存で増えすぎないようにする
 const SNAPSHOT_LIST_LIMIT = 200;
 const AUTH_MISS_MAX = 10; // 認証の失敗を許す回数（IP ごと）

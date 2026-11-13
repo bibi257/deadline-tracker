@@ -82,7 +82,7 @@ test('締切の項目への対応づけ: カテゴリーは「課題」、メモ
   const r = load();
   const it = W.wcToItem(byTitle(r, '課題1'), 'id1', NOW);
   assert.deepEqual({ ...it }, {
-    id: 'id1', title: '課題1', due: '2026-11-20T14:59:00.000Z', cat: '課題', rep: 'none', repCount: 0,
+    id: 'id1', title: '課題1', due: '2026-11-20T14:59:00.000Z', wcDue: '2026-11-20 23:59', cat: '課題', rep: 'none', repCount: 0,
     memo: 'コース：架空プログラミング', done: false, created: '2026-11-13T05:00:00.000Z', wc: '架空プログラミング(202600000000000001)\n課題1',
   });
   assert.deepEqual(itemValueProblems(it), [], '保存 API の値の検査を通る');
@@ -164,6 +164,95 @@ test('締切の変更を見送ったもの: 除外リストに同じ締切で入
   assert.equal(p2.item.id, 'x2', '選べば既存の締切を更新できる');
   const p3 = Array.from(W.wcPlan(r.entries, items, [{ k: e2.hash, due: '2026-11-01 00:00', at: '2026-11-01' }], NOW)).find((p) => p.e === e2);
   assert.equal(p3.state, 'changed', '見送ったときと締切がまた違えば、もう一度出す');
+});
+
+test('アプリで締切を動かしても同じCSV締切なら登録済み、WebClass側の変更だけchanged。wcDueなしは旧判定', () => {
+  const r = load(), e = byTitle(r, '学生アンケート');
+  assert.equal(Array.from(W.wcPlan([e], [{ id: 'x', wc: e.key, due: '2026-11-30T00:00:00Z', wcDue: e.dueText }], [], NOW))[0].state, 'registered');
+  assert.equal(Array.from(W.wcPlan([e], [{ id: 'x', wc: e.key, due: '2026-11-30T00:00:00Z', wcDue: '2026-10-01 00:00' }], [], NOW))[0].state, 'changed');
+  assert.equal(Array.from(W.wcPlan([e], [{ id: 'x', wc: e.key, due: '2026-11-30T00:00:00Z' }], [], NOW))[0].state, 'changed');
+  const excluded = [{ k: e.hash, due: '2026-10-01 00:00', at: '2026-11-13' }];
+  const plan = W.wcApplyPlan([{ e, item: null }], [true], [], excluded, '2026-11-14');
+  assert.deepEqual(JSON.parse(JSON.stringify(plan.excluded)), []);
+});
+
+test('wcDue がある登録済み項目は CSV の締切なし・解析不能を登録済みとする', () => {
+  const e = { ...byTitle(load(), '学生アンケート'), due: null, dueText: '' };
+  const row = Array.from(W.wcPlan([e], [{ id: 'x', wc: e.key, due: '2026-11-30T00:00:00Z', wcDue: '2026-10-01 00:00' }], [], NOW))[0];
+  assert.equal(row.state, 'registered');
+});
+
+test('既存の見送り除外は次の同じ CSV 締切でも除外済みのまま', () => {
+  const e = byTitle(load(), '学生アンケート');
+  const item = { id: 'x', wc: e.key, wcDue: '2026-10-01 00:00', due: '2026-11-30T00:00:00Z' };
+  const exclusion = { k: e.hash, due: e.dueText, at: '2026-11-13' };
+  const deletedExclusion = W.wcExcludeEntry(item, '2026-11-14');
+  const preserved = W.wcAddExcluded([exclusion], deletedExclusion);
+  assert.deepEqual(JSON.parse(JSON.stringify(preserved)), [exclusion]);
+  assert.equal(Array.from(W.wcPlan([e], [], preserved, NOW))[0].state, 'excluded');
+});
+
+test('既存項目との重複復元でも削除時に追加した除外を解除して登録済みにする', () => {
+  const e = byTitle(load(), '学生アンケート');
+  const item = { id: 'x', wc: e.key, wcDue: e.dueText, due: '2026-11-30T00:00:00Z' };
+  const deleted = W.wcExcludeForDelete([], item, '2026-11-14');
+  assert.equal(Array.from(W.wcPlan([e], [item], deleted.excluded, NOW))[0].state, 'excluded');
+  const restored = W.wcRestoreAfterDelete(deleted.excluded, item, deleted.addedDue, deleted.prev);
+  assert.deepEqual(JSON.parse(JSON.stringify(restored)), []);
+  assert.equal(Array.from(W.wcPlan([e], [item], restored, NOW))[0].state, 'registered');
+});
+
+test('適用計画は最新itemsで更新し、重複登録と消えた更新を飛ばし、未選択は除外する', () => {
+  const r=load(), e1=byTitle(r,'課題1'), e2=byTitle(r,'振り返り\nミニレポート'), e3=byTitle(r,'学生アンケート');
+  const rows=[{e:e1,item:{id:'old'}},{e:e2,item:null},{e:e3,item:{id:'gone'}}];
+  const p=W.wcApplyPlan(rows,[true,true,true],[{id:'old',wc:e1.key},{id:'exists',wc:e2.key}],[], '2026-11-13');
+  assert.deepEqual(JSON.parse(JSON.stringify(p.update)),[{id:'old',due:e1.due.toISOString(),wcDue:e1.dueText}]);
+  assert.equal(p.add.length,0); assert.equal(p.skipped,2);
+  const p2=W.wcApplyPlan(rows,[true,false,false],[{id:'old',wc:e1.key}], [{k:e1.hash,due:'old',at:'2026-11-12'}], '2026-11-13');
+  assert.equal(p2.update[0].id,'old');
+  assert.deepEqual(JSON.parse(JSON.stringify(p2.excluded)),[
+    {k:e2.hash,due:e2.dueText,at:'2026-11-13'},
+    {k:e3.hash,due:e3.dueText,at:'2026-11-13'}
+  ]);
+});
+
+test('削除・復元は既存の異なる締切の見送りを置き換えて復元し、後からの変更を保つ', () => {
+  const e=byTitle(load(),'課題1'), item=W.wcToItem(e,'x',NOW);
+  const deleted=W.wcExcludeForDelete([],item,'2026-11-13');
+  assert.equal(deleted.addedDue,e.dueText);
+  assert.equal(deleted.prev,null);
+  assert.deepEqual(JSON.parse(JSON.stringify(deleted.excluded)),[{k:e.hash,due:e.dueText,at:'2026-11-13'}]);
+  assert.equal(JSON.stringify(deleted.excluded).includes(e.title),false);
+  assert.equal(Array.from(W.wcPlan([e], [], deleted.excluded, NOW))[0].state,'excluded');
+  const restoredExcluded=W.wcRestoreAfterDelete(deleted.excluded,item,deleted.addedDue,deleted.prev);
+  assert.deepEqual(JSON.parse(JSON.stringify(restoredExcluded)),[]);
+  assert.equal(Array.from(W.wcPlan([e], [item], restoredExcluded, NOW))[0].state,'registered');
+  assert.equal(Array.from(W.wcPlan([e], [item], deleted.excluded, NOW))[0].state,'excluded', '除外が残れば登録済みにならない');
+
+  const eB={...e,dueText:'2026-11-21 23:59'};
+  const itemA={...item,wcDue:e.dueText};
+  const declined={k:e.hash,due:eB.dueText,at:'2026-11-13'};
+  const deleteWithDecline=W.wcExcludeForDelete([declined],itemA,'2026-11-14');
+  assert.equal(deleteWithDecline.addedDue,e.dueText);
+  assert.deepEqual(JSON.parse(JSON.stringify(deleteWithDecline.prev)),declined);
+  assert.deepEqual(JSON.parse(JSON.stringify(deleteWithDecline.excluded)),[{k:e.hash,due:e.dueText,at:'2026-11-14'}]);
+  assert.equal(Array.from(W.wcPlan([e],[],deleteWithDecline.excluded,NOW))[0].state,'excluded');
+  const restoredDecline=W.wcRestoreAfterDelete(deleteWithDecline.excluded,itemA,deleteWithDecline.addedDue,deleteWithDecline.prev);
+  assert.deepEqual(JSON.parse(JSON.stringify(restoredDecline)),[declined]);
+  assert.equal(Array.from(W.wcPlan([eB],[itemA],restoredDecline,NOW))[0].state,'excluded');
+
+  const laterDecline=[{k:e.hash,due:eB.dueText,at:'2026-11-15'}];
+  assert.deepEqual(JSON.parse(JSON.stringify(W.wcRestoreAfterDelete(laterDecline,itemA,e.dueText,null))),laterDecline);
+  const same=W.wcExcludeForDelete([declined],{...itemA,wcDue:eB.dueText},'2026-11-16');
+  assert.equal(same.addedDue,null);
+  assert.deepEqual(JSON.parse(JSON.stringify(same.excluded)),[declined]);
+  assert.deepEqual(JSON.parse(JSON.stringify(W.wcRestoreAfterDelete(same.excluded,itemA,same.addedDue,same.prev))),[declined]);
+  assert.deepEqual(JSON.parse(JSON.stringify(W.wcRestoreAfterDelete([declined],itemA,undefined,undefined))),[declined],'古い trash は記録を保つ');
+});
+
+test('wcExcludeEntry は wcDue がないとき item.due を JST の分までにし、日付境界も正しく扱う', () => {
+  const item = { wc: 'course\ntitle', due: '2026-11-13T15:00:00.000Z' };
+  assert.equal(W.wcExcludeEntry(item, '2026-11-14').due, '2026-11-14 00:00');
 });
 
 test('プレビューの並び替え: 各モード・締切なし・同値の順序・入力を変更しない', () => {

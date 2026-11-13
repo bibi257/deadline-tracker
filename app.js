@@ -1412,7 +1412,11 @@ function deleteItem(it){
   lastDeleted={item:db.items[idx], index:idx};
   db.items.splice(idx,1);
   var trashId="tr"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-  db.trash.push({trashId:trashId, item:lastDeleted.item, deletedAt:new Date().toISOString()});
+  var wcDelete=WC.wcExcludeForDelete(db.wcExcluded,lastDeleted.item,toLocalISO(new Date()));
+  db.wcExcluded=wcDelete.excluded;
+  lastDeleted.wcExclusionAddedDue=wcDelete.addedDue;
+  lastDeleted.wcExclusionPrev=wcDelete.prev;
+  db.trash.push({trashId:trashId, item:lastDeleted.item, deletedAt:new Date().toISOString(), wcExclusionAddedDue:wcDelete.addedDue, wcExclusionPrev:wcDelete.prev});
   if(db.trash.length>30) db.trash.shift(); // 上限を超えたら最も古いものから消える
   save(); render();
   playSfx(techoStyle()?"crumple":"remove"); // 手帳風：紙を丸める「くしゃっ」
@@ -1423,6 +1427,7 @@ function undoDelete(){
   if(!lastDeleted) return;
   var pos=Math.min(lastDeleted.index, db.items.length);
   db.items.splice(pos,0,lastDeleted.item);
+  db.wcExcluded=WC.wcRestoreAfterDelete(db.wcExcluded,lastDeleted.item,lastDeleted.wcExclusionAddedDue,lastDeleted.wcExclusionPrev);
   // ゴミ箱に入れた直後の同一項目も取り除く(id一致・末尾付近を優先して探す)
   for(var i=db.trash.length-1;i>=0;i--){
     if(db.trash[i].item.id===lastDeleted.item.id){ db.trash.splice(i,1); break; }
@@ -1465,11 +1470,13 @@ function restoreFromTrash(trashId){
   if(idx<0) return;
   var entry=db.trash[idx];
   if(db.items.some(function(x){ return x.id===entry.item.id; })){
+    db.wcExcluded=WC.wcRestoreAfterDelete(db.wcExcluded,entry.item,entry.wcExclusionAddedDue,entry.wcExclusionPrev);
     toast("同じ締切が既に一覧にあるため、復元しませんでした");
     db.trash.splice(idx,1); save(); render();
     return;
   }
   db.items.push(entry.item);
+  db.wcExcluded=WC.wcRestoreAfterDelete(db.wcExcluded,entry.item,entry.wcExclusionAddedDue,entry.wcExclusionPrev);
   db.trash.splice(idx,1);
   save(); render();
   if(techoStyle()) playSfx("unfold"); // 手帳風：紙を広げる「かさっ」
@@ -2584,12 +2591,15 @@ function openWebclassPreview(parsed){
   goBtn.onclick=function(){
     var c=counts();
     if(!c.picked && !c.rest){ dlg.close(); return; }
-    if(!confirm((c.picked?c.picked+"件を登録します。":"登録する項目はありません。")+(c.rest?"\n選ばなかった "+c.rest+"件は、次回から出しません。":"")+"\nよろしいですか？")) return;
+    var newCount=0, updateCount=0;
+    rows.forEach(function(r,i){ if(sel[i]&&!r.e.noDue){ if(r.item) updateCount++; else newCount++; } });
+    var confirmParts=[]; if(newCount) confirmParts.push("新しく登録 "+newCount+"件"); if(updateCount) confirmParts.push("締切を更新 "+updateCount+"件");
+    if(!confirm((confirmParts.length?confirmParts.join("・")+"します。":"登録・更新する項目はありません。")+(c.rest?"\n選ばなかった "+c.rest+"件は、次回から出しません。":"")+"\nよろしいですか？")) return;
     var out=webclassApply(rows, sel, now);
     dlg.close();
-    toast("WebClass から "+out.added+"件を登録"+(out.updated?"・"+out.updated+"件の締切を更新":"")+"しました");
+    toast("WebClass から "+out.added+"件を登録"+(out.updated?"・"+out.updated+"件の締切を更新":"")+"しました"+(out.skipped?"。"+out.skipped+"件は他の端末ですでに登録・削除済みのため飛ばしました":""));
   };
-  dlg.addEventListener("close",function(){ dlg.remove(); });
+  dlg.addEventListener("close",function(){ dlg.remove(); runDeferredRefresh(); });
   document.body.appendChild(dlg);
   draw();
   dlg.showModal();
@@ -2601,26 +2611,13 @@ function wcRemain(due,now){
 }
 /* 選んだものを登録（締切が変わったものは既存の締切の日時を更新）し、選ばなかったものを除外リストに入れる */
 function webclassApply(rows, sel, now){
-  var added=0, updated=0, today=toLocalISO(now), ex={};
-  db.wcExcluded.forEach(function(x){ ex[x.k]=x; });
-  rows.forEach(function(r,i){
-    var e=r.e;
-    if(sel[i] && !e.noDue){
-      if(r.item){ r.item.due=e.due.toISOString(); r.item.seq=(r.item.seq||0)+1; updated++; } // 登録済みで締切が変わったもの
-      else {
-        var id="d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)+added.toString(36);
-        db.items.push(WC.wcToItem(e,id,now)); added++;
-      }
-      delete ex[e.hash];
-    } else if(!sel[i]){
-      // 選ばなかったもの（締切の変更を見送ったものも含む）は、次回から出さない。締切が変われば、また出る
-      ex[e.hash]={k:e.hash, due:e.dueText, at:today};
-    }
-  });
+  var added=0, updated=0, plan=WC.wcApplyPlan(rows,sel,db.items,db.wcExcluded,toLocalISO(now));
+  plan.update.forEach(function(u){var it=db.items.find(function(x){return x.id===u.id;}); if(it){it.due=u.due;it.wcDue=u.wcDue;it.seq=(it.seq||0)+1;updated++;}else plan.skipped++;});
+  plan.add.forEach(function(e){var id="d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)+added.toString(36);db.items.push(WC.wcToItem(e,id,now));added++;});
   if(added && db.categories.indexOf(WC.WC_CAT)<0) db.categories.push(WC.WC_CAT); // 取り込むカテゴリーが無ければ足す
-  db.wcExcluded=WC.wcCleanExcluded(Object.keys(ex).map(function(k){ return ex[k]; }));
+  db.wcExcluded=plan.excluded;
   save(); scheduleAutoSync(); render();
-  return {added:added, updated:updated};
+  return {added:added, updated:updated, skipped:plan.skipped};
 }
 function feedUrlSection(){
   var el=h('<div class="sec"><h3>カレンダーで購読する</h3>'+
@@ -3240,7 +3237,7 @@ function askOverwriteDialog(losses){
       '<div class="dlg-acts"><button class="btn" value="overwrite" type="submit">この端末の内容で上書きする</button>'+
       '<button class="btn fill" value="pull" type="submit" autofocus>保存先の内容を読み込む（おすすめ）</button></div>'+
       '</form></dialog>');
-    el.addEventListener("close",function(){ var ok=el.returnValue==="overwrite"; el.remove(); resolve(ok); });
+    el.addEventListener("close",function(){ var ok=el.returnValue==="overwrite"; el.remove(); runDeferredRefresh(); resolve(ok); });
     document.body.appendChild(el);
     el.showModal();
   });
@@ -4590,7 +4587,7 @@ var _refreshing=null, _srvState="fresh", _deferRefresh=false, _lastRefreshAt=0;
 var SRV_WAIT_MS=4000;
 function editingBusy(){
   var a=document.activeElement;
-  return !!(dlg && dlg.open) || !!(a && main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+  return !!(document.querySelector("dialog[open]")) || !!(a && main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
 }
 function srvBarText(state){
   if(state==="loading") return "保存先の最新の内容を読み込んでいます…";
