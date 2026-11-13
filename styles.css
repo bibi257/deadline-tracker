@@ -905,3 +905,9 @@ main[inert],.fab[inert]{opacity:.55}
 @media (hover:hover) and (pointer:fine){
   .btn:hover,.chip:hover,.fab:hover,.gear:hover,.nav:hover,.tab:hover,.act.main:hover{animation:btn-hop var(--motion-duration-hop) ease-out}
 }
+/* カテゴリーのアイコン：文字の高さに合わせた小さな画像（行の高さを変えない） */
+.cat-ico{display:inline-block;width:1.15em;height:1.15em;margin-right:var(--spacing-1);vertical-align:-.2em;border-radius:var(--radius-inner);object-fit:cover;flex-shrink:0}
+.witem .cat-ico{align-self:center;margin-right:0}
+.ico-row{flex-basis:100%;display:flex;align-items:center;gap:var(--spacing-2);font-size:var(--font-size-m);color:var(--color-text-secondary)}
+.ico-row .cat-ico{width:24px;height:24px;margin-right:0}
+.ico-row .act{border:1px solid var(--color-border);padding:2px var(--spacing-2)}

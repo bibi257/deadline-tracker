@@ -443,3 +443,29 @@ test('同時保存: 同じ rev を If-Match に付けた2つの保存が確認�
   assert.deepEqual([c.status, d.status].sort(), [201, 409]);
   assert.equal((await w.call('GET', '/api/data')).body.rev, 1);
 });
+
+test('カテゴリーのアイコン: PNG・WebP の data URL で上限以下なら保存できる。SVG・http の URL・大きすぎる値・文字列でない値は 400', async () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  const { call } = setup();
+  const put = (catIcons, rev) => call('PUT', '/api/data', { headers: { 'If-Match': String(rev) }, body: { ...sample(), catIcons } });
+  assert.equal((await put({ 課題: PNG, 仕事: 'data:image/webp;base64,UklGRg==' }, 0)).status, 201);
+  assert.deepEqual((await call('GET', '/api/data')).body.data.catIcons, { 課題: PNG, 仕事: 'data:image/webp;base64,UklGRg==' });
+  for (const bad of [
+    { a: 'data:image/svg+xml;base64,PHN2Zz4=' }, { a: 'https://example.com/x.png' }, { a: 'data:image/png;base64,iVBOR"onerror=x' },
+    { a: `data:image/png;base64,${'A'.repeat(11000)}` }, { a: 5 }, ['x'],
+  ]) assert.equal((await put(bad, 1)).status, 400, JSON.stringify(bad).slice(0, 40));
+  assert.equal((await put(Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`c${i}`, PNG])), 1)).status, 400, '多すぎる');
+});
+
+test('カテゴリーのアイコン: catIcons を送らない古い版のアプリが保存しても、保存してあるアイコンは残る。新しい版が {} を送れば消える', async () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  const { call } = setup();
+  const put = (body, rev) => call('PUT', '/api/data', { headers: { 'If-Match': String(rev) }, body });
+  assert.equal((await put({ ...sample(), catIcons: { 課題: PNG } }, 0)).status, 201);
+  assert.equal((await put(sample(2), 1)).status, 200); // 古い版：catIcons なし
+  const got = (await call('GET', '/api/data')).body.data;
+  assert.deepEqual(got.catIcons, { 課題: PNG });
+  assert.equal(got.items.length, 2, 'ほかの内容は送られたもので置き換わる');
+  assert.equal((await put({ ...sample(), catIcons: {} }, 2)).status, 200);
+  assert.deepEqual((await call('GET', '/api/data')).body.data.catIcons, {});
+});

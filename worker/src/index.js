@@ -144,7 +144,11 @@ async function authorize(env, request) {
 // ---- データの検証 ----
 
 const ARRAY_KEYS = ['items', 'templates', 'trash', 'categories', 'completions'];
-const OBJECT_KEYS = ['catReminders', 'catColors'];
+const OBJECT_KEYS = ['catReminders', 'catColors', 'catIcons'];
+// カテゴリーのアイコン（アプリが端末内で 64px に縮小した PNG・WebP の data URL）。上限と形は app-calc.js の isIconData と同じ
+const ICON_MAX_CHARS = 11000;
+const ICON_RE = /^data:image\/(?:png|webp);base64,[A-Za-z0-9+/]+=*$/;
+const ICON_MAX_COUNT = 100;
 
 /** 保存するデータの形を確かめる。値の細かい検査はアプリ側（読み込み時）に任せ、ここでは壊れた形だけを弾く */
 export function checkData(data) {
@@ -156,6 +160,13 @@ export function checkData(data) {
   }
   for (const k of OBJECT_KEYS) {
     if (data[k] !== undefined && !isObj(data[k])) throw new HttpError(400, `${k} はオブジェクトにしてください`);
+  }
+  if (data.catIcons !== undefined) {
+    const icons = Object.values(data.catIcons);
+    if (icons.length > ICON_MAX_COUNT) throw new HttpError(400, 'カテゴリーのアイコンが多すぎます');
+    for (const v of icons) {
+      if (typeof v !== 'string' || v.length > ICON_MAX_CHARS || !ICON_RE.test(v)) throw new HttpError(400, 'カテゴリーのアイコンの形が正しくありません');
+    }
   }
   if (data.updatedAt !== undefined && typeof data.updatedAt !== 'string') throw new HttpError(400, 'updatedAt は文字列にしてください');
   const ids = new Set();
@@ -222,13 +233,25 @@ async function putData(env, request, url) {
 
   const data = await readJson(request, MAX_DATA_BYTES + 1000);
   checkData(data);
-  const text = JSON.stringify(data);
+  let text = JSON.stringify(data);
   if (utf8Bytes(text, MAX_DATA_BYTES) > MAX_DATA_BYTES) throw new HttpError(413, '締切データが大きすぎます');
 
   const t = now(env);
   const cur = await env.DB.prepare('SELECT json, rev FROM docs WHERE id = ?').bind(DOC_ID).first();
   if (!force && (cur ? cur.rev : 0) !== base) {
     throw new HttpError(409, '他の端末の更新があります。読み込んでからやり直してください', { rev: cur ? cur.rev : 0 });
+  }
+
+  // アイコンを知らない古い版のアプリは、catIcons を送らない。そのまま置き換えると全端末のアイコンが消えるので、
+  // 送られてこなかったときだけ、保存してある分を引き継ぐ（新しい版は空でも {} を送るので、消す操作はそのまま効く）。
+  // 保存してある JSON の解析は、アイコンがあるときだけ行う（CPU 時間の節約）
+  if (cur && data.catIcons === undefined && cur.json.includes('"catIcons":')) {
+    const kept = JSON.parse(cur.json).catIcons;
+    if (kept && typeof kept === 'object' && Object.keys(kept).length) {
+      data.catIcons = kept;
+      text = JSON.stringify(data);
+      if (utf8Bytes(text, MAX_DATA_BYTES) > MAX_DATA_BYTES) throw new HttpError(413, '締切データが大きすぎます');
+    }
   }
 
   if (!cur) {
