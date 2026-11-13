@@ -469,3 +469,25 @@ test('カテゴリーのアイコン: catIcons を送らない古い版のアプ
   assert.equal((await put({ ...sample(), catIcons: {} }, 2)).status, 200);
   assert.deepEqual((await call('GET', '/api/data')).body.data.catIcons, {});
 });
+
+test('保存 API: 値の意味も確かめる。題名が空・実在しない日付・範囲外の回数や日・開始が締切より後は 400。範囲の端と正しいデータは通る', async () => {
+  const { call } = setup();
+  const item = { id: 'v1', title: 't', due: '2026-11-20T08:00:00.000Z' };
+  let rev = 0;
+  const put = async (patch) => call('PUT', '/api/data', { headers: { 'If-Match': String(rev) }, body: { items: [{ ...item, ...patch }] } });
+  for (const [patch, word] of [
+    [{ title: '  ' }, 'title'], [{ due: '2026-02-30T00:00:00.000Z' }, 'due'], [{ due: 'あした' }, 'due'], [{ start: '2026-13-01T00:00:00.000Z' }, 'start'],
+    [{ repCount: -1 }, 'repCount'], [{ repDay: 0 }, 'repDay'], [{ repDay: 32 }, 'repDay'], [{ seq: -1 }, 'seq'],
+    [{ start: '2026-11-21T00:00:00.000Z' }, 'start が due より後'],
+  ]) {
+    const r = await put(patch);
+    assert.equal(r.status, 400, JSON.stringify(patch));
+    assert.ok(r.body.error.includes(word) && r.body.error.includes('v1'), r.body.error);
+    assert.ok(!r.body.error.includes('あした'), '値そのものは返さない');
+  }
+  for (const patch of [{}, { start: '2026-11-19T08:00:00.000Z', repCount: 0, repDay: 31, seq: 0 }, { repDay: 1, repCount: 12, rep: 'monthly' }, { start: item.due }]) {
+    const r = await put(patch);
+    assert.ok(r.status === 200 || r.status === 201, JSON.stringify(patch));
+    rev += 1;
+  }
+});

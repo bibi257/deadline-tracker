@@ -36,7 +36,7 @@ test('itemValueProblems: ISO 日付の実在日と、うるう年を確認する
   }
 });
 
-test('startAfterDue: 開始日が締切日より後のときだけ true（参考の数え）', () => {
+test('startAfterDue: 開始日が締切日より後のときだけ true', () => {
   assert.equal(startAfterDue({ ...ok, start: '2026-11-11T00:00:00.000Z' }), true);
   assert.equal(startAfterDue({ ...ok, start: '2026-11-09T00:00:00.000Z' }), false);
   assert.equal(startAfterDue(ok), false);
@@ -45,7 +45,7 @@ test('startAfterDue: 開始日が締切日より後のときだけ true（参考
 test('checkFile: 合わない項目の id と理由だけを返し、題名・メモは含めない', () => {
   const r = checkFile({ items: [ok, { ...ok, id: 'b2-ひみつの題名', title: 'ひみつの題名', memo: 'ひみつのメモ', due: 'x', repDay: 99 }, { ...ok, id: 'c3', start: '2026-12-01T00:00:00.000Z' }] });
   assert.equal(r.total, 3);
-  assert.equal(r.bad.length, 1);
+  assert.equal(r.bad.length, 2, '開始が締切より後の項目も、保存 API が断るので数える');
   assert.equal(r.bad[0].id, 'b2-ひみつの題名');
   assert.deepEqual(r.bad[0].reasons.map((s) => s.split(' ')[0]), ['due', 'repDay']);
   assert.equal(r.startAfterDue, 1);

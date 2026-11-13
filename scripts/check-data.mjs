@@ -13,15 +13,18 @@ export function checkFile(data) {
   let after = 0;
   items.forEach((it, i) => {
     const id = typeof it?.id === 'string' ? it.id.slice(0, 20) : `(${i + 1} 番目・id なし)`;
-    const reasons = [];
-    try {
-      checkData({ items: [it] }); // いまの Worker の検査（型と形）
-    } catch (e) {
-      reasons.push(e?.message ? String(e.message).replace(/（[^）]*）$/, '') : '形式が正しくない');
+    // 値の意味の検査は、理由をすべて挙げる（保存 API は最初の1つだけを返す）
+    const reasons = it && typeof it === 'object' ? itemValueProblems(it) : [];
+    if (it && typeof it === 'object' && startAfterDue(it)) {
+      reasons.push('start が due より後');
+      after += 1;
     }
-    if (it && typeof it === 'object') {
-      reasons.push(...itemValueProblems(it));
-      if (startAfterDue(it)) after += 1;
+    if (!reasons.length) {
+      try {
+        checkData({ items: [it] }); // Worker の保存 API と同じ検査（型と形）
+      } catch (e) {
+        reasons.push(e?.message ? String(e.message).replace(/（[^）]*）$/, '') : '形式が正しくない');
+      }
     }
     if (reasons.length) bad.push({ id, reasons });
   });
@@ -45,6 +48,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const r = checkFile(data?.items ? data : data?.data);
   console.log(`締切 ${r.total} 件のうち、合わない項目: ${r.bad.length} 件`);
   for (const b of r.bad) console.log(`- ${b.id}: ${b.reasons.join(' / ')}`);
-  console.log(`参考：開始日が締切日より後の項目: ${r.startAfterDue} 件`);
+  console.log(`うち、開始日が締切日より後の項目: ${r.startAfterDue} 件`);
   process.exit(r.bad.length ? 1 : 0);
 }
