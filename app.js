@@ -2,7 +2,8 @@
 "use strict";
 
 /* 画面に依存しない計算は app-calc.js（index.html で先に読む）。今までどおりの名前で受け取る */
-var pad=DTCalc.pad, toLocalISO=DTCalc.toLocalISO, startOfDay=DTCalc.startOfDay, daysBetween=DTCalc.daysBetween, parseItemDate=DTCalc.parseItemDate, refDate=DTCalc.refDate, isRepeating=DTCalc.isRepeating, anchorDayOf=DTCalc.anchorDayOf, nextOccurrence=DTCalc.nextOccurrence, prevOccurrence=DTCalc.prevOccurrence, advanceRepeating=DTCalc.advanceRepeating, expandOccurrences=DTCalc.expandOccurrences, monthEndRule=DTCalc.monthEndRule, toHalfWidth=DTCalc.toHalfWidth;
+var pad=DTCalc.pad, toLocalISO=DTCalc.toLocalISO, startOfDay=DTCalc.startOfDay, daysBetween=DTCalc.daysBetween, parseItemDate=DTCalc.parseItemDate, refDate=DTCalc.refDate, isRepeating=DTCalc.isRepeating, anchorDayOf=DTCalc.anchorDayOf, nextOccurrence=DTCalc.nextOccurrence, prevOccurrence=DTCalc.prevOccurrence, advanceRepeating=DTCalc.advanceRepeating, expandOccurrences=DTCalc.expandOccurrences, monthEndRule=DTCalc.monthEndRule, toHalfWidth=DTCalc.toHalfWidth,
+    ICON_PX=DTCalc.ICON_PX, isIconData=DTCalc.isIconData, cleanCatIcons=DTCalc.cleanCatIcons, iconCropRect=DTCalc.iconCropRect, encodeIcon=DTCalc.encodeIcon;
 
 /* ========== 保存領域（localStorage が使えない環境ではメモリに退避） ========== */
 var KEY="deadline-tracker-v1";
@@ -105,7 +106,7 @@ function secretGet(name){
   });
 }
 
-var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},catColors:Object.create(null),settings:{dayHour:9},updatedAt:null};
+var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},catColors:Object.create(null),catIcons:Object.create(null),settings:{dayHour:9},updatedAt:null};
 /* 読めなかった保存データの元の文字列。次に保存して上書きされる前に退避する（writeDb を参照） */
 var _unreadableRaw=null;
 function load(){
@@ -132,6 +133,7 @@ function load(){
     if(d&&Array.isArray(d.categories)&&d.categories.length) db.categories=d.categories;
     if(d) db.catReminders=cleanCatReminders(d.catReminders);
     if(d) db.catColors=cleanCatColors(d.catColors);
+    if(d) db.catIcons=cleanCatIcons(d.catIcons);
     if(d&&d.settings) db.settings=Object.assign(db.settings,d.settings);
     if(d&&d.updatedAt) db.updatedAt=d.updatedAt;
     if(d) adoptCompletions(d);
@@ -822,7 +824,7 @@ function filterBar(){
   var bar=h('<div class="filters"></div>');
   var cats=["ALL"].concat(db.categories);
   cats.forEach(function(c){
-    var b=h('<button class="chip">'+(c==="ALL"?"":swatch(catColor(c)))+escHtml(c==="ALL"?"すべて":c)+'</button>');
+    var b=h('<button class="chip">'+(c==="ALL"?"":swatch(catColor(c))+catIcon(c))+escHtml(c==="ALL"?"すべて":c)+'</button>');
     b.setAttribute("aria-pressed", filter===c?"true":"false");
     b.onclick=function(){ filter=c; render(); };
     bar.appendChild(b);
@@ -970,6 +972,60 @@ function displayColor(hex){
 }
 function catColor(cat){ return displayColor(catColorRaw(cat)); }
 function itemColor(it){ return displayColor(itemColorRaw(it)); }
+/* カテゴリーのアイコン（未設定なら何も出さない）。値は isIconData を通ったものだけなので、属性にそのまま入れてよい */
+function catIcon(cat){
+  var v=db.catIcons[cat||"その他"];
+  return (v && isIconData(v)) ? '<img class="cat-ico" src="'+v+'" alt="" aria-hidden="true">' : '';
+}
+/* 設定のカテゴリ行に出す、アイコンの欄。未設定なら「画像を選ぶ」、設定済みならサムネイルと「変える」「消す」 */
+var ICON_FILE_MAX=10*1024*1024;
+var ICON_TYPES=["image/png","image/jpeg","image/webp","image/gif"];
+function catIconRow(c){
+  var has=!!db.catIcons[c];
+  var el=h('<div class="ico-row">アイコン：'+(has?catIcon(c):'')+'<input type="file" accept="'+ICON_TYPES.join(",")+'" hidden></div>');
+  var input=el.querySelector("input");
+  var pick=h('<button type="button" class="act">'+(has?"変える":"画像を選ぶ")+'</button>');
+  pick.setAttribute("aria-label","「"+c+"」のアイコンの"+(has?"画像を変える":"画像を選ぶ"));
+  pick.onclick=function(){ input.click(); };
+  el.appendChild(pick);
+  if(has){
+    var del=h('<button type="button" class="act">消す</button>');
+    del.setAttribute("aria-label","「"+c+"」のアイコンを消す");
+    del.onclick=function(){ delete db.catIcons[c]; save(); scheduleAutoSync(); render(); toast("「"+c+"」のアイコンを消しました"); };
+    el.appendChild(del);
+  }
+  input.onchange=function(){
+    var f=input.files && input.files[0]; input.value="";
+    if(!f) return;
+    makeCatIcon(f).then(function(data){
+      db.catIcons[c]=data; save(); scheduleAutoSync(); render();
+      toast("「"+c+"」のアイコンを設定しました");
+    }, function(e){ toast(e && e.message ? e.message : "この画像は使えませんでした"); });
+  };
+  return el;
+}
+/* 選んだ画像を、端末の中で 64×64px に中央で切り抜いて縮小し、data URL にする（描き直すので、写真の位置情報は残らない） */
+function makeCatIcon(file){
+  if(ICON_TYPES.indexOf(file.type)<0) return Promise.reject(new Error("PNG・JPEG・WebP・GIF の画像を選んでください"));
+  if(file.size>ICON_FILE_MAX) return Promise.reject(new Error("画像が大きすぎます（10MB まで）"));
+  return new Promise(function(resolve,reject){
+    var url=URL.createObjectURL(file), img=new Image();
+    img.onload=function(){
+      try{
+        var r=iconCropRect(img.naturalWidth,img.naturalHeight);
+        if(!r.side) throw new Error("この画像は読み取れませんでした");
+        var cv=document.createElement("canvas"); cv.width=ICON_PX; cv.height=ICON_PX;
+        cv.getContext("2d").drawImage(img,r.sx,r.sy,r.side,r.side,0,0,ICON_PX,ICON_PX);
+        var data=encodeIcon(function(type,q){ return cv.toDataURL(type,q); });
+        if(!data) throw new Error("この画像は、小さくしても上限（約8KB）に収まりませんでした");
+        resolve(data);
+      }catch(e){ reject(e); }
+      finally{ URL.revokeObjectURL(url); }
+    };
+    img.onerror=function(){ URL.revokeObjectURL(url); reject(new Error("この画像は読み取れませんでした")); };
+    img.src=url;
+  });
+}
 function swatch(color, title){ return '<i class="sw" data-st="background:'+color+'"'+(title?' title="'+escHtml(title)+'"':'')+' aria-hidden="true"></i>'; }
 
 /* 色の選択部品（36色・カラーコード・自動に戻す）。value は保存値（null＝自動） */
@@ -1057,7 +1113,7 @@ function cardOf(it){
       '<span class="num">'+
       escHtml(it.start?(fmtDue(new Date(it.start),it.allDay)+" 〜 "+fmtDue(d,it.allDay)):fmtDue(d,it.allDay))+'</span></div>'+
       '<div class="meta meta-attr">'+(isRepeating(it)&&!it.done?'<span class="badge rt"><i aria-hidden="true">↻</i>定期</span>':'')+
-      '<span class="cat catg">'+swatch(itemColor(it))+escHtml(it.cat||"その他")+'</span>'+
+      '<span class="cat catg">'+swatch(itemColor(it))+catIcon(it.cat)+escHtml(it.cat||"その他")+'</span>'+
       (checklistProgress(it.memo)?'<span class="chk-prog num"></span>':"")+
       (it.allDay?'<span class="cat">終日</span>':"")+
       (it.autoComplete?'<span class="cat">自動完了</span>':"")+
@@ -1235,7 +1291,7 @@ function flushAutoSync(){ if(_autoSyncTimer) autoSyncIfConfigured(); }
 
 /* 保存先へ送る内容。設定(テーマ等)とこの端末専用の隔離データは含めない */
 function syncPayload(){
-  return {items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, catReminders:db.catReminders, catColors:db.catColors,
+  return {items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, catReminders:db.catReminders, catColors:db.catColors, catIcons:db.catIcons,
           completions:db.completions, expCarry:db.expCarry||0, updatedAt:db.updatedAt};
 }
 
@@ -1596,7 +1652,7 @@ function describeQuick(r){
   if(r.date) parts.push("<b>"+escHtml(fmtDue(r.date,true))+(r.time?" "+escHtml(r.time):(r.allDay?" 終日":""))+"</b>");
   else if(r.time) parts.push("<b>"+escHtml(r.time)+"</b>");
   if(r.rep!=="none") parts.push({weekly:"毎週",biweekly:"隔週",monthly:"毎月",yearly:"毎年"}[r.rep]);
-  if(r.cat) parts.push("#"+escHtml(r.cat));
+  if(r.cat) parts.push(catIcon(r.cat)+"#"+escHtml(r.cat));
   if(r.tpl) parts.push("テンプレート「"+escHtml(r.tpl.name)+"」");
   parts.push(r.title?"「"+escHtml(r.title)+"」":'<span class="c-amber">タイトル未入力</span>');
   if(!r.date) parts.push('<span class="c-ink3">日付は読み取れませんでした（今日で開きます）</span>');
@@ -1882,7 +1938,7 @@ function renderWeek(){
         var when=i.allDay?"終日":(isDue?fmtTime(parseItemDate(i)):"期間中");
         var item=h('<div class="witem'+(isRepeating(i)?" routine":"")+'">'+
           '<span class="wmark">'+mark+'</span>'+
-          swatch(itemColor(i))+'<span class="wtitle">'+escHtml(i.title)+'</span>'+
+          swatch(itemColor(i))+catIcon(i.cat)+'<span class="wtitle">'+escHtml(i.title)+'</span>'+
           '<span class="wcat">'+escHtml(i.cat||"")+'</span>'+
           '<span class="wtime num">'+escHtml(when)+'</span></div>');
         item.onclick=(function(key){ return function(){ view="cal"; selDay=key; calRef=new Date(key+"T00:00:00"); render(); }; })(key);
@@ -2455,7 +2511,7 @@ function renderSettings(){
   } else {
     db.templates.forEach(function(t){
       var row=h('<div class="cat-row"><span class="cat-name">'+escHtml(t.name)+
-        '<br><span class="note">'+escHtml(t.title)+'　'+escHtml(t.cat||"")+
+        '<br><span class="note">'+escHtml(t.title)+'　'+catIcon(t.cat)+escHtml(t.cat||"")+
         '　'+(t.allDay?"終日":escHtml(t.timeOfDay||"09:00"))+'</span></span>'+
         '<div class="cat-btns"></div></div>');
       var del=h('<button class="act" title="削除">×</button>');
@@ -2527,7 +2583,7 @@ function renderSettings(){
   }
 
   // カテゴリ
-  var s2=h('<div class="sec"><h3>カテゴリ</h3><p>登録画面の選択肢と、フィルタの並び順になります。左の色を押すと、36色のテンプレートかカラーコードで色を選べます（指定しなければ自動で割り振ります）。各カテゴリの「通知」で、カレンダー（.ics）の通知を何日前に鳴らすかを選べます（N日前は締切と同じ時刻、当日は「当日リマインドの時刻」）。</p><div class="cat-list"></div></div>');
+  var s2=h('<div class="sec"><h3>カテゴリ</h3><p>登録画面の選択肢と、フィルタの並び順になります。「アイコン」で画像を選ぶと、カテゴリーの名前の横に小さく出ます（端末の中で 64px に縮小して保存します）。左の色を押すと、36色のテンプレートかカラーコードで色を選べます（指定しなければ自動で割り振ります）。各カテゴリの「通知」で、カレンダー（.ics）の通知を何日前に鳴らすかを選べます（N日前は締切と同じ時刻、当日は「当日リマインドの時刻」）。</p><div class="cat-list"></div></div>');
   var line=s2.querySelector(".cat-list");
   db.categories.forEach(function(c,idx){
     var row=h('<div class="cat-row cat-row-wrap"><span class="cat-name">'+escHtml(c)+'</span><div class="cat-btns"></div>'+
@@ -2555,6 +2611,7 @@ function renderSettings(){
       }});
     cp.classList.add("cat-color");
     row.querySelector(".cat-name").before(cp);
+    row.querySelector(".rem-row").before(catIconRow(c));
     var btns=row.querySelector(".cat-btns");
     function mkBtn(label,title,disabled,fn){
       var b=h('<button class="act" title="'+title+'"'+(disabled?' disabled':'')+'>'+label+'</button>');
@@ -2572,6 +2629,7 @@ function renderSettings(){
       db.categories=db.categories.filter(function(x){return x!==c;});
       delete db.catReminders[c];
       delete db.catColors[c];
+      delete db.catIcons[c];
       if(filter===c) filter="ALL";
       save(); render(); scheduleAutoSync();
     });
@@ -2661,6 +2719,7 @@ function renderSettings(){
         if(meta.categories) db.categories=meta.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
+        if(d.catIcons) db.catIcons=cleanCatIcons(d.catIcons);
         adoptCompletions(d);
         if(d.settings) db.settings=Object.assign(db.settings,d.settings);
         delete db.settings.theme; // テーマは端末ごとの設定で、データには入れない
@@ -2943,6 +3002,7 @@ function cfRestoreSnapshot(cfg,snap){
     if(meta.categories) db.categories=meta.categories;
     if(payload.catReminders) db.catReminders=cleanCatReminders(payload.catReminders);
     if(payload.catColors) db.catColors=cleanCatColors(payload.catColors);
+    if(payload.catIcons) db.catIcons=cleanCatIcons(payload.catIcons);
     adoptCompletions(payload);
     db.updatedAt=payload.updatedAt;
     saveRaw();
@@ -3064,6 +3124,7 @@ function autoPullWith(cfg){
         if(meta.categories) db.categories=meta.categories;
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
+        if(d.catIcons) db.catIcons=cleanCatIcons(d.catIcons);
         adoptCompletions(d);
         db.updatedAt=d.updatedAt;
         saveRaw(); softRender();
@@ -3171,6 +3232,7 @@ function proceedPull(cfg,statusEl){
       if(meta.categories) db.categories=meta.categories;
       if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
+        if(d.catIcons) db.catIcons=cleanCatIcons(d.catIcons);
       adoptCompletions(d);
       // 取り込んだ内容の時刻をそのまま引き継ぐ（今の時刻で上書きすると比較の基準が壊れるため）
       db.updatedAt=d.updatedAt||new Date().toISOString();

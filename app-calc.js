@@ -109,5 +109,40 @@ function toHalfWidth(s){
   return s.replace(/[０-９Ａ-Ｚａ-ｚ：／＃]/g,function(c){ return String.fromCharCode(c.charCodeAt(0)-0xFEE0); }).replace(/\u3000/g," ");
 }
 
-root.DTCalc={pad, toLocalISO, startOfDay, daysBetween, parseItemDate, refDate, isRepeating, anchorDayOf, nextOccurrence, prevOccurrence, advanceRepeating, expandOccurrences, monthEndRule, toHalfWidth};
+/* ---- カテゴリーのアイコン（画像は端末内で 64px に縮小し、data URL の文字列として同期するデータに入れる） ---- */
+var ICON_PX=64;
+/* 1個の上限。画像 約8KB を base64 にした長さ＋先頭の「data:image/…;base64,」。Worker（worker/src/index.js）も同じ値で確かめる */
+var ICON_MAX_CHARS=11000;
+var ICON_RE=/^data:image\/(?:png|webp);base64,[A-Za-z0-9+\/]+=*$/;
+/* アイコンとして保存できる値か。PNG・WebP の data URL で、上限以下のものだけ（SVG は中にスクリプトを持てるので通さない） */
+function isIconData(v){ return typeof v==="string" && v.length<=ICON_MAX_CHARS && ICON_RE.test(v); }
+/* カテゴリー名→アイコン の入れ物を検査して作り直す。壊れた値・大きすぎる値は捨てる。
+   categories（名前の配列）を渡すと、そこに無い名前のアイコンも捨てる */
+function cleanCatIcons(o, categories){
+  var out=Object.create(null); if(!o||typeof o!=="object"||Array.isArray(o)) return out;
+  Object.keys(o).forEach(function(k){
+    if(categories && categories.indexOf(k)<0) return;
+    if(isIconData(o[k])) out[k]=o[k];
+  });
+  return out;
+}
+/* 元の画像（幅 w・高さ h）から、中央の正方形を切り抜く範囲 */
+function iconCropRect(w,h){
+  var side=Math.min(w,h);
+  return {sx:Math.floor((w-side)/2), sy:Math.floor((h-side)/2), side:side};
+}
+/* 縮小した画像を文字列にする。toData(type,quality) は canvas.toDataURL と同じ形の関数。
+   WebP で画質を下げながら上限に収まるものを探し、WebP を書き出せないブラウザ（PNG が返る）では PNG を試す。収まらなければ null */
+function encodeIcon(toData){
+  var qs=[.9,.75,.6,.45,.3];
+  for(var i=0;i<qs.length;i++){
+    var v=toData("image/webp",qs[i]);
+    if(typeof v!=="string" || v.indexOf("data:image/webp")!==0) break; // WebP を書き出せない
+    if(isIconData(v)) return v;
+  }
+  var png=toData("image/png");
+  return isIconData(png) ? png : null;
+}
+
+root.DTCalc={pad, toLocalISO, startOfDay, daysBetween, parseItemDate, refDate, isRepeating, anchorDayOf, nextOccurrence, prevOccurrence, advanceRepeating, expandOccurrences, monthEndRule, toHalfWidth, ICON_PX, ICON_MAX_CHARS, isIconData, cleanCatIcons, iconCropRect, encodeIcon};
 })(typeof window!=="undefined"?window:this);

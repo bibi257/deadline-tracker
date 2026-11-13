@@ -144,7 +144,11 @@ async function authorize(env, request) {
 // ---- データの検証 ----
 
 const ARRAY_KEYS = ['items', 'templates', 'trash', 'categories', 'completions'];
-const OBJECT_KEYS = ['catReminders', 'catColors'];
+const OBJECT_KEYS = ['catReminders', 'catColors', 'catIcons'];
+// カテゴリーのアイコン（アプリが端末内で 64px に縮小した PNG・WebP の data URL）。上限と形は app-calc.js の isIconData と同じ
+const ICON_MAX_CHARS = 11000;
+const ICON_RE = /^data:image\/(?:png|webp);base64,[A-Za-z0-9+/]+=*$/;
+const ICON_MAX_COUNT = 100;
 
 /** 保存するデータの形を確かめる。値の細かい検査はアプリ側（読み込み時）に任せ、ここでは壊れた形だけを弾く */
 export function checkData(data) {
@@ -156,6 +160,13 @@ export function checkData(data) {
   }
   for (const k of OBJECT_KEYS) {
     if (data[k] !== undefined && !isObj(data[k])) throw new HttpError(400, `${k} はオブジェクトにしてください`);
+  }
+  if (data.catIcons !== undefined) {
+    const icons = Object.values(data.catIcons);
+    if (icons.length > ICON_MAX_COUNT) throw new HttpError(400, 'カテゴリーのアイコンが多すぎます');
+    for (const v of icons) {
+      if (typeof v !== 'string' || v.length > ICON_MAX_CHARS || !ICON_RE.test(v)) throw new HttpError(400, 'カテゴリーのアイコンの形が正しくありません');
+    }
   }
   if (data.updatedAt !== undefined && typeof data.updatedAt !== 'string') throw new HttpError(400, 'updatedAt は文字列にしてください');
   const ids = new Set();
