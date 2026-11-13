@@ -122,3 +122,13 @@ test('styles.css: どのテーマも、文字・状態色・バッジ・ボタ�
     assert.ok(body && surf);
   }
 });
+
+test('styles.css: ボタンのホバーの動きは、ホバーできる端末（hover:hover と pointer:fine）の中だけにあり、transform を使わない', () => {
+  const at = css.indexOf('@media (hover:hover) and (pointer:fine){');
+  assert.ok(at >= 0, 'ホバーの端末だけのメディアがある');
+  const block = css.slice(at, css.indexOf('\n}', at));
+  for (const sel of ['.btn:hover', '.chip:hover', '.fab:hover', '.gear:hover', '.nav:hover', '.tab:hover', '.act.main:hover']) assert.ok(block.includes(sel), sel);
+  assert.ok(!/animation:btn-hop/.test(css.slice(0, at)), 'メディアの外でホバーの動きを付けない');
+  const kf = /@keyframes btn-hop\{([^}]*\}){3}\}/.exec(css);
+  assert.ok(kf && !kf[0].includes('transform'), '.fab の位置決め（transform）を上書きしない');
+});

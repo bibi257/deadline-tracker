@@ -4144,7 +4144,7 @@ function achievementGrid(){
     '<div class="ach-grid" role="img" aria-label="直近'+g.weeks+'週に完了した日は '+g.activeDays+' 日、合計 '+g.total+' 件'+(g.kaisaiDays?'、その日の締切を全部片付けた（皆済の）日は '+g.kaisaiDays+' 日':'')+'"></div></div>'+
     '<p class="ach-pick note" role="status">マスを押すと、その日の件数が出ます</p>'+
     '<div class="ach-legend note">少<span class="ach-sw g0"></span><span class="ach-sw g1"></span><span class="ach-sw g2"></span><span class="ach-sw g3"></span><span class="ach-sw g4"></span>多'+
-    '<span class="ach-sw g1 early"></span>前倒しで完了した日<span class="ach-key"><span class="ach-sw kaisai"></span>朱印＝その日の締切を全部片付けた日</span></div></section>');
+    '<span class="ach-sw g1 early"></span>前倒しで完了した日<span class="ach-key"><span class="ach-sw kaisai"></span>✓＝その日の締切を全部片付けた日</span></div></section>');
   var grid=el.querySelector(".ach-grid"), months=el.querySelector(".ach-months"), pick=el.querySelector(".ach-pick");
   activityMonthLabels(g.cells).forEach(function(l){
     months.appendChild(h('<span data-st="grid-column:'+l.col+'">'+l.month+'月</span>'));
