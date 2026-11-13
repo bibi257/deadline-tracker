@@ -22,7 +22,7 @@
   /* 角の丸み */
   --radius-none:0; --radius-inner:2px; --radius-element:6px; --radius-container:10px; --radius-full:9999px;
   /* 動き・重なり・寸法 */
-  --motion-duration-fast:.12s; --motion-duration-base:.2s;
+  --motion-duration-fast:.12s; --motion-duration-base:.2s; --motion-duration-hop:.25s;
   --z-header:20; --z-sheet:50; --z-toast:70;
   --target-min:44px; --layout-list-max:680px;
   /* 色見本の縁（どのテーマでも同じ） */
@@ -821,9 +821,11 @@ html.techo body[data-view="over"] .card.over:not(.done) .left::before{content:"�
 .ach .g4{background:var(--color-heat-4)}
 .ach .early{outline:2px solid var(--color-info);outline-offset:-2px}
 .ach-grid i.now{border-color:var(--color-text-primary)}
-/* 皆済した日：マスの上に朱色の小さな丸印（件数の濃さはそのまま）。朱色は手帳の印の色だけに使う */
-.ach-grid i.kaisai::after,.ach-sw.kaisai::after{content:"";position:absolute;left:50%;top:50%;box-sizing:border-box;height:74%;aspect-ratio:1;transform:translate(-50%,-50%);
-  border:1.5px solid var(--color-danger);border-radius:50%;background:transparent}
+/* 皆済した日：マスの中央に ✓（件数の濃さはそのまま）。一番濃い緑の上でも見えるよう、紙の色で縁取る。
+   前倒しの枠（outline）はマスの縁なので、中央の ✓ とは重ならない */
+.ach-grid i.kaisai::after,.ach-sw.kaisai::after{content:"✓";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:var(--font-size-xs);font-weight:var(--font-weight-bold);line-height:1;color:var(--color-text-primary);
+  text-shadow:0 0 1px var(--color-background-surface),1px 0 0 var(--color-background-surface),-1px 0 0 var(--color-background-surface),0 1px 0 var(--color-background-surface),0 -1px 0 var(--color-background-surface)}
 .ach-key{display:inline-flex;align-items:center;gap:var(--spacing-1);margin-left:10px}
 .ach-pick{min-height:1.4em;margin:var(--spacing-2) 0 0}
 .ach-legend{display:flex;flex-wrap:wrap;align-items:center;gap:2px 3px;margin-top:6px}
@@ -896,6 +898,13 @@ main[inert],.fab[inert]{opacity:.55}
 /* 定時の通知が届いたか（設定） */
 .notify-log{margin-top:var(--spacing-2);font-size:var(--font-size-m);color:var(--color-text-secondary)}
 .notify-log .notify-fail{margin-top:var(--spacing-1);color:var(--color-danger);font-weight:var(--font-weight-bold)}
+/* ボタンのホバー：上に 2px 跳ねて戻る。マウスなど、ホバーできる端末だけ（タッチの端末でタップ後に動きが残らないように）。
+   translate プロパティで動かす（.fab は位置決めに transform を使っているので、transform を上書きしない）。
+   動きを減らす設定では、全体を止める規則（prefers-reduced-motion）で止まる */
+@keyframes btn-hop{0%{translate:0 0}40%{translate:0 -2px}100%{translate:0 0}}
+@media (hover:hover) and (pointer:fine){
+  .btn:hover,.chip:hover,.fab:hover,.gear:hover,.nav:hover,.tab:hover,.act.main:hover{animation:btn-hop var(--motion-duration-hop) ease-out}
+}
 /* カテゴリーのアイコン：文字の高さに合わせた小さな画像（行の高さを変えない） */
 .cat-ico{display:inline-block;width:1.15em;height:1.15em;margin-right:var(--spacing-1);vertical-align:-.2em;border-radius:var(--radius-inner);object-fit:cover;flex-shrink:0}
 .witem .cat-ico{align-self:center;margin-right:0}
