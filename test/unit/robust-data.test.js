@@ -86,7 +86,7 @@ test('保存 API: title/due/start/memo/cat/rep が文字列でない項目は 40
     }
   }
   assert.equal((await put({ items: [{ ...base, start: '2026-02-01T00:00:00.000Z', memo: 'm', rep: 'none' }] })).status, 201, '正しい型は保存できる');
-  assert.equal((await put({ items: [{ id: 'n1', title: 't', due: 'd', memo: null }] })).status, 200, 'null は「無い」と同じ扱い（2回目の保存は更新なので 200）');
+  assert.equal((await put({ items: [{ id: 'n1', title: 't', due: '2026-03-01T00:00:00.000Z', memo: null }] })).status, 200, 'null は「無い」と同じ扱い（2回目の保存は更新なので 200）');
 });
 
 test('保存 API: 日本語の巨大データはバイト数で測り、D1 の上限を超える前に 413（500 にならない）', async () => {
