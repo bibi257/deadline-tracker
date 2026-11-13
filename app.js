@@ -3,6 +3,7 @@
 
 /* 画面に依存しない計算は app-calc.js（index.html で先に読む）。今までどおりの名前で受け取る */
 var pad=DTCalc.pad, toLocalISO=DTCalc.toLocalISO, startOfDay=DTCalc.startOfDay, daysBetween=DTCalc.daysBetween, parseItemDate=DTCalc.parseItemDate, refDate=DTCalc.refDate, isRepeating=DTCalc.isRepeating, anchorDayOf=DTCalc.anchorDayOf, nextOccurrence=DTCalc.nextOccurrence, prevOccurrence=DTCalc.prevOccurrence, advanceRepeating=DTCalc.advanceRepeating, expandOccurrences=DTCalc.expandOccurrences, monthEndRule=DTCalc.monthEndRule, toHalfWidth=DTCalc.toHalfWidth,
+    WC=DTWebClass,
     ICON_PX=DTCalc.ICON_PX, isIconData=DTCalc.isIconData, cleanCatIcons=DTCalc.cleanCatIcons, iconCropRect=DTCalc.iconCropRect, encodeIcon=DTCalc.encodeIcon;
 
 /* ========== 保存領域（localStorage が使えない環境ではメモリに退避） ========== */
@@ -106,7 +107,7 @@ function secretGet(name){
   });
 }
 
-var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","支払い","プライベート","その他"],catReminders:{},catColors:Object.create(null),catIcons:Object.create(null),settings:{dayHour:9},updatedAt:null};
+var db={items:[],templates:[],trash:[],quarantine:[],completions:[],expCarry:0,categories:["仕事","提出物","課題","支払い","プライベート","その他"],catReminders:{},catColors:Object.create(null),catIcons:Object.create(null),wcExcluded:[],settings:{dayHour:9},updatedAt:null};
 /* 読めなかった保存データの元の文字列。次に保存して上書きされる前に退避する（writeDb を参照） */
 var _unreadableRaw=null;
 function load(){
@@ -134,6 +135,7 @@ function load(){
     if(d) db.catReminders=cleanCatReminders(d.catReminders);
     if(d) db.catColors=cleanCatColors(d.catColors);
     if(d) db.catIcons=cleanCatIcons(d.catIcons);
+    if(d) db.wcExcluded=WC.wcCleanExcluded(d.wcExcluded);
     if(d&&d.settings) db.settings=Object.assign(db.settings,d.settings);
     if(d&&d.updatedAt) db.updatedAt=d.updatedAt;
     if(d) adoptCompletions(d);
@@ -1291,7 +1293,7 @@ function flushAutoSync(){ if(_autoSyncTimer) autoSyncIfConfigured(); }
 
 /* 保存先へ送る内容。設定(テーマ等)とこの端末専用の隔離データは含めない */
 function syncPayload(){
-  return {items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, catReminders:db.catReminders, catColors:db.catColors, catIcons:db.catIcons,
+  return {items:db.items, templates:db.templates, trash:db.trash, categories:db.categories, catReminders:db.catReminders, catColors:db.catColors, catIcons:db.catIcons, wcExcluded:db.wcExcluded,
           completions:db.completions, expCarry:db.expCarry||0, updatedAt:db.updatedAt};
 }
 
@@ -2445,6 +2447,170 @@ function notifyLogSection(){
   el.querySelector(".row").appendChild(b);
   return el;
 }
+/* ========== WebClass の成績表 CSV の取り込み ==========
+   読み取りと対応づけは webclass-import.js（DTWebClass）。CSV の中身は端末の中だけで処理し、サーバーには送らない */
+function webclassSection(){
+  var n=db.wcExcluded.length;
+  var el=h('<div class="sec"><h3>WebClass の CSV を取り込む</h3>'+
+    '<p>WebClass の「成績表」で書き出した CSV を選ぶと、締切の候補を一覧で確かめてから登録できます。CSV はこの端末の中だけで読み、どこにも送りません。'+
+    '選ばなかった項目は、次回から出しません（締切が変わったら、また出します）。</p>'+
+    '<div class="row"></div><p class="note wc-ex-note"></p></div>');
+  var input=h('<input type="file" accept=".csv,text/csv" hidden>');
+  var b=h('<button class="btn">CSV を選ぶ</button>');
+  b.onclick=function(){ input.click(); };
+  input.onchange=function(){
+    var f=input.files && input.files[0]; input.value="";
+    if(!f) return;
+    if(f.size>WC.WC_MAX_BYTES){ toast("ファイルが大きすぎます（2MB まで）"); return; }
+    f.arrayBuffer().then(function(buf){
+      var r=WC.wcParse(WC.wcDecode(new Uint8Array(buf)));
+      if(!r.entries.length){ toast("取り込める行がありませんでした"); return; }
+      openWebclassPreview(r);
+    }).catch(function(e){ toast(e && e.message ? e.message : "この CSV は読み込めませんでした"); });
+  };
+  el.querySelector(".row").append(b,input);
+  var note=el.querySelector(".wc-ex-note");
+  if(n){
+    note.textContent="次回から出さない項目："+n+"件 ";
+    var clr=h('<button class="act">除外リストを空にする</button>');
+    clr.onclick=function(){
+      if(!confirm("除外リスト（"+n+"件）を空にします。次に CSV を読むと、選ばなかった項目もまた出ます。よろしいですか？")) return;
+      db.wcExcluded=[]; save(); scheduleAutoSync(); render(); toast("除外リストを空にしました");
+    };
+    note.appendChild(clr);
+  } else note.hidden=true;
+  return el;
+}
+var WC_FILTERS=[["all","すべて"],["open","期限内"],["over","期限切れ"],["done","提出済み"],["self","自習用"],["nodue","締切なし"]];
+function wcMatch(row,f,now){
+  var e=row.e;
+  if(f==="open") return !e.noDue && e.due>=now;
+  if(f==="over") return !e.noDue && e.due<now && !e.submitted;
+  if(f==="done") return e.submitted;
+  if(f==="self") return e.selfStudy;
+  if(f==="nodue") return e.noDue;
+  return true;
+}
+/* プレビュー。読んだ候補をカードで並べ、選んだものだけを「取り込む」で登録する */
+function openWebclassPreview(parsed){
+  var now=new Date();
+  var rows=WC.wcPlan(parsed.entries, db.items, db.wcExcluded, now).filter(function(r){ return r.state!=="registered"; });
+  var sel=rows.map(function(r){ return r.selected; });
+  var state={filter:"all", q:"", showEx:false};
+  var dlg=h('<dialog class="wc-dlg"><div class="dlg-in">'+
+    '<h2>WebClass の CSV から取り込む</h2>'+
+    '<p class="wc-sum note"></p>'+
+    '<div class="wc-tools"><div class="row wc-filters"></div>'+
+    '<input type="search" class="wc-q" placeholder="教材名・コース名で絞り込む" aria-label="教材名・コース名で絞り込む">'+
+    '<div class="row wc-bulk"><button type="button" class="act" data-bulk="1">表示中を全部選ぶ</button><button type="button" class="act" data-bulk="0">表示中を全部外す</button>'+
+    '<label class="wc-ex"><input type="checkbox"> 除外した項目も表示</label></div></div>'+
+    '<div class="wc-list" role="list"></div>'+
+    '<div class="dlg-acts"><button type="button" class="btn" data-act="cancel">やめる</button><button type="button" class="btn fill" data-act="go">取り込む</button></div>'+
+    '</div></dialog>');
+  var list=dlg.querySelector(".wc-list"), sum=dlg.querySelector(".wc-sum"), goBtn=dlg.querySelector('[data-act="go"]');
+  WC_FILTERS.forEach(function(f){
+    var c=h('<button type="button" class="chip">'+f[1]+'</button>');
+    c.setAttribute("aria-pressed", f[0]===state.filter?"true":"false");
+    c.onclick=function(){ state.filter=f[0]; dlg.querySelectorAll(".wc-filters .chip").forEach(function(x){ x.setAttribute("aria-pressed","false"); }); c.setAttribute("aria-pressed","true"); draw(); };
+    dlg.querySelector(".wc-filters").appendChild(c);
+  });
+  dlg.querySelector(".wc-q").oninput=function(){ state.q=WC.wcNorm(this.value).toLowerCase(); draw(); };
+  dlg.querySelector(".wc-ex input").onchange=function(){ state.showEx=this.checked; draw(); };
+  function visible(){
+    var out=[];
+    rows.forEach(function(r,i){
+      if(r.state==="excluded" && !state.showEx) return;
+      if(!wcMatch(r,state.filter,now)) return;
+      if(state.q && WC.wcNorm(r.e.course+" "+r.e.title).toLowerCase().indexOf(state.q)<0) return;
+      out.push(i);
+    });
+    return out;
+  }
+  dlg.querySelectorAll("[data-bulk]").forEach(function(b){
+    b.onclick=function(){ var on=b.getAttribute("data-bulk")==="1"; visible().forEach(function(i){ if(!rows[i].e.noDue) sel[i]=on; }); draw(); };
+  });
+  function counts(){
+    var picked=0, rest=0;
+    rows.forEach(function(r,i){ if(sel[i]) picked++; else if(r.state!=="excluded") rest++; });
+    return {picked:picked, rest:rest};
+  }
+  function draw(){
+    var idx=visible(), c=counts(), groups=[], byCourse={};
+    sum.textContent="候補 "+rows.filter(function(r){ return r.state!=="excluded"; }).length+"件（表示中 "+idx.length+"件）・選んだもの "+c.picked+"件";
+    goBtn.textContent=c.picked?("取り込む（"+c.picked+"件）"):"取り込む";
+    idx.forEach(function(i){ var k=rows[i].e.course; if(!byCourse[k]){ byCourse[k]=[]; groups.push(k); } byCourse[k].push(i); });
+    list.textContent="";
+    if(!idx.length){ list.appendChild(h('<p class="note">表示する項目はありません。</p>')); return; }
+    groups.forEach(function(course){
+      var g=h('<section class="wc-group"><div class="wc-ghead"><h3></h3><button type="button" class="act">全部選ぶ</button><button type="button" class="act">全部外す</button></div></section>');
+      g.querySelector("h3").textContent=rows[byCourse[course][0]].e.courseName;
+      var gb=g.querySelectorAll(".wc-ghead .act");
+      gb[0].onclick=function(){ byCourse[course].forEach(function(i){ if(!rows[i].e.noDue) sel[i]=true; }); draw(); };
+      gb[1].onclick=function(){ byCourse[course].forEach(function(i){ sel[i]=false; }); draw(); };
+      byCourse[course].forEach(function(i){ g.appendChild(wcCard(rows[i], i)); });
+      list.appendChild(g);
+    });
+  }
+  function wcCard(r,i){
+    var e=r.e, flags=WC.wcFlags(e,now);
+    if(r.state==="changed") flags.unshift("締切が変更");
+    if(r.state==="excluded") flags.unshift("除外済み");
+    var when=e.noDue?"":(fmtDue(e.due,false)+"・"+wcRemain(e.due,now)); // 締切なしは目印だけで示す
+    var card=h('<label class="wc-card" role="listitem"><input type="checkbox"><span class="wc-body"><span class="wc-title"></span>'+
+      '<span class="wc-meta"><span class="wc-when"></span><span class="wc-flags"></span></span></span></label>');
+    var cb=card.querySelector("input");
+    cb.checked=!!sel[i]; cb.disabled=e.noDue;
+    if(e.noDue) card.classList.add("off");
+    cb.onchange=function(){ sel[i]=cb.checked; var c=counts(); goBtn.textContent=c.picked?("取り込む（"+c.picked+"件）"):"取り込む";
+      sum.textContent=sum.textContent.replace(/選んだもの \d+件/,"選んだもの "+c.picked+"件"); };
+    card.querySelector(".wc-title").textContent=e.title;
+    card.querySelector(".wc-when").textContent=when+(r.state==="changed"?"（今の締切："+fmtDue(new Date(r.item.due),false)+"）":"");
+    var fl=card.querySelector(".wc-flags");
+    flags.forEach(function(f){ var b=document.createElement("span"); b.className="wc-flag"+(f==="期限切れ"||f==="締切が変更"?" warn":""); b.textContent=f; fl.appendChild(b); });
+    return card;
+  }
+  dlg.querySelector('[data-act="cancel"]').onclick=function(){ dlg.close(); };
+  goBtn.onclick=function(){
+    var c=counts();
+    if(!c.picked && !c.rest){ dlg.close(); return; }
+    if(!confirm((c.picked?c.picked+"件を登録します。":"登録する項目はありません。")+(c.rest?"\n選ばなかった "+c.rest+"件は、次回から出しません。":"")+"\nよろしいですか？")) return;
+    var out=webclassApply(rows, sel, now);
+    dlg.close();
+    toast("WebClass から "+out.added+"件を登録"+(out.updated?"・"+out.updated+"件の締切を更新":"")+"しました");
+  };
+  dlg.addEventListener("close",function(){ dlg.remove(); });
+  document.body.appendChild(dlg);
+  draw();
+  dlg.showModal();
+}
+function wcRemain(due,now){
+  if(due<now){ var od=daysBetween(due,now); return od?od+"日超過":"期限切れ"; }
+  var n=daysBetween(now,due);
+  return n===0?"今日":n===1?"明日":"あと"+n+"日";
+}
+/* 選んだものを登録（締切が変わったものは既存の締切の日時を更新）し、選ばなかったものを除外リストに入れる */
+function webclassApply(rows, sel, now){
+  var added=0, updated=0, today=toLocalISO(now), ex={};
+  db.wcExcluded.forEach(function(x){ ex[x.k]=x; });
+  rows.forEach(function(r,i){
+    var e=r.e;
+    if(sel[i] && !e.noDue){
+      if(r.item){ r.item.due=e.due.toISOString(); r.item.seq=(r.item.seq||0)+1; updated++; } // 登録済みで締切が変わったもの
+      else {
+        var id="d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)+added.toString(36);
+        db.items.push(WC.wcToItem(e,id,now)); added++;
+      }
+      delete ex[e.hash];
+    } else if(!sel[i]){
+      // 選ばなかったもの（締切の変更を見送ったものも含む）は、次回から出さない。締切が変われば、また出る
+      ex[e.hash]={k:e.hash, due:e.dueText, at:today};
+    }
+  });
+  if(added && db.categories.indexOf(WC.WC_CAT)<0) db.categories.push(WC.WC_CAT); // 取り込むカテゴリーが無ければ足す
+  db.wcExcluded=WC.wcCleanExcluded(Object.keys(ex).map(function(k){ return ex[k]; }));
+  save(); scheduleAutoSync(); render();
+  return {added:added, updated:updated};
+}
 function feedUrlSection(){
   var el=h('<div class="sec"><h3>カレンダーで購読する</h3>'+
     '<p>iPhone の「設定 → カレンダー → アカウント → アカウントを追加 → その他 → 照会カレンダーを追加」に購読用 URL を入れると、締切が標準カレンダーに自動で並びます（メモは含みません。約1時間ごとに更新されます）。</p>'+
@@ -2720,6 +2886,7 @@ function renderSettings(){
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
         if(d.catIcons) db.catIcons=cleanCatIcons(d.catIcons);
+        if(d.wcExcluded) db.wcExcluded=WC.wcCleanExcluded(d.wcExcluded);
         adoptCompletions(d);
         if(d.settings) db.settings=Object.assign(db.settings,d.settings);
         delete db.settings.theme; // テーマは端末ごとの設定で、データには入れない
@@ -2735,6 +2902,7 @@ function renderSettings(){
   s4.querySelector(".row").append(bOut,bIn,bIcs,file);
   if(CF===true) s4.appendChild(snapshotSection());
   put("data",s4);
+  put("data",webclassSection());
 
   // 端末間の同期（Cloudflare の Worker）。Worker から配信されているアプリでだけ使える
   if(CF===null) cfDetect().then(function(){ if(CF!==null && view==="set") render(); }); // 保存先の判定が終わったら描き直す
@@ -3003,6 +3171,7 @@ function cfRestoreSnapshot(cfg,snap){
     if(payload.catReminders) db.catReminders=cleanCatReminders(payload.catReminders);
     if(payload.catColors) db.catColors=cleanCatColors(payload.catColors);
     if(payload.catIcons) db.catIcons=cleanCatIcons(payload.catIcons);
+    if(payload.wcExcluded) db.wcExcluded=WC.wcCleanExcluded(payload.wcExcluded);
     adoptCompletions(payload);
     db.updatedAt=payload.updatedAt;
     saveRaw();
@@ -3125,6 +3294,7 @@ function autoPullWith(cfg){
         if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
         if(d.catIcons) db.catIcons=cleanCatIcons(d.catIcons);
+        if(d.wcExcluded) db.wcExcluded=WC.wcCleanExcluded(d.wcExcluded);
         adoptCompletions(d);
         db.updatedAt=d.updatedAt;
         saveRaw(); softRender();
@@ -3233,6 +3403,7 @@ function proceedPull(cfg,statusEl){
       if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
         if(d.catColors) db.catColors=cleanCatColors(d.catColors);
         if(d.catIcons) db.catIcons=cleanCatIcons(d.catIcons);
+        if(d.wcExcluded) db.wcExcluded=WC.wcCleanExcluded(d.wcExcluded);
       adoptCompletions(d);
       // 取り込んだ内容の時刻をそのまま引き継ぐ（今の時刻で上書きすると比較の基準が壊れるため）
       db.updatedAt=d.updatedAt||new Date().toISOString();
