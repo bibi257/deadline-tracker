@@ -152,3 +152,16 @@ test('プレビューの行: 登録済みは出さない。締切が変わった
   assert.equal(of(e4).state, 'new', '除外したときと締切が違えば、また出す');
   assert.equal(of(byTitle(r, '課題2, 追加分')).state, 'new');
 });
+
+test('締切の変更を見送ったもの: 除外リストに同じ締切で入っていれば、次回は除外済みとして隠し、既存の締切を覚えておく', () => {
+  const r = load();
+  const e2 = byTitle(r, '学生アンケート');
+  const items = [{ id: 'x2', title: 'アンケート', due: '2026-11-29T14:59:00.000Z', wc: e2.key }];
+  const p1 = Array.from(W.wcPlan(r.entries, items, [], NOW)).find((p) => p.e === e2);
+  assert.equal(p1.state, 'changed');
+  const p2 = Array.from(W.wcPlan(r.entries, items, [{ k: e2.hash, due: e2.dueText, at: '2026-11-13' }], NOW)).find((p) => p.e === e2);
+  assert.equal(p2.state, 'excluded');
+  assert.equal(p2.item.id, 'x2', '選べば既存の締切を更新できる');
+  const p3 = Array.from(W.wcPlan(r.entries, items, [{ k: e2.hash, due: '2026-11-01 00:00', at: '2026-11-01' }], NOW)).find((p) => p.e === e2);
+  assert.equal(p3.state, 'changed', '見送ったときと締切がまた違えば、もう一度出す');
+});

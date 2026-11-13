@@ -166,19 +166,22 @@ function wcCleanExcluded(arr){
 
 /* プレビューの行を作る。items は今の締切、excluded は除外リスト、now は今の時刻。
    各行：{e: 候補, state, item（締切が変わった既存の締切）, selected（最初から選ぶか）}
-   state：new（新しい）／changed（登録済みで締切だけ変わった）／excluded（除外済みで締切も同じ）／registered（登録済みで同じ。出さない） */
+   state：new（新しい）／changed（登録済みで締切だけ変わった）／excluded（除外済みで締切も同じ。登録済みで締切の変更を見送ったものは item つき）／
+   registered（登録済みで同じ。出さない） */
 function wcPlan(entries, items, excluded, now){
   var byKey={}, ex={};
   (items||[]).forEach(function(it){ if(it && typeof it.wc==="string") byKey[it.wc]=it; }); // wc は wcKey で作ったキーそのもの
   (excluded||[]).forEach(function(x){ ex[x.k]=x; });
   return entries.map(function(e){
     var it=byKey[e.key];
+    var x=ex[e.hash], declined=!!(x && x.due===e.dueText); // 除外したときと締切が同じ
     if(it){
       if(!e.due || Date.parse(it.due)===e.due.getTime()) return {e:e, state:"registered", item:it, selected:false};
+      // 締切の変更を一度見送ったもの（同じ締切のまま）は、除外済みとして隠す。選べば既存の締切を更新する
+      if(declined) return {e:e, state:"excluded", item:it, selected:false};
       return {e:e, state:"changed", item:it, selected:!e.submitted && e.due>=now};
     }
-    var x=ex[e.hash];
-    if(x && x.due===e.dueText) return {e:e, state:"excluded", item:null, selected:false};
+    if(declined) return {e:e, state:"excluded", item:null, selected:false};
     return {e:e, state:"new", item:null, selected:wcDefaultSelected(e,now)};
   });
 }

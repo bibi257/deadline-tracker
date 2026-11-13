@@ -2595,13 +2595,14 @@ function webclassApply(rows, sel, now){
   rows.forEach(function(r,i){
     var e=r.e;
     if(sel[i] && !e.noDue){
-      if(r.state==="changed"){ r.item.due=e.due.toISOString(); r.item.seq=(r.item.seq||0)+1; updated++; }
+      if(r.item){ r.item.due=e.due.toISOString(); r.item.seq=(r.item.seq||0)+1; updated++; } // 登録済みで締切が変わったもの
       else {
         var id="d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)+added.toString(36);
         db.items.push(WC.wcToItem(e,id,now)); added++;
       }
       delete ex[e.hash];
-    } else if(!sel[i] && r.state!=="changed"){
+    } else if(!sel[i]){
+      // 選ばなかったもの（締切の変更を見送ったものも含む）は、次回から出さない。締切が変われば、また出る
       ex[e.hash]={k:e.hash, due:e.dueText, at:today};
     }
   });
