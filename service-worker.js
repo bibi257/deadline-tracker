@@ -9,6 +9,7 @@ const CORE_FILES = [
   "./",
   "./index.html",
   "./app-calc.js",
+  "./webclass-import.js",
   "./app.js",
   "./theme-boot.js",
   "./styles.css",

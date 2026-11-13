@@ -10,7 +10,7 @@ const read = (p) => readFileSync(new URL(p, root), 'utf8');
 
 test('build: 画面のファイルと privacy.html を web/ にそろえる', () => {
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: root.pathname, stdio: 'pipe' });
-  for (const f of ['index.html', 'privacy.html', 'privacy.css', 'app-calc.js', 'app.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest', 'assets/icon-192.png']) {
+  for (const f of ['index.html', 'privacy.html', 'privacy.css', 'app-calc.js', 'webclass-import.js', 'app.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest', 'assets/icon-192.png']) {
     assert.ok(existsSync(new URL(`web/${f}`, root)), f);
   }
 });
@@ -81,10 +81,11 @@ test('build: web/ の index.html と service-worker.js に、ファイルの内�
   const web = read('web/index.html');
   assert.ok(web.includes(`<script src="app.js?v=${hash10(read('app.js'))}"></script>`), '実際の script タグ');
   assert.ok(web.includes(`<script src="app-calc.js?v=${hash10(read('app-calc.js'))}"></script>`), 'app-calc.js の script タグ');
+  assert.ok(web.includes(`<script src="webclass-import.js?v=${hash10(read('webclass-import.js'))}"></script>`), 'webclass-import.js の script タグ');
   assert.ok(web.includes(`<link rel="stylesheet" href="styles.css?v=${hash10(read('styles.css'))}">`), '実際の link タグ');
   assert.doesNotMatch(web, /(?:app\.js|styles\.css)\?v=\d{8}-\d{4}/, '手書きの日時の版番号が残っていない');
   assert.doesNotMatch(web, /\?v=dev|content="dev"/, 'web/ には、ルートの dev が残らない');
-  const all = hash10(rootIndex, read('app.js'), read('styles.css'), rootSw, read('theme-boot.js'), read('app-calc.js'));
+  const all = hash10(rootIndex, read('app.js'), read('styles.css'), rootSw, read('theme-boot.js'), read('app-calc.js'), read('webclass-import.js'));
   assert.match(web, new RegExp(`<meta name="build-stamp" content="\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} \\[${all}\\]">`), '日時とハッシュ（ルートの dev は説明として残さない）');
   assert.match(read('web/service-worker.js'), new RegExp(`const CACHE_NAME = "deadline-tracker-${all}";`));
   assert.equal(read('index.html'), rootIndex, 'ルートの index.html は書き換えない');

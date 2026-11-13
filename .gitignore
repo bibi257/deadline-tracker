@@ -1,2 +1,6 @@
 web/
 node_modules/
+
+# WebClass の成績表など、実物の CSV は置かない（履修の情報が入る）。テスト用の架空の見本だけを例外にする
+*.csv
+!test/fixtures/webclass-sample*.csv
