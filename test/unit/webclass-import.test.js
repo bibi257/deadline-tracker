@@ -165,3 +165,37 @@ test('締切の変更を見送ったもの: 除外リストに同じ締切で入
   const p3 = Array.from(W.wcPlan(r.entries, items, [{ k: e2.hash, due: '2026-11-01 00:00', at: '2026-11-01' }], NOW)).find((p) => p.e === e2);
   assert.equal(p3.state, 'changed', '見送ったときと締切がまた違えば、もう一度出す');
 });
+
+test('プレビューの並び替え: 各モード・締切なし・同値の順序・入力を変更しない', () => {
+  const d1 = new Date('2026-11-20T00:00:00Z'), d2 = new Date('2026-11-21T00:00:00Z');
+  const make = (course, title, due) => ({ e: { course, courseName: course, title, due, noDue: !due } });
+  const a = make('B', 'Z', d2), b = make('A', 'Y', d1), c = make('A', 'X', d1), d = make('A', 'A', null), e = make('A', 'X', d1);
+  const input = [a, b, c, d, e];
+  const original = input.slice();
+  const titles = (mode) => Array.from(W.wcSortRows(input, mode), (r) => r.e.title);
+  assert.deepEqual(titles('csv'), ['Z', 'Y', 'X', 'A', 'X']);
+  assert.deepEqual(titles('dueAsc'), ['X', 'X', 'Y', 'Z', 'A']);
+  assert.deepEqual(titles('dueDesc'), ['Z', 'X', 'X', 'Y', 'A']);
+  assert.deepEqual(titles('title'), ['A', 'X', 'X', 'Y', 'Z']);
+  assert.deepEqual(Array.from(W.wcSortRows(input, 'course'), (r) => r.e.course + r.e.title), ['AX', 'AX', 'AY', 'AA', 'BZ']);
+  assert.equal(W.wcSortRows(input, 'dueAsc')[4], d, '締切なしは最後');
+  assert.equal(W.wcSortRows(input, 'dueAsc')[0], c, '同じ締切・コースでは教材名順');
+  assert.equal(W.wcSortRows(input, 'dueAsc')[1], e, '完全同値では元の順序を保つ');
+  assert.deepEqual(input, original, '入力配列は変更しない');
+});
+
+test('プレビューの並び替え: 日本語の数字順と未知モードの元順を保つ', () => {
+  const make = (title) => ({ e: { course: 'コース', courseName: 'コース', title, due: null } });
+  const input = [make('第10回'), make('第2回'), make('あ'), make('ア')];
+  assert.deepEqual(Array.from(W.wcSortRows(input, 'title'), (r) => r.e.title), ['あ', 'ア', '第2回', '第10回']);
+  assert.deepEqual(W.wcSortRows(input, 'unknown'), input);
+  assert.deepEqual(W.wcSortRows(input), input);
+});
+
+test('コース順はコース名、締切昇順、教材名、元順で並ぶ', () => {
+  const make = (course, title, due) => ({ e: { course, courseName: course, title, due: due && new Date(due) } });
+  const input = [make('第10コース', '課題', '2026-11-20'), make('第2コース', '第10回', '2026-11-21'), make('第2コース', '第2回', '2026-11-21'), make('第2コース', '早い締切', '2026-11-19'), make('第2コース', '締切なし', null)];
+  assert.deepEqual(Array.from(W.wcSortRows(input, 'course'), (r) => r.e.course + ':' + r.e.title), [
+    '第2コース:早い締切', '第2コース:第2回', '第2コース:第10回', '第2コース:締切なし', '第10コース:課題'
+  ]);
+});
