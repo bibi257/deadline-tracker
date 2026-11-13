@@ -8,6 +8,7 @@ var WC_MAX_BYTES=2*1024*1024, WC_MAX_ROWS=2000, WC_TITLE_MAX=80;
 /* 見出しの列名。並び順は決め打ちせず、名前で探す */
 var WC_COLS=["学部","学科","コース名","教材","締切","実施日","最高点","状態"];
 var WC_CAT="課題";
+var WC_COLLATOR=new Intl.Collator('ja', {numeric:true});
 
 /* 文字コードの判定：先頭が BOM なら UTF-8。なければ UTF-8 として厳密に読み、読めなければ Shift_JIS */
 function wcDecode(bytes){
@@ -186,8 +187,40 @@ function wcPlan(entries, items, excluded, now){
   });
 }
 
+/* プレビュー行を安定して並べ替える。元配列は変更しない */
+function wcSortRows(rows, mode){
+  var copy=(rows||[]).map(function(row,index){ return {row:row,index:index}; });
+  function name(a,b){
+    a=String(a||""); b=String(b||"");
+    return WC_COLLATOR.compare(a,b);
+  }
+  copy.sort(function(a,b){
+    var x=a.row.e||a.row, y=b.row.e||b.row, c=0, xd=x.due, yd=y.due;
+    if(mode!=="dueAsc" && mode!=="dueDesc" && mode!=="title" && mode!=="course") return a.index-b.index;
+    if(mode==="dueAsc" || mode==="dueDesc"){
+      if(!xd && yd) return 1;
+      if(xd && !yd) return -1;
+      if(xd && yd && xd.getTime()!==yd.getTime()) return (xd<yd?-1:1)*(mode==="dueAsc"?1:-1);
+    }else if(mode==="title") c=name(x.title,y.title);
+    else if(mode==="course"){
+      c=name(x.courseName||x.course,y.courseName||y.course);
+      if(c) return c;
+      if(!xd && yd) return 1;
+      if(xd && !yd) return -1;
+      if(xd && yd && xd.getTime()!==yd.getTime()) return xd<yd?-1:1;
+      c=name(x.title,y.title);
+    }
+    if(c) return c;
+    c=name(x.courseName||x.course,y.courseName||y.course);
+    if(c) return c;
+    c=name(x.title,y.title);
+    return c || a.index-b.index;
+  });
+  return copy.map(function(x){ return x.row; });
+}
+
 root.DTWebClass={WC_CAT:WC_CAT, WC_COLS:WC_COLS, WC_MAX_BYTES:WC_MAX_BYTES, WC_MAX_ROWS:WC_MAX_ROWS,
   wcDecode:wcDecode, wcParseCsv:wcParseCsv, wcNorm:wcNorm, wcKey:wcKey, wcHash:wcHash, wcCourseName:wcCourseName,
   wcParseDue:wcParseDue, wcParse:wcParse, wcFlags:wcFlags, wcDefaultSelected:wcDefaultSelected, wcToItem:wcToItem,
-  WC_EXCLUDED_MAX:WC_EXCLUDED_MAX, wcCleanExcluded:wcCleanExcluded, wcPlan:wcPlan};
+  WC_EXCLUDED_MAX:WC_EXCLUDED_MAX, wcCleanExcluded:wcCleanExcluded, wcPlan:wcPlan, wcSortRows:wcSortRows};
 })(typeof window!=="undefined"?window:this);

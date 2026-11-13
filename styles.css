@@ -931,6 +931,7 @@ main[inert],.fab[inert]{opacity:.55}
 .wc-body{display:flex;flex-direction:column;gap:2px;min-width:0}
 .wc-title{font-size:var(--font-size-l);word-break:break-word;white-space:pre-wrap}
 .wc-meta{display:flex;flex-wrap:wrap;gap:var(--spacing-1) var(--spacing-2);align-items:center;font-size:var(--font-size-s);color:var(--color-text-secondary)}
+.wc-course:empty{display:none}
 .wc-flags{display:inline-flex;flex-wrap:wrap;gap:var(--spacing-1)}
 .wc-flag{border:1px solid var(--color-text-tertiary);border-radius:var(--radius-inner);padding:0 var(--spacing-1);font-size:var(--font-size-xs);color:var(--color-text-secondary)}
 .wc-flag.warn{border-color:var(--color-status-overdue-text);color:var(--color-status-overdue-text);background:var(--color-status-overdue-bg)}

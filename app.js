@@ -2496,11 +2496,12 @@ function openWebclassPreview(parsed){
   var now=new Date();
   var rows=WC.wcPlan(parsed.entries, db.items, db.wcExcluded, now).filter(function(r){ return r.state!=="registered"; });
   var sel=rows.map(function(r){ return r.selected; });
-  var state={filter:"all", q:"", showEx:false};
+  var state={filter:"all", q:"", showEx:false, sort:"csv"};
   var dlg=h('<dialog class="wc-dlg"><div class="dlg-in">'+
     '<h2>WebClass の CSV から取り込む</h2>'+
     '<p class="wc-sum note"></p>'+
-    '<div class="wc-tools"><div class="row wc-filters"></div>'+
+    '<div class="wc-tools"><div class="row wc-filters"></div><label>並び順 <select class="wc-sort">'+
+    '<option value="csv">CSVの順（既定）</option><option value="dueAsc">締切が近い順</option><option value="dueDesc">締切が遠い順</option><option value="title">教材名順</option><option value="course">コース名順</option></select></label>'+
     '<input type="search" class="wc-q" placeholder="教材名・コース名で絞り込む" aria-label="教材名・コース名で絞り込む">'+
     '<div class="row wc-bulk"><button type="button" class="act" data-bulk="1">表示中を全部選ぶ</button><button type="button" class="act" data-bulk="0">表示中を全部外す</button>'+
     '<label class="wc-ex"><input type="checkbox"> 除外した項目も表示</label></div></div>'+
@@ -2515,6 +2516,7 @@ function openWebclassPreview(parsed){
     dlg.querySelector(".wc-filters").appendChild(c);
   });
   dlg.querySelector(".wc-q").oninput=function(){ state.q=WC.wcNorm(this.value).toLowerCase(); draw(); };
+  dlg.querySelector(".wc-sort").onchange=function(){ state.sort=this.value; draw(); };
   dlg.querySelector(".wc-ex input").onchange=function(){ state.showEx=this.checked; draw(); };
   function visible(){
     var out=[];
@@ -2538,9 +2540,17 @@ function openWebclassPreview(parsed){
     var idx=visible(), c=counts(), groups=[], byCourse={};
     sum.textContent="候補 "+rows.filter(function(r){ return r.state!=="excluded"; }).length+"件（表示中 "+idx.length+"件）・選んだもの "+c.picked+"件";
     goBtn.textContent=c.picked?("取り込む（"+c.picked+"件）"):"取り込む";
+    if(state.sort!=="csv"){
+      var sorted=WC.wcSortRows(idx.map(function(i){ return {e:rows[i].e, index:i}; }),state.sort);
+      idx=sorted.map(function(r){ return r.index; });
+    }
     idx.forEach(function(i){ var k=rows[i].e.course; if(!byCourse[k]){ byCourse[k]=[]; groups.push(k); } byCourse[k].push(i); });
     list.textContent="";
     if(!idx.length){ list.appendChild(h('<p class="note">表示する項目はありません。</p>')); return; }
+    if(state.sort!=="csv" && state.sort!=="course"){
+      idx.forEach(function(i){ list.appendChild(wcCard(rows[i],i)); });
+      return;
+    }
     groups.forEach(function(course){
       var g=h('<section class="wc-group"><div class="wc-ghead"><h3></h3><button type="button" class="act">全部選ぶ</button><button type="button" class="act">全部外す</button></div></section>');
       g.querySelector("h3").textContent=rows[byCourse[course][0]].e.courseName;
@@ -2557,13 +2567,14 @@ function openWebclassPreview(parsed){
     if(r.state==="excluded") flags.unshift("除外済み");
     var when=e.noDue?"":(fmtDue(e.due,false)+"・"+wcRemain(e.due,now)); // 締切なしは目印だけで示す
     var card=h('<label class="wc-card" role="listitem"><input type="checkbox"><span class="wc-body"><span class="wc-title"></span>'+
-      '<span class="wc-meta"><span class="wc-when"></span><span class="wc-flags"></span></span></span></label>');
+      '<span class="wc-meta"><span class="wc-course"></span><span class="wc-when"></span><span class="wc-flags"></span></span></span></label>');
     var cb=card.querySelector("input");
     cb.checked=!!sel[i]; cb.disabled=e.noDue;
     if(e.noDue) card.classList.add("off");
     cb.onchange=function(){ sel[i]=cb.checked; var c=counts(); goBtn.textContent=c.picked?("取り込む（"+c.picked+"件）"):"取り込む";
       sum.textContent=sum.textContent.replace(/選んだもの \d+件/,"選んだもの "+c.picked+"件"); };
     card.querySelector(".wc-title").textContent=e.title;
+    card.querySelector(".wc-course").textContent=state.sort!=="csv" && state.sort!=="course"?e.courseName:"";
     card.querySelector(".wc-when").textContent=when+(r.state==="changed"?"（今の締切："+fmtDue(new Date(r.item.due),false)+"）":"");
     var fl=card.querySelector(".wc-flags");
     flags.forEach(function(f){ var b=document.createElement("span"); b.className="wc-flag"+(f==="期限切れ"||f==="締切が変更"?" warn":""); b.textContent=f; fl.appendChild(b); });
