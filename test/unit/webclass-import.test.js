@@ -120,3 +120,35 @@ test('上限: 2MB を超えるファイル・2,000行を超える CSV は断る'
 test('見本の CSV に、実在の学籍番号の形（数字2桁＋英字2文字＋数字3桁）が無い', () => {
   for (const f of ['webclass-sample.csv', 'webclass-sample-nobom.csv']) assert.ok(!/\d{2}[A-Z]{2}\d{3}/.test(new TextDecoder().decode(bytes(f)).replace('00XX000', '')), f);
 });
+
+test('除外リスト: 形の合わない値を捨て、同じキーは後のものを使い、上限を超えたら古いものから捨てる', () => {
+  const h = 'a'.repeat(16);
+  const out = W.wcCleanExcluded([{ k: h, due: '2026-11-20 23:59', at: '2026-11-13' }, { k: 'XYZ', due: '', at: '' }, null, 5,
+    { k: h, due: '2026-11-21 23:59', at: '2026-11-14' }, { k: 'b'.repeat(16), due: 7, at: 'x' }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(out)), [{ k: h, due: '2026-11-21 23:59', at: '2026-11-14' }, { k: 'b'.repeat(16), due: '', at: '' }]);
+  assert.deepEqual(Array.from(W.wcCleanExcluded('x')), []);
+  const many = Array.from({ length: W.WC_EXCLUDED_MAX + 3 }, (_, i) => ({ k: i.toString(16).padStart(16, '0'), due: '', at: '' }));
+  const kept = W.wcCleanExcluded(many);
+  assert.equal(kept.length, W.WC_EXCLUDED_MAX);
+  assert.equal(kept[0].k, (3).toString(16).padStart(16, '0'));
+});
+
+test('プレビューの行: 登録済みは出さない。締切が変わったものは「changed」。除外済みは締切が同じなら隠し、変わったらまた新しい候補にする', () => {
+  const r = load();
+  const e1 = byTitle(r, '課題1'), e2 = byTitle(r, '学生アンケート'), e3 = byTitle(r, '振り返り\nミニレポート'), e4 = byTitle(r, '"引用"つきの課題');
+  const items = [
+    { id: 'x1', title: '課題1', due: e1.due.toISOString(), wc: e1.key },
+    { id: 'x2', title: 'アンケート', due: '2026-11-29T14:59:00.000Z', wc: e2.key },
+  ];
+  const excluded = [{ k: e3.hash, due: e3.dueText, at: '2026-11-01' }, { k: e4.hash, due: '2026-10-01 09:20', at: '2026-10-01' }];
+  const plan = Array.from(W.wcPlan(r.entries, items, excluded, NOW));
+  const of = (e) => plan.find((p) => p.e === e);
+  assert.equal(of(e1).state, 'registered');
+  assert.equal(of(e2).state, 'changed');
+  assert.equal(of(e2).item.id, 'x2');
+  assert.equal(of(e2).selected, true, '未提出で締切がこれからなら、最初から選ぶ');
+  assert.equal(of(e3).state, 'excluded');
+  assert.equal(of(e3).selected, false);
+  assert.equal(of(e4).state, 'new', '除外したときと締切が違えば、また出す');
+  assert.equal(of(byTitle(r, '課題2, 追加分')).state, 'new');
+});

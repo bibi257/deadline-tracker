@@ -491,3 +491,19 @@ test('保存 API: 値の意味も確かめる。題名が空・実在しない�
     rev += 1;
   }
 });
+
+test('取り込みの除外リスト（wcExcluded）: 形と上限を確かめる。古い版のアプリが送らなくても、保存してある分は残る', async () => {
+  const { call } = setup();
+  const put = (body, rev) => call('PUT', '/api/data', { headers: { 'If-Match': String(rev) }, body });
+  const ex = [{ k: '0123456789abcdef', due: '2026-11-20 23:59', at: '2026-11-13' }];
+  assert.equal((await put({ ...sample(), wcExcluded: ex }, 0)).status, 201);
+  for (const bad of [[{ k: 'xyz', due: '', at: '' }], [{ k: '0123456789abcdef', due: 5, at: '' }], ['s'], { a: 1 }]) {
+    assert.equal((await put({ ...sample(), wcExcluded: bad }, 1)).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await put({ ...sample(), wcExcluded: Array.from({ length: 5001 }, () => ex[0]) }, 1)).status, 400, '多すぎる');
+  assert.equal((await put(sample(2), 1)).status, 200); // 古い版：wcExcluded なし
+  assert.deepEqual((await call('GET', '/api/data')).body.data.wcExcluded, ex);
+  assert.equal((await put({ ...sample(), wcExcluded: [] }, 2)).status, 200);
+  assert.deepEqual((await call('GET', '/api/data')).body.data.wcExcluded, []);
+  assert.equal((await put({ ...sample(), items: [{ id: 'w1', title: 't', due: '2026-11-20T00:00:00.000Z', wc: 5 }] }, 3)).status, 400, 'wc は文字列');
+});

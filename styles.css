@@ -911,3 +911,26 @@ main[inert],.fab[inert]{opacity:.55}
 .ico-row{flex-basis:100%;display:flex;align-items:center;gap:var(--spacing-2);font-size:var(--font-size-m);color:var(--color-text-secondary)}
 .ico-row .cat-ico{width:24px;height:24px;margin-right:0}
 .ico-row .act{border:1px solid var(--color-border);padding:2px var(--spacing-2)}
+/* WebClass の CSV の取り込み（プレビュー） */
+.wc-dlg{width:min(720px,calc(100% - 24px));max-height:calc(100dvh - 24px)}
+.wc-dlg .dlg-in{display:flex;flex-direction:column;max-height:calc(100dvh - 26px)}
+.wc-tools{display:flex;flex-direction:column;gap:var(--spacing-2);margin-bottom:var(--spacing-2)}
+.wc-q{width:100%}
+.wc-bulk{align-items:center}
+.wc-bulk .act{border:1px solid var(--color-border)}
+.wc-ex{display:inline-flex;align-items:center;gap:var(--spacing-1);font-size:var(--font-size-m);color:var(--color-text-secondary);margin-left:auto}
+.wc-list{overflow:auto;min-height:120px;flex:1;border-top:1px solid var(--color-border);border-bottom:1px solid var(--color-border);padding:var(--spacing-1) 0}
+.wc-group{margin:var(--spacing-2) 0}
+.wc-ghead{display:flex;align-items:center;gap:var(--spacing-2);position:sticky;top:0;background:var(--color-background-surface);padding:var(--spacing-1) 0;z-index:1}
+.wc-ghead h3{flex:1;margin:0;font-size:var(--font-size-l);font-weight:var(--font-weight-bold);word-break:break-word}
+.wc-ghead .act{border:1px solid var(--color-border);padding:2px var(--spacing-2);font-size:var(--font-size-s)}
+.wc-card{display:flex;gap:var(--spacing-2);align-items:flex-start;padding:var(--spacing-2);border:1px solid var(--color-border-subtle);border-radius:var(--radius-element);margin:var(--spacing-1) 0;cursor:pointer;background:var(--color-background-surface)}
+.wc-card:has(input:checked){border-color:var(--color-accent)}
+.wc-card.off{cursor:default;opacity:.6}
+.wc-card input{margin-top:3px;flex-shrink:0;width:18px;height:18px}
+.wc-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.wc-title{font-size:var(--font-size-l);word-break:break-word;white-space:pre-wrap}
+.wc-meta{display:flex;flex-wrap:wrap;gap:var(--spacing-1) var(--spacing-2);align-items:center;font-size:var(--font-size-s);color:var(--color-text-secondary)}
+.wc-flags{display:inline-flex;flex-wrap:wrap;gap:var(--spacing-1)}
+.wc-flag{border:1px solid var(--color-text-tertiary);border-radius:var(--radius-inner);padding:0 var(--spacing-1);font-size:var(--font-size-xs);color:var(--color-text-secondary)}
+.wc-flag.warn{border-color:var(--color-status-overdue-text);color:var(--color-status-overdue-text);background:var(--color-status-overdue-bg)}

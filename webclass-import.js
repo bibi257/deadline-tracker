@@ -146,7 +146,45 @@ function wcToItem(e,id,now){
           created:now.toISOString(), wc:e.key};
 }
 
+/* ---- 除外リスト（選ばなかった項目。次回のプレビューに出さない） ----
+   1件は {k: キーのハッシュ, due: 除外したときの締切の文字（空欄なら ""）, at: 除外した日 "YYYY-MM-DD"}。
+   教材名・コース名そのものは保存しない（履修の情報のため）。同期するデータに入れる */
+var WC_EXCLUDED_MAX=5000;
+function wcCleanExcluded(arr){
+  if(!Array.isArray(arr)) return [];
+  var by={}, order=[];
+  arr.forEach(function(x){
+    if(!x || typeof x!=="object" || typeof x.k!=="string" || !/^[0-9a-f]{16}$/.test(x.k)) return;
+    var due=typeof x.due==="string" && x.due.length<=20 ? x.due : "";
+    var at=typeof x.at==="string" && /^\d{4}-\d{2}-\d{2}$/.test(x.at) ? x.at : "";
+    if(!(x.k in by)) order.push(x.k);
+    by[x.k]={k:x.k, due:due, at:at}; // 同じキーは後のものを使う
+  });
+  var out=order.map(function(k){ return by[k]; });
+  return out.length>WC_EXCLUDED_MAX ? out.slice(out.length-WC_EXCLUDED_MAX) : out; // 多すぎたら古いものから捨てる
+}
+
+/* プレビューの行を作る。items は今の締切、excluded は除外リスト、now は今の時刻。
+   各行：{e: 候補, state, item（締切が変わった既存の締切）, selected（最初から選ぶか）}
+   state：new（新しい）／changed（登録済みで締切だけ変わった）／excluded（除外済みで締切も同じ）／registered（登録済みで同じ。出さない） */
+function wcPlan(entries, items, excluded, now){
+  var byKey={}, ex={};
+  (items||[]).forEach(function(it){ if(it && typeof it.wc==="string") byKey[it.wc]=it; }); // wc は wcKey で作ったキーそのもの
+  (excluded||[]).forEach(function(x){ ex[x.k]=x; });
+  return entries.map(function(e){
+    var it=byKey[e.key];
+    if(it){
+      if(!e.due || Date.parse(it.due)===e.due.getTime()) return {e:e, state:"registered", item:it, selected:false};
+      return {e:e, state:"changed", item:it, selected:!e.submitted && e.due>=now};
+    }
+    var x=ex[e.hash];
+    if(x && x.due===e.dueText) return {e:e, state:"excluded", item:null, selected:false};
+    return {e:e, state:"new", item:null, selected:wcDefaultSelected(e,now)};
+  });
+}
+
 root.DTWebClass={WC_CAT:WC_CAT, WC_COLS:WC_COLS, WC_MAX_BYTES:WC_MAX_BYTES, WC_MAX_ROWS:WC_MAX_ROWS,
   wcDecode:wcDecode, wcParseCsv:wcParseCsv, wcNorm:wcNorm, wcKey:wcKey, wcHash:wcHash, wcCourseName:wcCourseName,
-  wcParseDue:wcParseDue, wcParse:wcParse, wcFlags:wcFlags, wcDefaultSelected:wcDefaultSelected, wcToItem:wcToItem};
+  wcParseDue:wcParseDue, wcParse:wcParse, wcFlags:wcFlags, wcDefaultSelected:wcDefaultSelected, wcToItem:wcToItem,
+  WC_EXCLUDED_MAX:WC_EXCLUDED_MAX, wcCleanExcluded:wcCleanExcluded, wcPlan:wcPlan};
 })(typeof window!=="undefined"?window:this);

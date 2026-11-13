@@ -31,7 +31,7 @@ import { zonedData } from './time.js';
 const MIN_KEY_LENGTH = 24;
 // D1 の1行の上限は 2,000,000 バイト。日本語は1文字3バイトなので、文字数ではなくバイト数で測る（余裕を残した値）
 const MAX_DATA_BYTES = 1_900_000;
-const ITEM_STRING_KEYS = ['title', 'due', 'start', 'memo', 'cat', 'rep', 'pick']; // 項目の中で、あれば文字列でなければならない値
+const ITEM_STRING_KEYS = ['title', 'due', 'start', 'memo', 'cat', 'rep', 'pick', 'wc']; // 項目の中で、あれば文字列でなければならない値
 const SNAPSHOT_INTERVAL = 30 * 60; // 世代バックアップを残す間隔（秒）。自動同期の連続保存で増えすぎないようにする
 const SNAPSHOT_LIST_LIMIT = 200;
 const AUTH_MISS_MAX = 10; // 認証の失敗を許す回数（IP ごと）
@@ -144,12 +144,17 @@ async function authorize(env, request) {
 
 // ---- データの検証 ----
 
-const ARRAY_KEYS = ['items', 'templates', 'trash', 'categories', 'completions'];
+const ARRAY_KEYS = ['items', 'templates', 'trash', 'categories', 'completions', 'wcExcluded'];
 const OBJECT_KEYS = ['catReminders', 'catColors', 'catIcons'];
 // カテゴリーのアイコン（アプリが端末内で 64px に縮小した PNG・WebP の data URL）。上限と形は app-calc.js の isIconData と同じ
 const ICON_MAX_CHARS = 11000;
 const ICON_RE = /^data:image\/(?:png|webp);base64,[A-Za-z0-9+/]+=*$/;
 const ICON_MAX_COUNT = 100;
+// WebClass の取り込みで選ばなかった項目（キーのハッシュだけ）。形と上限は webclass-import.js の wcCleanExcluded と同じ
+const WC_EXCLUDED_MAX = 5000;
+const WC_HASH = /^[0-9a-f]{16}$/;
+// 古い版のアプリが送らない入れ物。送られてこなかったときは、保存してある分を引き継ぐ（putData）
+const KEEP_WHEN_OMITTED = ['catIcons', 'wcExcluded'];
 
 /** 保存するデータの形を確かめる。値の細かい検査はアプリ側（読み込み時）に任せ、ここでは壊れた形だけを弾く */
 export function checkData(data) {
@@ -167,6 +172,14 @@ export function checkData(data) {
     if (icons.length > ICON_MAX_COUNT) throw new HttpError(400, 'カテゴリーのアイコンが多すぎます');
     for (const v of icons) {
       if (typeof v !== 'string' || v.length > ICON_MAX_CHARS || !ICON_RE.test(v)) throw new HttpError(400, 'カテゴリーのアイコンの形が正しくありません');
+    }
+  }
+  if (data.wcExcluded !== undefined) {
+    if (data.wcExcluded.length > WC_EXCLUDED_MAX) throw new HttpError(400, '取り込みの除外リストが多すぎます');
+    for (const x of data.wcExcluded) {
+      if (!isObj(x) || typeof x.k !== 'string' || !WC_HASH.test(x.k) || typeof x.due !== 'string' || x.due.length > 20 || typeof x.at !== 'string' || x.at.length > 10) {
+        throw new HttpError(400, '取り込みの除外リストの形が正しくありません');
+      }
     }
   }
   if (data.updatedAt !== undefined && typeof data.updatedAt !== 'string') throw new HttpError(400, 'updatedAt は文字列にしてください');
@@ -247,13 +260,21 @@ async function putData(env, request, url) {
     throw new HttpError(409, '他の端末の更新があります。読み込んでからやり直してください', { rev: cur ? cur.rev : 0 });
   }
 
-  // アイコンを知らない古い版のアプリは、catIcons を送らない。そのまま置き換えると全端末のアイコンが消えるので、
-  // 送られてこなかったときだけ、保存してある分を引き継ぐ（新しい版は空でも {} を送るので、消す操作はそのまま効く）。
-  // 保存してある JSON の解析は、アイコンがあるときだけ行う（CPU 時間の節約）
-  if (cur && data.catIcons === undefined && cur.json.includes('"catIcons":')) {
-    const kept = JSON.parse(cur.json).catIcons;
-    if (kept && typeof kept === 'object' && Object.keys(kept).length) {
-      data.catIcons = kept;
+  // 古い版のアプリは、新しく足した入れ物（カテゴリーのアイコン・取り込みの除外リスト）を送らない。そのまま置き換えると
+  // 全端末の分が消えるので、送られてこなかったときだけ、保存してある分を引き継ぐ（新しい版は空でも {}・[] を送るので、消す操作はそのまま効く）。
+  // 保存してある JSON の解析は、その入れ物があるときだけ行う（CPU 時間の節約）
+  const omitted = cur ? KEEP_WHEN_OMITTED.filter((k) => data[k] === undefined && cur.json.includes(`"${k}":`)) : [];
+  if (omitted.length) {
+    const saved = JSON.parse(cur.json);
+    let changed = false;
+    for (const k of omitted) {
+      const v = saved[k];
+      if (v && typeof v === 'object' && Object.keys(v).length) {
+        data[k] = v;
+        changed = true;
+      }
+    }
+    if (changed) {
       text = JSON.stringify(data);
       if (utf8Bytes(text, MAX_DATA_BYTES) > MAX_DATA_BYTES) throw new HttpError(413, '締切データが大きすぎます');
     }
