@@ -456,3 +456,16 @@ test('カテゴリーのアイコン: PNG・WebP の data URL で上限以下な
   ]) assert.equal((await put(bad, 1)).status, 400, JSON.stringify(bad).slice(0, 40));
   assert.equal((await put(Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`c${i}`, PNG])), 1)).status, 400, '多すぎる');
 });
+
+test('カテゴリーのアイコン: catIcons を送らない古い版のアプリが保存しても、保存してあるアイコンは残る。新しい版が {} を送れば消える', async () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  const { call } = setup();
+  const put = (body, rev) => call('PUT', '/api/data', { headers: { 'If-Match': String(rev) }, body });
+  assert.equal((await put({ ...sample(), catIcons: { 課題: PNG } }, 0)).status, 201);
+  assert.equal((await put(sample(2), 1)).status, 200); // 古い版：catIcons なし
+  const got = (await call('GET', '/api/data')).body.data;
+  assert.deepEqual(got.catIcons, { 課題: PNG });
+  assert.equal(got.items.length, 2, 'ほかの内容は送られたもので置き換わる');
+  assert.equal((await put({ ...sample(), catIcons: {} }, 2)).status, 200);
+  assert.deepEqual((await call('GET', '/api/data')).body.data.catIcons, {});
+});

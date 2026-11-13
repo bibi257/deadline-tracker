@@ -233,13 +233,25 @@ async function putData(env, request, url) {
 
   const data = await readJson(request, MAX_DATA_BYTES + 1000);
   checkData(data);
-  const text = JSON.stringify(data);
+  let text = JSON.stringify(data);
   if (utf8Bytes(text, MAX_DATA_BYTES) > MAX_DATA_BYTES) throw new HttpError(413, '締切データが大きすぎます');
 
   const t = now(env);
   const cur = await env.DB.prepare('SELECT json, rev FROM docs WHERE id = ?').bind(DOC_ID).first();
   if (!force && (cur ? cur.rev : 0) !== base) {
     throw new HttpError(409, '他の端末の更新があります。読み込んでからやり直してください', { rev: cur ? cur.rev : 0 });
+  }
+
+  // アイコンを知らない古い版のアプリは、catIcons を送らない。そのまま置き換えると全端末のアイコンが消えるので、
+  // 送られてこなかったときだけ、保存してある分を引き継ぐ（新しい版は空でも {} を送るので、消す操作はそのまま効く）。
+  // 保存してある JSON の解析は、アイコンがあるときだけ行う（CPU 時間の節約）
+  if (cur && data.catIcons === undefined && cur.json.includes('"catIcons":')) {
+    const kept = JSON.parse(cur.json).catIcons;
+    if (kept && typeof kept === 'object' && Object.keys(kept).length) {
+      data.catIcons = kept;
+      text = JSON.stringify(data);
+      if (utf8Bytes(text, MAX_DATA_BYTES) > MAX_DATA_BYTES) throw new HttpError(413, '締切データが大きすぎます');
+    }
   }
 
   if (!cur) {
