@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const out = `${root}web/`;
-const files = ['index.html', 'privacy.html', 'privacy.css', 'app-calc.js', 'app.js', 'theme-boot.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest'];
+const files = ['index.html', 'privacy.html', 'privacy.css', 'app-calc.js', 'webclass-import.js', 'app.js', 'theme-boot.js', 'styles.css', 'service-worker.js', 'manifest.webmanifest'];
 
 /** 内容から決まる短い版番号（SHA-256 の先頭10文字）。同じ内容なら、いつビルドしても同じ値になる */
 export function hash10(...texts) {
@@ -17,7 +17,7 @@ export function hash10(...texts) {
   return h.digest('hex').slice(0, 10);
 }
 
-const STAMP_SOURCES = ['index.html', 'app-calc.js', 'app.js', 'theme-boot.js', 'styles.css', 'service-worker.js'];
+const STAMP_SOURCES = ['index.html', 'app-calc.js', 'webclass-import.js', 'app.js', 'theme-boot.js', 'styles.css', 'service-worker.js'];
 
 /**
  * 画面に出す版の日時（JST の "YYYY-MM-DD HH:MM"）。画面のファイルを最後に変えたコミットの日時なので、ファイルを変えない
@@ -47,10 +47,11 @@ function replaceOnce(text, re, replacement, what) {
  *                                 版の日時はビルドした時刻ではなく、画面のファイルを最後に変えたコミットの日時（versionDate）。
  *                                 ファイルを変えないデプロイで値が変わると、全端末が「新しい版が見つかりました」と読み直してしまうため
  */
-export function versionIndexHtml(html, { app, css, calc, all, date }) {
+export function versionIndexHtml(html, { app, css, calc, wc, all, date }) {
   // 実際のタグだけを対象にする（コメントの中の書き方の例は書き換えない）
   let out = replaceOnce(html, /(<script src="app\.js\?v=)[^"]*("><\/script>)/, `$1${app}$2`, 'index.html の app.js?v=');
   if (calc !== undefined) out = replaceOnce(out, /(<script src="app-calc\.js\?v=)[^"]*("><\/script>)/, `$1${calc}$2`, 'index.html の app-calc.js?v=');
+  if (wc !== undefined) out = replaceOnce(out, /(<script src="webclass-import\.js\?v=)[^"]*("><\/script>)/, `$1${wc}$2`, 'index.html の webclass-import.js?v=');
   out = replaceOnce(out, /(<link rel="stylesheet" href="styles\.css\?v=)[^"]*(">)/, `$1${css}$2`, 'index.html の styles.css?v=');
   return replaceOnce(out, /(<meta name="build-stamp" content=")([^"]*)(")/, (_, a, stamp, c) => {
     // 元の先頭の手書きの日時は外す。ルートの印 `dev` は説明ではないので、web/ には残さない
@@ -86,10 +87,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (const f of files) await cp(`${root}${f}`, `${out}${f}`);
   await cp(`${root}assets`, `${out}assets`, { recursive: true });
   const text = (f) => readFile(`${root}${f}`, 'utf8');
-  const [index, app, css, sw, boot, calc] = await Promise.all([text('index.html'), text('app.js'), text('styles.css'), text('service-worker.js'), text('theme-boot.js'), text('app-calc.js')]);
+  const [index, app, css, sw, boot, calc, wc] = await Promise.all([text('index.html'), text('app.js'), text('styles.css'), text('service-worker.js'), text('theme-boot.js'), text('app-calc.js'), text('webclass-import.js')]);
   // ルートのファイルは `dev` のまま（手で版番号を更新しない）。web/ には、内容のハッシュと日時を自動で入れる
-  const all = hash10(index, app, css, sw, boot, calc);
-  await writeFile(`${out}index.html`, versionIndexHtml(index, { app: hash10(app), css: hash10(css), calc: hash10(calc), all, date: versionDate(root) }));
+  const all = hash10(index, app, css, sw, boot, calc, wc);
+  await writeFile(`${out}index.html`, versionIndexHtml(index, { app: hash10(app), css: hash10(css), calc: hash10(calc), wc: hash10(wc), all, date: versionDate(root) }));
   await writeFile(`${out}service-worker.js`, versionServiceWorker(sw, all));
   await writeFile(`${out}_headers`, buildHeaders(index));
   console.log(`web/ に ${files.length} ファイルと assets/、_headers をそろえました（版 ${all}）`);
