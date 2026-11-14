@@ -1230,8 +1230,8 @@ function wireChecklist(el, it){
    同期先やトークンが未設定なら何もしない（初回利用者の邪魔をしない） */
 function autoSyncIfConfigured(){
   clearTimeout(_autoSyncTimer); _autoSyncTimer=null;
-  if(!db.settings.autoSync) return;
-  getStoredSyncConfig().then(function(cfg){ if(cfg) runAutoSync(cfg); }).catch(function(){}); // 自動処理なので、失敗は runAutoSync の中で扱う
+  if(!db.settings.autoSync) return Promise.resolve();
+  return getStoredSyncConfig().then(function(cfg){ if(cfg) return runAutoSync(cfg); }).catch(function(){}); // 自動処理なので、失敗は runAutoSync の中で扱う
 }
 
 function runAutoSync(cfg){
@@ -1240,7 +1240,7 @@ function runAutoSync(cfg){
   var mark=_editSeq;         // 送る内容を作った時点の、人の編集の回数
   var payload=syncPayload();
   // 手元の rev を If-Match に付けて直接送る（衝突は Worker が 409 で断る）。先に全データを読み直さない
-  cfPut(cfg,payload)
+  var sync=cfPut(cfg,payload)
     .then(function(res){
       if(res && res.status===409){
         // 新しい版で自動的に送り直すと、他の端末の更新を消してしまう。止めて知らせる
@@ -1267,6 +1267,9 @@ function runAutoSync(cfg){
       }
     })
     .catch(function(e){ cfNoteAuthFailure(e); /* 自動処理なので、ほかの失敗は通知しない */ });
+  _autoSyncInFlight=sync;
+  sync.then(function(){ if(_autoSyncInFlight===sync) _autoSyncInFlight=null; },function(){ if(_autoSyncInFlight===sync) _autoSyncInFlight=null; });
+  return sync;
 }
 /* 自動同期が 400・413・5xx などで断られたとき、Worker が返す理由を1回だけトーストで出し、設定の同期の節にも残す。
    同じ理由の失敗が続く間は、トーストを繰り返さない（成功したら記録を消す） */
@@ -1283,13 +1286,13 @@ function noteAutoSyncFailure(res){
 }
 /* 完了・削除などの操作は続けて行うことが多いので、少し待ってからまとめて1回だけ自動同期する。
    画面を閉じる(アプリを切り替える)ときは待たずにすぐ送る */
-var _autoSyncTimer=null, _autoSyncBlockedShown=false;
+var _autoSyncTimer=null, _autoSyncInFlight=null, _autoSyncBlockedShown=false;
 function scheduleAutoSync(){
   if(!db.settings.autoSync) return;
   clearTimeout(_autoSyncTimer);
   _autoSyncTimer=setTimeout(autoSyncIfConfigured, 3000);
 }
-function flushAutoSync(){ if(_autoSyncTimer) autoSyncIfConfigured(); }
+function flushAutoSync(){ if(_autoSyncTimer) return autoSyncIfConfigured(); return Promise.resolve(); }
 
 /* 保存先へ送る内容。設定(テーマ等)とこの端末専用の隔離データは含めない */
 function syncPayload(){
@@ -4626,7 +4629,24 @@ function refreshThenAutoComplete(block){
   return _refreshing;
 }
 /* 置き換えを保留していたとき、登録・編集が終わってから行う */
-function runDeferredRefresh(){ if(_deferRefresh && !editingBusy()) refreshThenAutoComplete(true); }
+function runDeferredRefresh(){
+  if(editingBusy()) return;
+  if(_reloadPending){
+    _reloadPending=false;
+    setTimeout(function(){
+      if(editingBusy()){ _reloadPending=true; return; }
+      var flushed=_autoSyncTimer ? flushAutoSync() : null;
+      var sync=flushed || _autoSyncInFlight;
+      var timeout=new Promise(function(resolve){ setTimeout(resolve,3000); });
+      Promise.race([Promise.resolve(sync),timeout]).then(function(){
+        if(editingBusy()){ _reloadPending=true; return; }
+        location.reload();
+      });
+    },1200);
+    return;
+  }
+  if(_deferRefresh) refreshThenAutoComplete(true);
+}
 
 /* 繰り返し1回分だけ日付を進める。月・年単位は基準日(anchorDay)を保ち、
    その月に無い日(31日・2/29など)は月末に丸める。
@@ -4800,7 +4820,7 @@ if("serviceWorker" in navigator && location.protocol!=="file:"){
 /* ========== 更新の自動反映 ==========
    ホーム画面のアプリは古い画面を長く保持することがあるため、
    起動時と復帰時にサーバー側の更新を確認し、変わっていれば読み直す */
-var APP_BUILD=null;
+var APP_BUILD=null, _reloadPending=false;
 function checkForUpdate(){
   if(location.protocol==="file:") return;
   // index.html・app.js・styles.css を見る（スタンプの更新を忘れて app.js や styles.css だけ変えた場合も、長さの違いで気づける）
@@ -4816,13 +4836,24 @@ function checkForUpdate(){
       if(APP_BUILD===null){ APP_BUILD=build; return; }
       if(build!==APP_BUILD){
         APP_BUILD=build;
-        toast("新しい版が見つかりました。読み直します…");
-        setTimeout(function(){ location.reload(); },1200);
+        if(editingBusy()){
+          if(!_reloadPending){ _reloadPending=true; toast("新しい版があります。入力が終わったら読み直します"); }
+        } else {
+          toast("新しい版が見つかりました。読み直します…");
+          setTimeout(function(){
+            if(editingBusy()){
+              if(!_reloadPending){ _reloadPending=true; toast("新しい版があります。入力が終わったら読み直します"); }
+              return;
+            }
+            location.reload();
+          },1200);
+        }
       }
     })
     .catch(function(){});
 }
 document.addEventListener("visibilitychange",function(){
+  runDeferredRefresh();
   if(document.hidden){ flushAutoSync(); return; } // 閉じる前に、待っている自動同期を送る
   checkForUpdate();
   if(Date.now()-_lastRefreshAt>=30000) refreshThenAutoComplete(true); // 前回の確認から30秒以上たっていれば、読み終えるまで待たせる
@@ -4863,6 +4894,6 @@ setInterval(function(){ if(!_refreshing && _srvState!=="loading") autoCompleteOv
 checkForUpdate();
 var _pullDone=refreshThenAutoComplete(true); // 他の端末の更新の取り込み → 自動完了 の順
 handleDoneParam(_pullDone);
-setInterval(checkForUpdate, 10*60000); // 10分ごとに更新を確認
+setInterval(function(){ checkForUpdate(); runDeferredRefresh(); }, 10*60000); // 10分ごとに更新を確認
 setInterval(function(){ refreshThenAutoComplete(); }, 10*60000); // 10分ごとに保存先の新しい内容を確認
 })();
