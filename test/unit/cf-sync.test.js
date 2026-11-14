@@ -15,7 +15,7 @@ after(() => mock.restoreAll());
 const FNS = [
   'cfKnownRev', 'cfSaveRev', 'cfFetchData', 'cfFetchState', 'cfPut', 'cfAskOverwrite', 'remoteHasUnknownChanges',
   'runAutoSync', 'doSync', 'proceedPull', 'getRemoteText', 'autoPullWith', 'backupRemoteBeforeOverwrite', 'syncHint',
-  'sanitizeIncomingItems', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems', 'cfAutoBlocked', 'cfNoteAuthFailure',
+  'sanitizeIncomingItems', 'sanitizeIncomingMeta', 'cleanCompletions', 'adoptCompletions', 'adoptIncoming', 'syncPayload', 'refreshThenAutoComplete', 'autoCompleteOverdueItems', 'cfAutoBlocked', 'cfNoteAuthFailure',
   'cfSnapUrl', 'cfGetJson', 'cfFetchSnapshots', 'cfReadSnapshot', 'fmtSnapAt', 'cfRestoreSnapshot',
   'icsViaWorkerOk', 'cfFetchIcs', 'downloadIcsPreferWorker', 'noteAutoSyncFailure', 'normalizeItemTypes', 'markClean', 'hasUnsyncedChanges', 'overwriteLosses', 'conflictLog', 'noteConflict', 'conflictStats', 'runDeferredRefresh',
 ];
@@ -54,8 +54,8 @@ function world() {
       _autoSyncTimer: null, _autoSyncInFlight: null,
       askOverwriteDialog: (losses) => { d.dialogs.push(losses); return Promise.resolve(d.answers.length ? d.answers.shift() : false); },
       RN: () => 'Cloudflare', markSynced() {}, markPulled() {}, saveRaw() {}, render() {}, softRender() {},
-      normalizeTrash: (x) => x, cleanCatReminders: (x) => x, cleanCatColors: (x) => x, adoptCompletions() {},
-      sanitizeIncomingMeta: () => ({ templates: null, categories: null }),
+      normalizeTrash: (x) => x, cleanCatReminders: (x) => x, cleanCatColors: (x) => x,
+      cleanCatIcons: (x) => x, WC: { wcCleanExcluded: (x) => x },
       _autoSyncBlockedShown: false, _autoSyncFailShown: '', _lastAutoSyncError: null, _staleNoticeShown: false, CF_REV_KEY: 'cf-known-rev', CONFLICT_KEY: 'conflict-log',
       hoursSincePulled: () => null,
       // 起動時の「取り込み → 自動完了」用（本物の applyCompletion / save は画面まわりに依存するので、同じ効果だけ再現する）
@@ -86,6 +86,41 @@ function world() {
 const fetch_ = (w, path) => w.fetchToWorker(`https://x.test${path}`, { headers: { Authorization: `Bearer ${KEY}` } });
 const titles = (r) => r.data.items.map((i) => i.title);
 const mine = (d) => Array.from(d.db.items, (i) => i.title); // vm の中で作られた配列は、そのままでは deepEqual できない
+
+test('adoptIncoming adopts every syncPayload container except updatedAt', () => {
+  const d = world().device('A', () => '2026-10-26T10:00:00.000Z');
+  const keys = Object.keys(d.ctx.syncPayload()).filter((k) => k !== 'updatedAt');
+  const incoming = {
+    items: [{ id: 'remote', title: 'remote', due: '2026-12-01T00:00:00.000Z', done: false }],
+    templates: [{ name: 'remote-template' }], trash: [{ trashId: 't', item: { id: 'old' } }],
+    categories: ['remote-category'], catReminders: { x: [2] }, catColors: { x: '#123456' },
+    catIcons: { x: 'icon' }, wcExcluded: ['remote-wc'], completions: [{ id: 'c', doneAt: '2026-01-01T00:00:00.000Z', exp: 4 }], expCarry: 7,
+  };
+  d.ctx.adoptIncoming(incoming);
+  const adopted = d.ctx.syncPayload();
+  for (const key of keys) {
+    const actual = adopted[key] === undefined ? undefined : JSON.parse(JSON.stringify(adopted[key]));
+    assert.deepEqual(actual, incoming[key], `${key} is adopted`);
+  }
+});
+
+test('adoptIncoming keeps current values for containers absent from incoming data', () => {
+  const d = world().device('A', () => '2026-10-26T10:00:00.000Z');
+  d.db.items = [{ id: 'keep', title: 'keep', due: '2026-12-01T00:00:00.000Z' }];
+  d.db.templates = [{ name: 'keep' }]; d.db.categories = ['keep']; d.db.catReminders = { keep: [1] };
+  const before = JSON.parse(JSON.stringify(d.ctx.syncPayload()));
+  d.ctx.adoptIncoming({});
+  const after = JSON.parse(JSON.stringify(d.ctx.syncPayload()));
+  for (const key of Object.keys(before).filter((k) => k !== 'updatedAt')) assert.deepEqual(after[key], before[key], key);
+});
+
+test('adoptIncoming quarantines broken items', () => {
+  const d = world().device('A', () => '2026-10-26T10:00:00.000Z');
+  const result = d.ctx.adoptIncoming({ items: [{ title: 'missing id' }] });
+  assert.equal(result.kept.length, 0);
+  assert.equal(result.quarantined.length, 1);
+  assert.equal(d.db.quarantine.length, 1);
+});
 
 test('同期に成功すると、応答の rev を「最後に確認した版」として保存する。読み込みでも保存する', async () => {
   const w = world();
