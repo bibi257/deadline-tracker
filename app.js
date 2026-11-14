@@ -210,6 +210,24 @@ function adoptCompletions(d){
   if(Array.isArray(d.completions)) db.completions=cleanCompletions(d.completions);
   if(typeof d.expCarry==="number" && d.expCarry>=0) db.expCarry=d.expCarry;
 }
+/* 外部から受け取ったデータを、存在する入れ物だけ現在の db に反映する */
+function adoptIncoming(d,opts){
+  opts=opts||{};
+  var check=opts.check||sanitizeIncomingItems(Array.isArray(d.items)?d.items:[]);
+  if(Array.isArray(d.items)) db.items=check.kept;
+  if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
+  var meta=sanitizeIncomingMeta(d);
+  if(meta.templates) db.templates=meta.templates;
+  if(Array.isArray(d.trash)) db.trash=normalizeTrash(d.trash);
+  if(meta.categories) db.categories=meta.categories;
+  if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
+  if(d.catColors) db.catColors=cleanCatColors(d.catColors);
+  if(d.catIcons) db.catIcons=cleanCatIcons(d.catIcons);
+  if(d.wcExcluded) db.wcExcluded=WC.wcCleanExcluded(d.wcExcluded);
+  adoptCompletions(d);
+  if(opts.settings && d.settings) db.settings=Object.assign(db.settings,d.settings);
+  return check;
+}
 function trimCompletions(){
   while(db.completions.length>COMPLETION_LIMIT){
     var c=db.completions.shift();
@@ -2887,19 +2905,7 @@ function renderSettings(){
         if(!d||!Array.isArray(d.items)) throw 0;
         if(!confirm("読み込むと現在のデータは置き換わります。続けますか？")) return;
         // 手で編集したファイルなどで壊れた項目があっても、全体を読み込めるよう検証する
-        var check=sanitizeIncomingItems(d.items);
-        db.items=check.kept;
-        if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
-        var meta=sanitizeIncomingMeta(d);
-        if(meta.templates) db.templates=meta.templates;
-        if(Array.isArray(d.trash)) db.trash=normalizeTrash(d.trash);
-        if(meta.categories) db.categories=meta.categories;
-        if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
-        if(d.catColors) db.catColors=cleanCatColors(d.catColors);
-        if(d.catIcons) db.catIcons=cleanCatIcons(d.catIcons);
-        if(d.wcExcluded) db.wcExcluded=WC.wcCleanExcluded(d.wcExcluded);
-        adoptCompletions(d);
-        if(d.settings) db.settings=Object.assign(db.settings,d.settings);
+        var check=adoptIncoming(d,{settings:true});
         delete db.settings.theme; // テーマは端末ごとの設定で、データには入れない
         save(); render();
         toast("読み込みました"+(check.quarantined.length?"（"+check.quarantined.length+"件は形式が不正のため隔離）":""));
@@ -3173,17 +3179,7 @@ function cfRestoreSnapshot(cfg,snap){
       throw err;
     });
   }).then(function(){
-    db.items=check.kept;
-    if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
-    var meta=sanitizeIncomingMeta(payload);
-    if(meta.templates) db.templates=meta.templates;
-    if(Array.isArray(payload.trash)) db.trash=normalizeTrash(payload.trash);
-    if(meta.categories) db.categories=meta.categories;
-    if(payload.catReminders) db.catReminders=cleanCatReminders(payload.catReminders);
-    if(payload.catColors) db.catColors=cleanCatColors(payload.catColors);
-    if(payload.catIcons) db.catIcons=cleanCatIcons(payload.catIcons);
-    if(payload.wcExcluded) db.wcExcluded=WC.wcCleanExcluded(payload.wcExcluded);
-    adoptCompletions(payload);
+    check=adoptIncoming(payload,{check:check});
     db.updatedAt=payload.updatedAt;
     saveRaw();
     markSynced("復元");
@@ -3295,18 +3291,7 @@ function autoPullWith(cfg){
 
       if(!localChanged){
         // ローカルは前回同期時点のまま変更されていない → 安全に取り込める
-        var check=sanitizeIncomingItems(d.items);
-        db.items=check.kept;
-        if(check.quarantined.length) db.quarantine=db.quarantine.concat(check.quarantined);
-        var meta=sanitizeIncomingMeta(d);
-        if(meta.templates) db.templates=meta.templates;
-        if(Array.isArray(d.trash)) db.trash=normalizeTrash(d.trash);
-        if(meta.categories) db.categories=meta.categories;
-        if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
-        if(d.catColors) db.catColors=cleanCatColors(d.catColors);
-        if(d.catIcons) db.catIcons=cleanCatIcons(d.catIcons);
-        if(d.wcExcluded) db.wcExcluded=WC.wcCleanExcluded(d.wcExcluded);
-        adoptCompletions(d);
+        var check=adoptIncoming(d);
         db.updatedAt=d.updatedAt;
         saveRaw(); softRender();
         markPulled();
@@ -3403,19 +3388,7 @@ function proceedPull(cfg,statusEl){
         statusEl.textContent="読み込みを中止しました。";
         return;
       }
-      db.items=check.kept;
-      if(check.quarantined.length){
-        db.quarantine=db.quarantine.concat(check.quarantined);
-      }
-      var meta=sanitizeIncomingMeta(d);
-      if(meta.templates) db.templates=meta.templates;
-      if(Array.isArray(d.trash)) db.trash=normalizeTrash(d.trash);
-      if(meta.categories) db.categories=meta.categories;
-      if(d.catReminders) db.catReminders=cleanCatReminders(d.catReminders);
-        if(d.catColors) db.catColors=cleanCatColors(d.catColors);
-        if(d.catIcons) db.catIcons=cleanCatIcons(d.catIcons);
-        if(d.wcExcluded) db.wcExcluded=WC.wcCleanExcluded(d.wcExcluded);
-      adoptCompletions(d);
+      check=adoptIncoming(d,{check:check});
       // 取り込んだ内容の時刻をそのまま引き継ぐ（今の時刻で上書きすると比較の基準が壊れるため）
       db.updatedAt=d.updatedAt||new Date().toISOString();
       saveRaw(); render();
