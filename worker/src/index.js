@@ -13,6 +13,8 @@
 //   GET  /api/digest            Discord に送る文面を作る（送らない。確認用）。?kind=morning（朝の一覧。既定）|evening（夜の再通知）|weekly（週次レビュー）
 //   POST /api/digest            今すぐ Discord に送る（手動）。?kind= は同じ
 //   GET  /api/notify-log        定時の通知が届いたか（種類ごとの最新の成功の時刻と、直近7日の失敗）
+//   GET  /api/usage             AI 使用量の取得（USAGE_TOKEN）
+//   PUT  /api/usage             AI 使用量の保存（USAGE_TOKEN）
 //
 // 定時の処理（scheduled）: 毎朝 6:47 に締切一覧を Discord へ。20:23 に翌日分のメールと、夜の再通知（日曜は週次レビュー）。
 // 5:23 に当日分のメールと、世代バックアップの間引き・掃除。
@@ -27,6 +29,8 @@ import { buildIcs, SUBSCRIBE_HEADERS } from './ics.js';
 import { gmailConfig } from './mail.js';
 import { DIGEST_KINDS, previewDigest, previewMail, runScheduled, sendDigest, sendMail } from './jobs.js';
 import { zonedData } from './time.js';
+import { getUsage, putUsage } from './usage.js';
+import { HttpError, readJson } from './http.js';
 
 const MIN_KEY_LENGTH = 24;
 // D1 の1行の上限は 2,000,000 バイト。日本語は1文字3バイトなので、文字数ではなくバイト数で測る（余裕を残した値）
@@ -51,14 +55,6 @@ const DOC_ID = 'main';
 
 // どの応答にも付ける。Content-Type と違う種類として解釈させない（ブラウザの推測を止める）
 const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff' };
-
-class HttpError extends Error {
-  constructor(status, message, extra = {}) {
-    super(message);
-    this.status = status;
-    this.extra = extra;
-  }
-}
 
 const now = (env) => (env.NOW ? env.NOW() : Math.floor(Date.now() / 1000));
 
@@ -122,13 +118,14 @@ async function sameSecret(given, expected) {
   return safeEqual(await sha256Hex(given), await sha256Hex(expected));
 }
 
-async function authorize(env, request) {
+async function authorize(env, request, secretName = 'APP_KEY') {
   // ダッシュボードに貼ったキーの前後に空白や改行が混ざっても通るようにする
-  const appKey = secret(env, 'APP_KEY');
+  const appKey = secret(env, secretName);
   if (!appKey) {
-    throw new HttpError(503, `アクセスキー（APP_KEY）が未設定か短すぎます（${MIN_KEY_LENGTH}文字以上）`);
+    throw new HttpError(503, `アクセスキー（${secretName}）が未設定か短すぎます（${MIN_KEY_LENGTH}文字以上）`);
   }
-  const ipKey = `auth:${await sha256Hex(clientIp(request))}`;
+  if (secretName === 'USAGE_TOKEN' && appKey === secret(env, 'APP_KEY')) throw new HttpError(503, 'USAGE_TOKEN は APP_KEY と別の値にしてください');
+  const ipKey = `${secretName === 'USAGE_TOKEN' ? 'auth:usage:' : 'auth:'}${await sha256Hex(clientIp(request))}`;
   const row = await env.DB.prepare('SELECT n, until FROM limits WHERE k = ?').bind(ipKey).first();
   if (row && row.until > now(env) && row.n >= AUTH_MISS_MAX) {
     throw new HttpError(429, '認証の失敗が続いたため、しばらく使えません。10分ほど待ってください');
@@ -219,16 +216,6 @@ function checkItemValues(it) {
 /** 文字列の UTF-8 でのバイト数。3倍しても上限以下なら、数えずに済ませる（CPU 時間の節約） */
 function utf8Bytes(text, limit) {
   return text.length * 3 <= limit ? text.length * 3 : new TextEncoder().encode(text).length;
-}
-
-async function readJson(request, maxChars) {
-  const text = await request.text();
-  if (text.length > maxChars) throw new HttpError(413, 'データが大きすぎます'); // 文字数はバイト数以下なので、これを超えれば確実に大きすぎる
-  try {
-    return JSON.parse(text || '{}');
-  } catch {
-    throw new HttpError(400, '送られたデータの形式が正しくありません');
-  }
 }
 
 // ---- ハンドラ ----
@@ -431,7 +418,10 @@ async function route(env, request) {
   const method = request.method;
   if (path === '/api/health' && method === 'GET') return json({ ok: true });
 
-  await authorize(env, request);
+  const usageRoute = path === '/api/usage' && ['GET', 'PUT'].includes(method);
+  await authorize(env, request, usageRoute ? 'USAGE_TOKEN' : 'APP_KEY');
+  if (path === '/api/usage' && method === 'GET') return getUsage(env, json);
+  if (path === '/api/usage' && method === 'PUT') return putUsage(env, request, json, now);
   if (path === '/api/mail' && method === 'GET') return getMail(env, url);
   if (path === '/api/mail' && method === 'POST') return postMail(env, url);
   if (path === '/api/digest' && method === 'GET') return getDigest(env, url);
@@ -484,7 +474,7 @@ export default {
       await initDb(env.DB);
       return await route(env, request);
     } catch (e) {
-      if (e instanceof HttpError) return json({ ok: false, error: e.message, ...e.extra }, e.status);
+      if (e instanceof HttpError) return json({ ok: false, error: e.message, ...(e.extra || {}) }, e.status);
       console.error(e);
       return json({ ok: false, error: 'サーバーでエラーが発生しました' }, 500);
     }
