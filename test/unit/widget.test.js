@@ -8,12 +8,22 @@ import { readFileSync } from 'node:fs';
 const SRC = readFileSync(new URL('../../widgets/scriptable/deadlines.js', import.meta.url), 'utf8');
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const WD = ['日', '月', '火', '水', '木', '金', '土'];
+const DAY = 86400000;
 const HEX = { over: '#d83a3a', today: '#e07a10', soon: '#2f7d5b', normal: '#3a3a3a', sub: '#8a8a8a' };
 
 // --- Scriptable の部品の偽物。作られた順に子を記録する ---
 class Color {
   constructor(hex) { this.hex = hex; }
+  // 明るい時の色を返す（既存の HEX の確認はそのまま通る）。作った色は記録して、ダーク用の組を確かめられるようにする。
+  // 実機の Color.dynamic は Color 同士を受けるので、文字列が来たら落として取り違えを防ぐ
+  static dynamic(light, dark) {
+    if (!(light instanceof Color) || !(dark instanceof Color)) throw new Error('Color.dynamic には Color を渡す');
+    light.dark = dark.hex;
+    Color.made.push(light);
+    return light;
+  }
 }
+Color.made = [];
 class Size {
   constructor(width, height) { this.width = width; this.height = height; }
 }
@@ -45,12 +55,28 @@ const md = (k) => { const d = dayFromToday(k); return `${d.getMonth() + 1}/${d.g
 const dd = (k) => { const d = dayFromToday(k); return `${d.getDate()}(${WD[d.getDay()]})`; };
 const wd = (k) => `${WD[dayFromToday(k).getDay()]}曜`;
 
+/** 直近の CalendarEvent.between に渡された範囲（start / end） */
+let lastRange = null;
+
+/** 今日から k 日後の終日の予定（終了は翌日 0:00。締切は前日として扱われる） */
+const allDay = (title, k) => {
+  const t = new Date();
+  return { title, endDate: new Date(t.getFullYear(), t.getMonth(), t.getDate() + k + 1), isAllDay: true };
+};
+
 /** ウィジェットを作り、組み立てられた ListWidget を返す */
 async function run({ family = 'medium', events = [], hasCalendar = true } = {}) {
   let captured = null;
+  Color.made = [];
   const globals = {
     Calendar: { forEvents: async () => (hasCalendar ? [{ title: '締切トラッカー' }] : []) },
-    CalendarEvent: { between: async () => events },
+    // 範囲の中に終わりがある予定だけを返す（実際の between と同じく、範囲で絞る）
+    CalendarEvent: {
+      between: async (start, end) => {
+        lastRange = { start, end };
+        return events.filter((e) => e.endDate >= start && e.endDate <= end);
+      },
+    },
     Color,
     Font,
     ListWidget,
@@ -200,15 +226,146 @@ test('行の間隔：行と行の間は 2、ヘッダーの後は 3、最後は�
   assert.deepEqual(spacers.map((s) => s.length), [3, 2, undefined]);
 });
 
-test('見出しは変えない：締切の件数', async () => {
+test('見出し（中・大）：今日の日付と締切の件数。超過がなければ「・超過」は出さない', async () => {
   const w = await run({ events: [ev('a', 1), ev('b', 2)] });
-  assert.equal(texts(w)[0].text, '締切  2件');
+  assert.equal(texts(w)[0].text, `${md(0)}  締切  2件`);
+  assert.ok(!texts(w)[0].text.includes('・超過'));
 });
 
-test('空：締切がないときは案内の文字だけを出す', async () => {
+test('見出し（中）：超過がすべてでも「N件・超過N」の形（件数と超過が同じ数）', async () => {
+  const events = [1, 2, 3].map((k) => ev(`o${k}`, -k));
+  const w = await run({ family: 'medium', events });
+  assert.equal(texts(w)[0].text, `${md(0)}  締切  3件・超過3`);
+});
+
+test('見出し（大）：日付・締切の件数・超過（中と同じ形）', async () => {
+  const events = [-2, -1, 1, 2, 3].map((k) => ev(`t${k}`, k));
+  const w = await run({ family: 'large', events });
+  assert.equal(texts(w)[0].text, `${md(0)}  締切  5件・超過2`);
+  const plain = await run({ family: 'large', events: [ev('a', 1)] });
+  assert.equal(texts(plain)[0].text, `${md(0)}  締切  1件`);
+});
+
+test('見出し：1行に収める設定（lineLimit 1・縮小は 0.8 まで）', async () => {
+  const w = await run({ events: [ev('a', 1)] });
+  assert.equal(texts(w)[0].lineLimit, 1);
+  assert.equal(texts(w)[0].minimumScaleFactor, 0.8);
+});
+
+test('見出し（中）：超過が2件あれば「・超過2」を付ける（件数は全体の9件）', async () => {
+  const events = [-2, -1, 1, 2, 3, 4, 5, 6, 7].map((k) => ev(`t${k}`, k));
+  const w = await run({ family: 'medium', events });
+  assert.equal(texts(w)[0].text, `${md(0)}  締切  9件・超過2`);
+});
+
+test('見出し（小）：今日の日付と件数。超過があれば「・超過N」を付ける', async () => {
+  const plain = await run({ family: 'small', events: [ev('a', 1), ev('b', 2)] });
+  assert.equal(texts(plain)[0].text, `${dd(0)} 2件`);
+
+  const events = [-2, -1, 1, 2, 3, 4, 5, 6, 7].map((k) => ev(`t${k}`, k));
+  const over = await run({ family: 'small', events });
+  assert.equal(texts(over)[0].text, `${dd(0)} 9件・超過2`);
+});
+
+test('空：締切がないときは案内の文字だけを出す（見出しは日付と 0件）', async () => {
   const w = await run({ events: [] });
   assert.equal(rows(w).length, 0);
+  assert.equal(texts(w)[0].text, `${md(0)}  締切  0件`);
   assert.ok(texts(w).some((t) => t.text === '未完了の締切はありません'));
+});
+
+test('締切の読み取り範囲：先 90 日まで（30日前からは変えない）', async () => {
+  // run の中で now を作るので、前後の時刻の間に入ることを確かめる（ずれは数ミリ秒だけ）
+  const before = Date.now();
+  await run({ events: [] });
+  const after = Date.now();
+  const { start, end } = lastRange;
+  assert.ok(end.getTime() >= before + 90 * DAY && end.getTime() <= after + 90 * DAY, '終わりは今から 90 日後');
+  assert.ok(start.getTime() >= before - 30 * DAY && start.getTime() <= after - 30 * DAY, '始まりは 30 日前');
+});
+
+test('30日先の締切は行に出て、件数（見出し）にも入る', async () => {
+  const w = await run({ family: 'medium', events: [ev('遠い', 30)] });
+  assert.equal(rows(w).length, 1);
+  assert.equal(rows(w)[0].titleText, '遠い');
+  assert.equal(texts(w)[0].text, `${md(0)}  締切  1件`);
+});
+
+test('読み取りの先の境界：+89 日の締切は入り、+91 日の締切は入らない（範囲の終わりは +90 日）', async () => {
+  // fake の between は受け取った範囲で絞るので、範囲の外の予定は返らない
+  const before = Date.now();
+  const w = await run({ family: 'medium', events: [ev('入る', 89), ev('入らない', 91)] });
+  const after = Date.now();
+  const { end } = lastRange;
+  assert.ok(end.getTime() >= before + 90 * DAY && end.getTime() <= after + 90 * DAY, '範囲の終わりは今から 90 日後');
+  assert.deepEqual(rows(w).map((r) => r.titleText), ['入る'], '+89 日は行に出て、+91 日は出ない');
+  assert.equal(texts(w)[0].text, `${md(0)}  締切  1件`, '件数（見出し）にも +91 日は入らない');
+});
+
+test('超えた件数の範囲：隠れた 20 日先の締切も範囲の終わりに入る', async () => {
+  // 6件まで表示。隠れるのは 20 日先と 25 日先の二件（どちらも 14 日を超える）
+  const events = [1, 2, 3, 4, 5, 6, 20, 25].map((k) => ev(`t${k}`, k));
+  const last = texts(await run({ family: 'medium', events })).at(-1);
+  assert.equal(last.text, `ほか2件 · ${md(20)}〜${md(25)}`);
+});
+
+test('時刻の表示：時刻つきの締切が今日・明日なら、タイトルの前に時刻（HH:MM）', async () => {
+  const today = rows(await run({ events: [ev('レポート', 0)] }))[0];
+  assert.equal(today.titleText, '17:00 レポート');
+
+  const tomorrow = rows(await run({ events: [ev('提出', 1)] }))[0];
+  assert.equal(tomorrow.titleText, '17:00 提出');
+});
+
+test('時刻の表示：時は 0 埋め（9:05 → 09:05）', async () => {
+  const t = new Date();
+  const at905 = { title: '朝', endDate: new Date(t.getFullYear(), t.getMonth(), t.getDate(), 9, 5), isAllDay: false };
+  assert.equal(rows(await run({ events: [at905] }))[0].titleText, '09:05 朝');
+});
+
+test('時刻の表示：終日の予定は今日でも時刻を出さない', async () => {
+  const r = rows(await run({ events: [allDay('祝日', 0), allDay('明日の終日', 1)] }));
+  assert.equal(r[0].titleText, '祝日');
+  assert.equal(r[1].titleText, '明日の終日');
+});
+
+test('時刻の表示：時刻つきでも3日後は時刻を出さない', async () => {
+  const r = rows(await run({ events: [ev('三日後', 3)] }));
+  assert.equal(r[0].titleText, '三日後');
+});
+
+test('時刻の表示（境界）：時刻つきの2日後は時刻を出さない（時刻は今日・明日だけ）', async () => {
+  const r = rows(await run({ events: [ev('二日後', 2)] }));
+  assert.equal(r[0].titleText, '二日後');
+});
+
+test('時刻の表示：小サイズでは、時刻つきの今日の締切もタイトルだけを出す', async () => {
+  const r = rows(await run({ family: 'small', events: [ev('レポート', 0), ev('提出', 1)] }));
+  assert.equal(r[0].titleText, 'レポート');
+  assert.equal(r[1].titleText, '提出');
+});
+
+test('時刻の表示：時刻つきで無題なら「17:00 (無題)」', async () => {
+  const r = rows(await run({ events: [ev('', 0)] }));
+  assert.equal(r[0].titleText, '17:00 (無題)');
+});
+
+test('ダーク対応：背景と文字の色は Color.dynamic（明るい時・暗い時）で作る', async () => {
+  const w = await run({ events: [ev('a', 0), ev('b', 2)] });
+  // 作られた順は COLOR の定義順（over, today, soon, normal, sub, bg）
+  const pairs = Color.made.map((c) => [c.hex, c.dark]);
+  assert.deepEqual(pairs, [
+    ['#d83a3a', '#FF7A7A'],
+    ['#e07a10', '#F0A050'],
+    ['#2f7d5b', '#6CCAAA'],
+    ['#3a3a3a', '#F0F0F9'],
+    ['#8a8a8a', '#ABABB3'],
+    ['#fbf7ee', '#101018'],
+  ]);
+  // 背景と今日の文字は、Color.dynamic が返したものそのもの
+  const bg = Color.made.find((c) => c.dark === '#101018');
+  assert.equal(w.backgroundColor, bg);
+  assert.equal(rows(w)[0].labelObj.textColor, Color.made.find((c) => c.dark === '#F0A050'));
 });
 
 test('カレンダーがないときは購読の案内を出す', async () => {
