@@ -2,7 +2,7 @@
 
 仕事や生活の締切を管理し、**iPhone のカレンダー通知**と**Discord・Gmail への連絡**につなげる個人用 Web アプリです（利用者 1 人想定）。
 
-フロントエンドはフレームワークなしの静的ページ（HTML / CSS / JavaScript）、データの保管と定期通知は **Cloudflare Workers + D1** が担当します。Cloudflare の無料枠内で動作するため、ランニングコストは **0円** です。
+フロントエンドはフレームワークなしの静的ページ（HTML / CSS / JavaScript）、データの保管と定期通知は **Cloudflare Workers + D1** が担当します。Cloudflare の無料枠内で動作するため、ランニングコストは 0円 です。
 
 ```text
 アプリ（Worker から配信） ──→ Worker の API ──→ D1（締切データ・世代バックアップ）
@@ -442,10 +442,6 @@ Cron は UTC 指定（`UTC = JST - 9時間`）です。同一トリガー内の�
 ### GitHub Actions によるマージ通知メール
 
 `main` への PR マージ時、`.github/workflows/merge-mail.yml`（`.github/scripts/send_merge_mail.py`）が変更概要を Gmail へ自動送信します（件名：`【deadline-tracker】#番号 タイトル をマージしました`）。利用する場合はリポジトリの Secrets に `GMAIL_ADDRESS` と `GMAIL_APP_PASSWORD` を登録してください。
-
-### 旧環境（終了）
-
-移行前の構成（GitHub Pages ＋ 非公開リポジトリ `deadline-data` ＋ GitHub Actions）は `docs/cloudflare-migration.md` の段階 5 をもって終了しました。旧設定が端末に残っている場合は起動時に自動削除され、`deadline-data` は `archive/pre-cloudflare-2026-10-23/` を残してアーカイブされています。
 
 ---
 
