@@ -12,7 +12,7 @@ import { extractFunction, loadAppFunctions } from '../support/appFns.js';
 process.env.TZ = 'Asia/Tokyo'; // app.js は端末の時刻（ローカル）で計算する。日本時間に固定する
 
 const FNS = [
-  'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText',
+  'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText', 'fmtDay', 'groupTitle', 'matchesKw', 'listConds', 'nearestDue', 'hiddenNotes', 'hiddenNoteText', 'emptyListHtml',
   'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
   'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
   'normalizeItemTypes', 'cleanCompletions', 'parseChecklist', 'toggleChecklist', 'checklistProgress', 'picksFor', 'canPick', 'addPickDay', 'pickDaysIn', 'sanitizeIncomingItems', 'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
@@ -293,18 +293,153 @@ test('remainText・statusOf: 今日・明日・期間の途中・期限切れ（
     [{ due: t(30, 12, 30) }, { n: 0, u: '時間後・今日' }, 'today'],           // 1時間未満は 0
     [{ due: t(30, 23, 59), allDay: true }, { n: '今日', u: '締切' }, 'today'],
     [{ due: t(30, 23, 59), allDay: true, start: t(30, 0) }, { n: '今日', u: '開始' }, 'today'],
-    [{ due: t(31, 9) }, { n: 1, u: '日後' }, 'soon'],
-    [{ due: iso(2026, 2, 2, 9) }, { n: 3, u: '日後' }, 'soon'],                  // 2/2 = あと3日
-    [{ due: iso(2026, 2, 3, 9) }, { n: 4, u: '日後' }, 'near'],
-    [{ due: iso(2026, 2, 6, 9) }, { n: 7, u: '日後' }, 'near'],
+    [{ due: t(31, 9) }, { n: '明日', u: '締切' }, 'soon'],                       // 1日後は「明日」（今日と同じ語の表示）
+    [{ due: t(31, 17), start: t(31, 8) }, { n: '明日', u: '開始' }, 'soon'],
+    [{ due: iso(2026, 2, 1, 9) }, { n: 2, u: '日後', w: '日曜' }, 'soon'],       // 2/1 = あと2日、日曜（曜日は別の行）
+    [{ due: iso(2026, 2, 2, 9) }, { n: 3, u: '日後', w: '月曜' }, 'soon'],       // 2/2 = あと3日
+    [{ due: iso(2026, 2, 3, 9) }, { n: 4, u: '日後', w: '火曜' }, 'near'],
+    [{ due: iso(2026, 2, 5, 9) }, { n: 6, u: '日後', w: '木曜' }, 'near'],       // 2/5 = あと6日
+    [{ due: iso(2026, 2, 6, 9) }, { n: 7, u: '日後' }, 'near'],                 // 7日後からは曜日を付けない
     [{ due: iso(2026, 2, 7, 9) }, { n: 8, u: '日後' }, 'far'],
-    [{ due: iso(2026, 2, 10, 9), start: iso(2026, 2, 3, 9) }, { n: 4, u: '日後に開始' }, 'near'], // 期間つきは開始日まで
+    [{ due: iso(2026, 2, 10, 9), start: iso(2026, 2, 3, 9) }, { n: 4, u: '日後に開始', w: '火曜' }, 'near'], // 期間つきは開始日まで（曜日も開始日、別の行）
     [{ due: iso(2026, 2, 5, 9), start: t(29, 9) }, { n: '—', u: '進行中' }, 'today'],           // 期間の途中
   ];
   for (const [it, remain, status] of table) {
     assert.deepEqual(R(it), remain, JSON.stringify(it));
     assert.equal(S(it), status, JSON.stringify(it));
   }
+});
+
+// ---- 一覧の見出し（グループの日付の範囲） ----
+
+test('groupTitle: 見出しに、グループの項目の日付の範囲を付ける（1日だけなら1日、これからは「〜」で終わる）', () => {
+  const { app } = load('2026-11-16 12:00'); // 月曜の昼
+  const G = (label, dues, openEnded) => app.groupTitle(label, dues.map((d) => ({ due: d })), openEnded);
+  assert.equal(G('今日', [iso(2026, 11, 16, 9), iso(2026, 11, 16, 18)], false), '今日 · 11/16（月）', '同じ日の複数件は1日だけ');
+  assert.equal(G('明日', [iso(2026, 11, 17, 9)], false), '明日 · 11/17（火）');
+  assert.equal(G('今週（7日以内）', [iso(2026, 11, 23, 9), iso(2026, 11, 18, 9)], false), '今週（7日以内） · 11/18（水）〜11/23（月）', '並びに依らず、一番早い日から一番遅い日');
+  assert.equal(G('今週（7日以内）', [iso(2026, 11, 18, 9), iso(2026, 11, 18, 17)], false), '今週（7日以内） · 11/18（水）', '範囲が1日だけなら1日');
+  assert.equal(G('これから', [iso(2026, 11, 24, 9), iso(2026, 12, 3, 9)], true), 'これから · 11/24（火）〜', 'これからは終わりを出さず「〜」');
+  assert.equal(G('これから', [iso(2026, 11, 24, 9)], true), 'これから · 11/24（火）〜', '1日だけでも「〜」');
+  assert.equal(G('期限切れ', [iso(2026, 10, 1, 9), iso(2026, 10, 3, 9)], false), '期限切れ · 10/1（木）〜10/3（土）');
+  // 期限切れの見出しは締切の日付で出す（期間つきは開始日ではなく締切）。開始 10/1・締切 11/10 の予定は 11/10 から
+  const overdueSpan = { start: iso(2026, 10, 1, 9), due: iso(2026, 11, 10, 9) };
+  assert.equal(app.groupTitle('期限切れ', [overdueSpan], false, app.parseItemDate), '期限切れ · 11/10（火）', '期限切れは締切の日付');
+  assert.equal(app.groupTitle('今週（7日以内）', [overdueSpan], false, app.refDate), '今週（7日以内） · 10/1（木）', 'ほかのグループは残り日数の基準（開始日）');
+});
+
+// ---- 空の一覧の案内（隠れている項目があるかで言い方を変える） ----
+
+test('emptyListHtml: 締切が1件もなければ今までどおり。締切はあるのに表示が空なら、「登録されていない」とは言わない', () => {
+  const { app } = load();
+  // 引数: (検索語, 有効な締切が1件以上あるか, 隠している理由の案内があるか)
+  const text = (kw, hasItems, hasNotes) => app.emptyListHtml(kw, hasItems, hasNotes).replace(/<[^>]+>/g, '');
+  assert.equal(text('', false, false), '登録された締切はありません下のボタンから最初の締切を登録してください。', '締切が無ければ今までどおり');
+  assert.equal(text('レポート', false, false), '見つかりませんでした「レポート」に一致する締切はありません。', '検索だけで空なら今までどおり');
+  assert.equal(text('', true, true), '表示中の締切はありません絞り込みで隠れている締切があります（下の案内から表示できます）。');
+  assert.equal(text('', true, false), '表示中の締切はありません絞り込みを解除すると表示されます。', '案内が無いときは、解除すれば見えると言う');
+  assert.equal(text('レポート', true, true), '表示中の締切はありませんこの絞り込みでは「レポート」に一致する締切はありません。下の案内から表示できます。');
+  assert.equal(text('レポート', true, false), '表示中の締切はありませんこの絞り込みでは「レポート」に一致する締切はありません。', '検索で空でも、締切があるなら「登録されていない」とは言わない');
+});
+
+test('emptyListHtml: 2つの理由で隠れた締切だけのとき（案内は出ない）も、「登録されていない」とは言わず、絞り込みを解除すると言う', () => {
+  const { app, now } = load('2026-11-16 12:00');
+  // 唯一の締切は、バイトの定期予定。定期予定を隠していて、カテゴリは「課題」に絞っている → 2つの理由で隠れる
+  const only = { id: 'x', title: 'バイト定期', cat: 'バイト', due: new Date(2026, 10, 20, 9).toISOString(), rep: 'weekly' };
+  const conds = app.listConds({ showRoutine: false, filter: '課題', kw: '' });
+  const visible = [only].filter((i) => conds.every((c) => !c.on || c.pass(i)));
+  const notes = app.hiddenNotes([only], conds, now);
+  assert.deepEqual(visible, [], '一覧は空');
+  assert.deepEqual(plain(notes), [], '2つの理由で隠れるので、案内は出ない');
+  const html = app.emptyListHtml('', true, notes.length > 0).replace(/<[^>]+>/g, '');
+  assert.equal(html, '表示中の締切はありません絞り込みを解除すると表示されます。', '締切はあるのに「登録されていない」と言わない');
+});
+
+// ---- 一覧で隠れている件数の案内（ほかN件） ----
+
+test('hiddenNotes: 定期予定を隠しているとき、件数と次の回を言う（隠れた件数は、その理由を外したときに増える数）', () => {
+  const { app, now } = load('2026-11-16 12:00'); // 月曜の昼
+  const item = (id, title, cat, m, d, extra = {}) => ({ id, title, cat, due: iso(2026, m, d, 9), ...extra });
+  const routineA = item('a', '定期A', '課題', 11, 20, { rep: 'weekly' });
+  const routineB = item('b', '定期B', 'バイト', 11, 17, { rep: 'weekly' });
+  const reportC = item('c', 'レポート', '課題', 11, 25);
+  const presentD = item('d', '発表', '課題', 11, 18);
+  const shiftE = item('e', 'シフト', 'バイト', 11, 19);
+  const ITEMS = [routineA, routineB, reportC, presentD, shiftE];
+  const texts = (st) => [...app.hiddenNotes(ITEMS, app.listConds(st), now).map((n) => app.hiddenNoteText(n, now))];
+
+  assert.deepEqual(texts({ showRoutine: false, filter: 'ALL', kw: '' }), ['ほかに定期予定 2件（次は 11/17（火））']);
+  assert.deepEqual(texts({ showRoutine: true, filter: 'ALL', kw: '' }), [], '定期予定を出していれば、何も隠していない');
+});
+
+test('hiddenNotes: 絞り込み（カテゴリ・検索）でも、件数と最も近い締切を言う', () => {
+  const { app, now } = load('2026-11-16 12:00');
+  const item = (id, title, cat, m, d, extra = {}) => ({ id, title, cat, due: iso(2026, m, d, 9), ...extra });
+  const routineA = item('a', '定期A', '課題', 11, 20, { rep: 'weekly' });
+  const routineB = item('b', '定期B', 'バイト', 11, 17, { rep: 'weekly' });
+  const reportC = item('c', 'レポート', '課題', 11, 25);
+  const presentD = item('d', '発表', '課題', 11, 18);
+  const shiftE = item('e', 'シフト', 'バイト', 11, 19);
+  const ITEMS = [routineA, routineB, reportC, presentD, shiftE];
+  const texts = (st) => [...app.hiddenNotes(ITEMS, app.listConds(st), now).map((n) => app.hiddenNoteText(n, now))];
+
+  // 「課題」に絞ると、バイトの2件（定期予定の1件を含む）が隠れる。最も近いのは 11/17
+  assert.deepEqual(texts({ showRoutine: true, filter: '課題', kw: '' }), ['「課題」以外に 2件（最も近いのは 11/17（火））']);
+  // 「レポート」で検索すると、一致しない4件が隠れる
+  assert.deepEqual(texts({ showRoutine: true, filter: 'ALL', kw: 'レポート' }), ['「レポート」に合わない 4件（最も近いのは 11/17（火））']);
+});
+
+test('hiddenNotes: 複数の理由が同時に効くとき、理由ごとに1行。件数は、その理由だけで隠れた項目の数', () => {
+  const { app, now } = load('2026-11-16 12:00');
+  const item = (id, title, cat, m, d, extra = {}) => ({ id, title, cat, due: iso(2026, m, d, 9), ...extra });
+  const routineA = item('a', '定期A', '課題', 11, 20, { rep: 'weekly' });
+  const routineB = item('b', '定期B', 'バイト', 11, 17, { rep: 'weekly' });
+  const reportC = item('c', 'レポート', '課題', 11, 25);
+  const shiftE = item('e', 'シフト', 'バイト', 11, 19);
+  const notes = app.hiddenNotes([routineA, routineB, reportC, shiftE], app.listConds({ showRoutine: false, filter: '課題', kw: '' }), now);
+  assert.deepEqual([...notes.map((n) => app.hiddenNoteText(n, now))], [
+    'ほかに定期予定 1件（次は 11/20（金））',   // 定期A（課題）は、定期予定を外すと出てくる。定期B（バイト）は両方の理由で隠れるので、どちらの件数にも入らない
+    '「課題」以外に 1件（最も近いのは 11/19（木））', // シフト（バイト・定期予定ではない）は、カテゴリを外すと出てくる
+  ]);
+});
+
+test('hiddenNotes: 隠れた項目がすべて期限切れなら、いちばん最近の締切を言う。何も隠れていなければ何も出さない', () => {
+  const { app, now } = load('2026-11-16 12:00');
+  const item = (id, title, cat, m, d, extra = {}) => ({ id, title, cat, due: iso(2026, m, d, 9), ...extra });
+  const old1 = item('f', '古い', 'バイト', 11, 10, { rep: 'weekly' });
+  const old2 = item('g', '少し前', 'バイト', 11, 13, { rep: 'weekly' });
+  const notes = app.hiddenNotes([old1, old2], app.listConds({ showRoutine: false, filter: 'ALL', kw: '' }), now);
+  assert.deepEqual([...notes.map((n) => app.hiddenNoteText(n, now))], ['ほかに定期予定 2件（直近は 11/13（金）・期限切れ）'], '過ぎた締切は「次は」と言わない');
+  assert.deepEqual([...app.hiddenNotes([old2], app.listConds({ showRoutine: true, filter: 'ALL', kw: '' }), now)], []);
+  // 期限切れのとき、カテゴリ・検索の案内も「最も近いのは」の中で「・期限切れ」と言う
+  const cat = app.hiddenNotes([old1, old2], app.listConds({ showRoutine: true, filter: '課題', kw: '' }), now);
+  assert.deepEqual([...cat.map((n) => app.hiddenNoteText(n, now))], ['「課題」以外に 2件（最も近いのは 11/13（金）・期限切れ）']);
+  // 期限内の締切が混ざるなら、一番近い未来の締切を言い、期限切れとは言わない
+  const mixed = item('h', '先の', 'バイト', 11, 20, { rep: 'weekly' });
+  const soon = app.hiddenNotes([old1, mixed], app.listConds({ showRoutine: false, filter: 'ALL', kw: '' }), now);
+  assert.deepEqual([...soon.map((n) => app.hiddenNoteText(n, now))], ['ほかに定期予定 2件（次は 11/20（金））']);
+});
+
+test('hiddenNotes: 3つの理由（定期予定オフ・カテゴリ・検索）が同時に効くとき、理由ごとの件数はその理由だけで隠れた数', () => {
+  const { app, now } = load('2026-11-16 12:00');
+  const item = (id, title, cat, m, d, extra = {}) => ({ id, title, cat, due: iso(2026, m, d, 9), ...extra });
+  const routineA = item('a', '定期レポート', '課題', 11, 20, { rep: 'weekly' }); // 定期予定だけで隠れる
+  const catB = item('b', 'レポート清書', 'バイト', 11, 18);                       // カテゴリだけで隠れる
+  const searchC = item('c', '発表', '課題', 11, 19);                              // 検索だけで隠れる
+  const allD = item('d', '定期シフト', 'バイト', 11, 17, { rep: 'weekly' });      // 3つとも満たさない（どの件数にも入らない）
+  const allF = item('f', '発表2', 'バイト', 11, 21);                              // カテゴリと検索で隠れる（どの件数にも入らない）
+  const shown = item('e', 'レポート本番', '課題', 11, 25);                        // 3つとも通る（一覧に出る）
+  const routineG = item('g', 'レポート定期2', '課題', 11, 27, { rep: 'weekly' }); // 定期予定だけで隠れる（定期予定の件数に入る）
+  const ITEMS = [routineA, catB, searchC, allD, allF, shown, routineG];
+  const st = { showRoutine: false, filter: '課題', kw: 'レポート' };
+  const conds = app.listConds(st); // 一覧の判定は renderListBody と同じ listConds で行う
+  const visible = ITEMS.filter((i) => conds.every((c) => !c.on || c.pass(i)));
+  assert.deepEqual(visible.map((i) => i.id), ['e'], '3つの条件を通るのは1件だけ');
+  assert.deepEqual([...app.hiddenNotes(ITEMS, conds, now).map((n) => app.hiddenNoteText(n, now))], [
+    'ほかに定期予定 2件（次は 11/20（金））',              // 定期A と 定期G（ほかの理由では隠れない）
+    '「課題」以外に 1件（最も近いのは 11/18（水））',      // レポート清書だけ
+    '「レポート」に合わない 1件（最も近いのは 11/19（木））', // 発表だけ
+  ]);
 });
 
 // ---- クイック入力 ----

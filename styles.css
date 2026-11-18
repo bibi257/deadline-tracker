@@ -637,6 +637,7 @@ body[data-view="over"] .card.over:not(.done) .left::before{content:"⚠ ENEMY";d
 .group-link:hover{color:var(--color-text-primary);text-decoration:underline;text-underline-offset:3px}
 .list-foot{display:flex;flex-wrap:wrap;gap:var(--spacing-2) var(--spacing-3);margin:var(--spacing-5) 0 0}
 .list-foot .act{padding:var(--spacing-2) 14px;margin:0}
+.hidden-note{display:flex;flex-wrap:wrap;align-items:center;gap:var(--spacing-2) var(--spacing-3);margin:var(--spacing-4) 0 0;font-size:var(--font-size-s);color:var(--color-text-tertiary)}
 .sub-head{display:flex;align-items:center;gap:10px;margin:var(--spacing-4) 0 0}
 .sub-head h2{margin:0;font-size:var(--font-size-xl);font-weight:var(--font-weight-bold);letter-spacing:.06em}
 .nav.back{width:auto;padding:0 10px;font-size:var(--font-size-m)}
