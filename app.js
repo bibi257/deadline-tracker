@@ -296,8 +296,10 @@ function sanitizeIncomingMeta(d){
 /* ========== 日付ユーティリティ ========== */
 var DOW=["日","月","火","水","木","金","土"];
 
+/* 日付だけ（時刻なし）。例：11/17（火） */
+function fmtDay(d){ return (d.getMonth()+1)+"/"+d.getDate()+"（"+DOW[d.getDay()]+"）"; }
 function fmtDue(d,allDay){
-  var s=(d.getMonth()+1)+"/"+d.getDate()+"（"+DOW[d.getDay()]+"）";
+  var s=fmtDay(d);
   return allDay?s:(s+" "+pad(d.getHours())+":"+pad(d.getMinutes()));
 }
 function statusOf(it){
@@ -322,6 +324,9 @@ function remainText(it){
     var h=Math.max(0,Math.floor((d-now)/3600000));
     return {n:h, u:"時間後・今日"};
   }
+  if(n===1) return {n:"明日", u:it.start?"開始":"締切"}; // 今日と同じく語で出す
+  // 2〜6日後は、数字の下に曜日を別の行で添える（d は数える日＝締切、期間つきは開始日）。64px の欄で「日後・水曜」が途中で折れないように、曜日は w に分けて持つ
+  if(n<=6) return {n:n, u:it.start?"日後に開始":"日後", w:DOW[d.getDay()]+"曜"};
   return {n:n, u:it.start?"日後に開始":"日後"};
 }
 
@@ -1123,7 +1128,7 @@ function cardOf(it){
   var badge=cs.badge;
   var isWord=(typeof r.n!=="number");
   var el=h('<article class="card '+st+(isRepeating(it)&&!it.done?" routine":"")+(isStale(it)&&!it.done?" stale":"")+'" data-id="'+escHtml(it.id)+'">'+
-    '<div class="left"><b class="n num'+(isWord?" word":"")+'">'+escHtml(r.n)+'</b><span class="u">'+escHtml(r.u)+'</span></div>'+
+    '<div class="left"><b class="n num'+(isWord?" word":"")+'">'+escHtml(r.n)+'</b><span class="u">'+escHtml(r.u)+'</span>'+(r.w?'<span class="u">'+escHtml(r.w)+'</span>':'')+'</div>'+
     '<div class="body">'+
       '<h3 class="title">'+escHtml(it.title)+'</h3>'+
       // 1行目は「いつ」（状態の判子と日時）、2行目は属性。日時がどのカードでも同じ位置に来る
@@ -1582,10 +1587,74 @@ function listFilterRow(){
   row.appendChild(tools);
   return row;
 }
-function matchesSearch(it){
-  if(!searchKw.trim()) return true;
-  var kw=searchKw.trim().toLowerCase();
-  return (it.title||"").toLowerCase().indexOf(kw)>=0 || (it.memo||"").toLowerCase().indexOf(kw)>=0;
+/* タイトル・メモに検索語が含まれるか（空の検索語は全部に一致） */
+function matchesKw(it,kw){
+  if(!kw.trim()) return true;
+  var k=kw.trim().toLowerCase();
+  return (it.title||"").toLowerCase().indexOf(k)>=0 || (it.memo||"").toLowerCase().indexOf(k)>=0;
+}
+/* 一覧を絞る理由（定期予定・カテゴリ・検索）。on は効いているか、pass は項目が通るかを表す。
+   一覧もこの条件で絞り、「ほかN件」の案内も同じ条件で数えるので、両者がずれない */
+function listConds(st){
+  return [
+    {key:"routine", on:!st.showRoutine, pass:function(i){ return !isRepeating(i); }},
+    {key:"cat", label:"「"+st.filter+"」以外に", on:st.filter!=="ALL", pass:function(i){ return i.cat===st.filter; }},
+    {key:"search", label:"「"+st.kw.trim()+"」に合わない", on:!!st.kw.trim(), pass:function(i){ return matchesKw(i,st.kw); }}
+  ];
+}
+/* 隠れた項目の中で、いちばん近い締切。まだ先のものがあれば一番早いもの、すべて期限切れなら一番最近のもの */
+function nearestDue(items,now){
+  var dues=items.map(function(i){ return parseItemDate(i); });
+  var up=dues.filter(function(d){ return d>=now; });
+  if(up.length) return new Date(Math.min.apply(null,up));
+  return new Date(Math.max.apply(null,dues));
+}
+/* 理由ごとに、隠れている件数と最も近い締切を数える。
+   その理由だけを外したときに出てくる項目の数（ほかの理由で隠れている項目は含めない） */
+function hiddenNotes(items,conds,now){
+  var out=[];
+  conds.forEach(function(c){
+    if(!c.on) return;
+    var rest=conds.filter(function(o){ return o!==c && o.on; });
+    var hidden=items.filter(function(i){ return !c.pass(i) && rest.every(function(o){ return o.pass(i); }); });
+    if(!hidden.length) return;
+    out.push({key:c.key, label:c.label, n:hidden.length, due:nearestDue(hidden,now)});
+  });
+  return out;
+}
+/* 「ほかN件」の案内の文言。締切が今より前（すべて期限切れ）なら「次は」を使わず、期限切れと言う */
+function hiddenNoteText(note,now){
+  var when=fmtDay(note.due), over=note.due<now;
+  if(note.key==="routine") return over
+    ? "ほかに定期予定 "+note.n+"件（直近は "+when+"・期限切れ）"
+    : "ほかに定期予定 "+note.n+"件（次は "+when+"）";
+  return note.label+" "+note.n+"件（最も近いのは "+when+(over?"・期限切れ":"")+"）";
+}
+/* 一覧が空のときの案内。締切が1件もなければ「登録されていない」と言う。締切はあるのに表示が空なら、絞り込みで隠れていることを言う
+   hasItems: 有効な締切（完了していないもの）が1件以上ある。hasNotes: 隠している理由の案内（ほかN件）が出ている。
+   2つの理由で隠れた締切は案内が出ないので、hasItems と hasNotes を分けて持つ */
+function emptyListHtml(kw,hasItems,hasNotes){
+  var k=kw.trim();
+  if(!hasItems){
+    return k
+      ? '<div class="empty mt-18"><b>見つかりませんでした</b>「'+escHtml(kw)+'」に一致する締切はありません。</div>'
+      : '<div class="empty mt-18"><b>登録された締切はありません</b>下のボタンから最初の締切を登録してください。</div>';
+  }
+  var body;
+  if(k) body='この絞り込みでは「'+escHtml(kw)+'」に一致する締切はありません。'+(hasNotes?'下の案内から表示できます。':'');
+  else if(hasNotes) body='絞り込みで隠れている締切があります（下の案内から表示できます）。';
+  else body='絞り込みを解除すると表示されます。';
+  return '<div class="empty mt-18"><b>表示中の締切はありません</b>'+body+'</div>';
+}
+/* 一覧のグループの見出し。項目の日付の範囲を付ける（これからは終わりがないので「〜」）。
+   日付は dateOf で取る（期限切れは締切、ほかは残り日数の基準日）。グループの判定と同じ日付にそろえる */
+function groupTitle(label,items,openEnded,dateOf){
+  var days=items.map(function(i){ return (dateOf||refDate)(i); });
+  var first=new Date(Math.min.apply(null,days)), last=new Date(Math.max.apply(null,days));
+  var span=fmtDay(first);
+  if(openEnded) span+="〜";
+  else if(first.toDateString()!==last.toDateString()) span+="〜"+fmtDay(last);
+  return label+" · "+span;
 }
 
 function renderList(){
@@ -1827,45 +1896,64 @@ function renderListBody(){
   if(!body) return;
   body.innerHTML="";
   // 定期予定は次の回だけを並べる（この端末だけの設定で隠せる。切り替えは絞り込みの列の「↻ 定期」）
-  var showRoutine=store.get("list-show-routine")!=="0";
-  var list=activeItems().filter(function(i){ return (filter==="ALL"||i.cat===filter)&&(showRoutine||!isRepeating(i))&&matchesSearch(i); }).sort(sortByDue);
+  // 絞り込みの条件は listConds にまとめ、一覧と「ほかN件」の案内で同じものを使う
+  var conds=listConds({showRoutine:store.get("list-show-routine")!=="0", filter:filter, kw:searchKw});
+  var now=new Date();
+  var list=activeItems().filter(function(i){ return conds.every(function(c){ return !c.on||c.pass(i); }); }).sort(sortByDue);
+  var notes=hiddenNotes(activeItems(), conds, now);
   if(!list.length){
-    var msg=searchKw.trim()
-      ? '<div class="empty mt-18"><b>見つかりませんでした</b>「'+escHtml(searchKw)+'」に一致する締切はありません。</div>'
-      : '<div class="empty mt-18"><b>登録された締切はありません</b>下のボタンから最初の締切を登録してください。</div>';
-    body.appendChild(h(msg));
+    body.appendChild(h(emptyListHtml(searchKw, activeItems().length>0, notes.length>0)));
+    appendHiddenNotes(body, notes, now);
     return;
   }
-  var now=new Date();
-  // グループ分けもカードの残り日数と同じ基準（期間つきは開始日）で判定する
+  // グループ分けもカードの残り日数と同じ基準（期間つきは開始日）で判定する。3つ目は「終わりがない」かどうか（これからだけ）
   var groups=[
-    ["期限切れ", function(i){ return parseItemDate(i)<now; }],
-    ["今日", function(i){ return daysBetween(now,refDate(i))===0; }],
-    ["明日", function(i){ return daysBetween(now,refDate(i))===1; }],
-    ["今週（7日以内）", function(i){ var n=daysBetween(now,refDate(i)); return n>1&&n<=7; }],
-    ["これから", function(i){ return daysBetween(now,refDate(i))>7; }]
+    ["期限切れ", function(i){ return parseItemDate(i)<now; }, false],
+    ["今日", function(i){ return daysBetween(now,refDate(i))===0; }, false],
+    ["明日", function(i){ return daysBetween(now,refDate(i))===1; }, false],
+    ["今週（7日以内）", function(i){ var n=daysBetween(now,refDate(i)); return n>1&&n<=7; }, false],
+    ["これから", function(i){ return daysBetween(now,refDate(i))>7; }, true]
   ];
   var used={};
   groups.forEach(function(g){
     var arr=list.filter(function(i){ return !used[i.id]&&g[1](i); });
     arr.forEach(function(i){ used[i.id]=1; });
     if(!arr.length) return;
+    // 見出しの日付も、期限切れは締切（グループの判定と同じ）、ほかは残り日数の基準日
+    var title=groupTitle(g[0], arr, g[2], g[0]==="期限切れ"?parseItemDate:refDate);
     // 期限切れの中では、長く放置されているものを先頭に出す
     if(g[0]==="期限切れ"){
       arr.sort(function(a,b){ return overdueDays(b)-overdueDays(a); });
       var stale=arr.filter(isStale).length;
-      var lbl=h('<div class="group-label">'+g[0]+(stale?'（うち '+stale+' 件が7日以上）':'')+'<button type="button" class="group-link">超過の一覧 ›</button></div>');
+      var lbl=h('<div class="group-label">'+escHtml(title)+(stale?'（うち '+stale+' 件が7日以上）':'')+'<button type="button" class="group-link">超過の一覧 ›</button></div>');
       lbl.querySelector("button").onclick=function(){ view="over"; window.scrollTo(0,0); render(); };
       body.appendChild(lbl);
     } else {
-      body.appendChild(h('<div class="group-label">'+g[0]+'</div>'));
+      body.appendChild(h('<div class="group-label">'+escHtml(title)+'</div>'));
     }
     arr.forEach(function(i){ body.appendChild(cardOf(i)); });
   });
+  appendHiddenNotes(body, notes, now);
   var all=h('<div class="list-foot"><button class="act primary">表示中の締切をまとめてカレンダーへ書き出す</button><button type="button" class="act">定期予定の一覧 ›</button></div>');
   all.children[0].onclick=function(){ downloadIcsPreferWorker(list,"deadlines"); };
   all.children[1].onclick=function(){ view="rep"; window.scrollTo(0,0); render(); };
   body.appendChild(all);
+}
+
+/* 隠している理由の案内（ほかN件）を一覧の末尾に出す。「表示する」で、その理由を外す */
+function appendHiddenNotes(body,notes,now){
+  // 「表示する」は3種類あるので、ボタンの読み上げ名で何を出すかを区別する
+  var showLabel={routine:"定期予定を表示する", cat:"すべてのカテゴリを表示する", search:"検索を解除して表示する"};
+  notes.forEach(function(n){
+    var el=h('<div class="hidden-note"><span>'+escHtml(hiddenNoteText(n,now))+'</span><button type="button" class="group-link" aria-label="'+showLabel[n.key]+'">表示する</button></div>');
+    el.querySelector("button").onclick=function(){
+      if(n.key==="routine") store.set("list-show-routine","1");
+      else if(n.key==="cat") filter="ALL";
+      else searchKw="";
+      render();
+    };
+    body.appendChild(el);
+  });
 }
 
 /* 期限を過ぎたものだけを集める。経過が長いものほど上に出す */
