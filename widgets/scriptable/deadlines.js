@@ -8,14 +8,15 @@ const DAY = 86400000;
 const COUNT = { small: 5, medium: 6, large: 16 };
 const WD = ['日', '月', '火', '水', '木', '金', '土'];
 
-// 色は「色だけに頼らない」ため、文字（超過／今日）も必ず出す
+// 色は「色だけに頼らない」ため、文字（超過／今日）も必ず出す。
+// Color.dynamic(明るい時, 暗い時) は、端末の設定（ライト／ダーク）に合わせて色を切り替える
 const COLOR = {
-  over: new Color('#d83a3a'),
-  today: new Color('#e07a10'),
-  soon: new Color('#2f7d5b'),
-  normal: new Color('#3a3a3a'),
-  sub: new Color('#8a8a8a'),
-  bg: new Color('#fbf7ee'),
+  over: Color.dynamic(new Color('#d83a3a'), new Color('#FF7A7A')),
+  today: Color.dynamic(new Color('#e07a10'), new Color('#F0A050')),
+  soon: Color.dynamic(new Color('#2f7d5b'), new Color('#6CCAAA')),
+  normal: Color.dynamic(new Color('#3a3a3a'), new Color('#F0F0F9')),
+  sub: Color.dynamic(new Color('#8a8a8a'), new Color('#ABABB3')),
+  bg: Color.dynamic(new Color('#fbf7ee'), new Color('#101018')),
 };
 
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -55,8 +56,9 @@ async function load(now) {
   const cals = await Calendar.forEvents();
   const cal = cals.find((c) => c.title === CAL_NAME) || cals.find((c) => /\/ics\/[^/]+\.ics$/.test(c.title));
   if (!cal) return null;
-  // 締切を過ぎた未完了の締切も購読に残るので、30日前から読む
-  const events = await CalendarEvent.between(new Date(now.getTime() - 30 * DAY), new Date(now.getTime() + 14 * DAY), [cal]);
+  // 締切を過ぎた未完了の締切も購読に残るので、30日前から読む。
+  // 先の 90 日までを読むので、遠い締切も件数（ヘッダー）と「ほかN件」の範囲に入る
+  const events = await CalendarEvent.between(new Date(now.getTime() - 30 * DAY), new Date(now.getTime() + 90 * DAY), [cal]);
   return events
     .map((ev) => ({ title: ev.title, due: dueOf(ev), allDay: ev.isAllDay }))
     .sort((a, b) => a.due - b.due);
@@ -88,13 +90,25 @@ async function build() {
   const labelWidth = small ? 46 : 60;
   const titleFont = small ? 11 : 12;
 
+  const today = startOfDay(now);
+  const dayOf = (it) => Math.round((startOfDay(it.due) - today) / DAY);
+
+  // 見出し：今日の日付・締切の件数。超過があれば「・超過N」を足す（件数は全体で数える）
+  const overCount = items.filter((it) => dayOf(it) < 0).length;
+  const overSuffix = overCount > 0 ? `・超過${overCount}` : '';
+  const headText = small
+    ? `${fmtDate(now, family)} ${items.length}件${overSuffix}`
+    : `${fmtDate(now, family)}  締切  ${items.length}件${overSuffix}`;
+
   const w = new ListWidget();
   w.backgroundColor = COLOR.bg;
   w.setPadding(8, 12, 8, 12);
 
-  const head = w.addText(`締切  ${items.length}件`);
+  const head = w.addText(headText);
   head.font = Font.boldSystemFont(11);
   head.textColor = COLOR.sub;
+  head.lineLimit = 1;
+  head.minimumScaleFactor = 0.8;
   w.addSpacer(3);
 
   if (!items.length) {
@@ -102,14 +116,13 @@ async function build() {
     t.font = Font.systemFont(13);
     t.textColor = COLOR.sub;
   }
-  const today = startOfDay(now);
-  const dayOf = (it) => Math.round((startOfDay(it.due) - today) / DAY);
 
   let prevText = null;
   const shown = items.slice(0, max);
   for (let i = 0; i < shown.length; i++) {
     const it = shown[i];
-    const l = label(dayOf(it), it.due, family);
+    const days = dayOf(it);
+    const l = label(days, it.due, family);
     if (i > 0) w.addSpacer(2);
     const row = w.addStack();
     row.centerAlignContent();
@@ -127,7 +140,12 @@ async function build() {
     prevText = l.text;
 
     row.addSpacer(6);
-    const t = row.addText(it.title || '(無題)');
+    // 時刻つきの締切が今日・明日なら、タイトルの前に締切の時刻（例: 17:00）を出す
+    const name = it.title || '(無題)';
+    const timed = !small && !it.allDay && (days === 0 || days === 1);
+    const hh = String(it.due.getHours()).padStart(2, '0');
+    const mm = String(it.due.getMinutes()).padStart(2, '0');
+    const t = row.addText(timed ? `${hh}:${mm} ${name}` : name);
     t.font = Font.systemFont(titleFont);
     t.textColor = COLOR.normal;
     t.lineLimit = 1;
