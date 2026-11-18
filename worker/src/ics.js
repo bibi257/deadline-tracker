@@ -6,7 +6,7 @@
 //   - 繰り返しでない予定の通知は絶対時刻(UTC)
 //   - 通知はカテゴリごとの設定（catReminders: 何日前か）に従う。未設定なら「1週間前 / 前日 / 当日」
 //     N日前は締切と同じ時刻、当日は「当日リマインドの時」に鳴る
-import { DAY, addDaysStr, dateStr, diffDays, fromJst, icsUtc, isObj, jstParts, parseDt } from './time.js';
+import { DAY, addDaysStr, dateStr, diffDays, fromJst, icsUtc, isObj, jpDay, jstParts, parseDt } from './time.js';
 
 const REMINDER_DEFAULT = [7, 1, 0];
 
@@ -58,11 +58,17 @@ export function cleanReminders(v) {
   return out;
 }
 
-function reminderLabel(n) {
-  if (n === 0) return '今日が締切';
-  if (n === 1) return '明日が締切';
-  if (n % 7 === 0) return `あと${n / 7}週間`;
-  return `あと${n}日`;
+/**
+ * 通知の文言。dueMs（締切のミリ秒）を渡すと、締切の日付（JST）を付ける。繰り返しの予定は回ごとに日付が変わるので、渡さない（相対の文言だけ）。
+ * 例：「小テスト：2/3（火）が締切・あと1週間」「レポート：明日 2/3（火）が締切」「提出：今日 2/3（火）が締切」
+ */
+function reminderLabel(n, dueMs = null) {
+  const rel = n === 0 ? '今日が締切' : n === 1 ? '明日が締切' : n % 7 === 0 ? `あと${n / 7}週間` : `あと${n}日`;
+  if (dueMs === null) return rel;
+  const date = jpDay(dueMs);
+  if (n === 0) return `今日 ${date}が締切`;
+  if (n === 1) return `明日 ${date}が締切`;
+  return `${date}が締切・${rel}`;
 }
 
 /**
@@ -170,11 +176,11 @@ function vevent(it, dayHour, reminders, { now, noMemo }) {
   } else {
     for (const n of days) {
       if (n > 0) {
-        lines.push(...alarmAbs(due - n * DAY, `${title}：${reminderLabel(n)}`));
+        lines.push(...alarmAbs(due - n * DAY, `${title}：${reminderLabel(n, due)}`));
         continue;
       }
       const dayOf = fromJst(dueJ.y, dueJ.mo, dueJ.d, dayHour, 0, 0, 0);
-      if (dayOf < due) lines.push(...alarmAbs(dayOf, `${title}：${reminderLabel(0)}`));
+      if (dayOf < due) lines.push(...alarmAbs(dayOf, `${title}：${reminderLabel(0, due)}`));
     }
   }
   lines.push('END:VEVENT');

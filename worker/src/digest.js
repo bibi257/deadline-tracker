@@ -8,7 +8,7 @@
 // jq の関数（ep・add_rep・next_occ）は、秒単位の整数で計算する。次回の計算は send_digest.sh の next_occ に合わせてある
 // （feed の expand とは、取りやめた回・回数の数え方が少し違う）。
 import { addRep } from './recurrence.js';
-import { dateStr, diffDays, isObj, jstDow, jstParts } from './time.js';
+import { dateStr, diffDays, isObj, jpDay, jstDow, jstParts } from './time.js';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
@@ -68,10 +68,16 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
 
   const fmtWhen = (ms, allDay) => {
     const p = jstParts(ms);
-    const md = `${p.mo}/${p.d}（${DOW[jstDow(ms)]}）`;
+    const md = jpDay(ms);
     return allDay ? md : `${md} ${pad2(p.h)}:${pad2(p.mi)}`;
   };
   const doneLink = (id) => (doneLinks && appUrl && id ? `　[✅完了](<${appUrl}?done=${uriEncode(id)}>)` : '');
+  // 隠れた件数の締切日の範囲（早い方〜遅い方）。同じ日だけなら1つだけ書く（それ以降・長く残っている の両方の「ほか」で使う）
+  const dueRange = (epochs) => {
+    const first = Math.min(...epochs) * 1000;
+    const last = Math.max(...epochs) * 1000;
+    return dateStr(first) === dateStr(last) ? jpDay(first) : `${jpDay(first)}〜${jpDay(last)}`;
+  };
   const remain = (refS, dueS, hasStart) => {
     const diff = daysFromToday(refS);
     if (dueS < nowS) {
@@ -80,6 +86,8 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
     }
     if (diff < 0) return '進行中';
     if (diff === 0) return hasStart && daysFromToday(dueS) !== 0 ? '今日から開始' : '今日';
+    // 1日後だけは「明日」（今から数えるので、朝の一覧では明日で正しい）。開始も締切も明日なら、開始は書かない
+    if (diff === 1) return hasStart && daysFromToday(dueS) !== 1 ? '明日から開始' : '明日';
     return hasStart ? `${diff} 日後に開始` : `${diff} 日後`;
   };
 
@@ -141,8 +149,9 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
   let repLines = '';
   for (const r of repRows) {
     const rdiff = daysFromToday(r.epoch);
+    const when = rdiff === 0 ? '今日' : rdiff === 1 ? '明日' : `${rdiff} 日後`;
     repLines += `- **${r.title}**　\`${r.cat}\`　${REP_LABEL[r.rep] ?? r.rep}\n`
-      + `  次は ${fmtWhen(r.epoch * 1000, r.allDay)}　── ${rdiff === 0 ? '今日' : `${rdiff} 日後`}\n`;
+      + `  次は ${fmtWhen(r.epoch * 1000, r.allDay)}　── ${when}\n`;
   }
   const repSection = repLines ? `\n## 🔁 定期予定\n${repLines}` : '';
 
@@ -159,7 +168,11 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
   let laterSection = '';
   if (laterLines) {
     laterSection = `\n## 🗓️ それ以降の予定（${count(laterRows.length, laterRows.filter((r) => r.auto).length)}）\n${laterLines}`;
-    if (laterRows.length > LATER_MAX) laterSection += `-# ほか ${laterRows.length - LATER_MAX} 件\n`;
+    if (laterRows.length > LATER_MAX) {
+      // 隠れた件数の締切日の範囲（早い方〜遅い方）。同じ日だけなら1つだけ書く
+      const hidden = laterRows.slice(LATER_MAX);
+      laterSection += `-# ほか ${hidden.length} 件 · ${dueRange(hidden.map((r) => r.epoch))}\n`;
+    }
   }
 
   // 今日の一手（印は締切1件に1つ。印の無い日は節ごと出さない＝今までの文面と変わらない）
@@ -192,6 +205,7 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
 
   let overLines = '';
   let staleLines = '';
+  const staleHidden = []; // 長く残っている項目のうち、表示を3件で打ち切った後の締切（epoch 秒）
   let todayLines = '';
   let soonLines = '';
   let overdue = 0;
@@ -222,6 +236,7 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
       if (elapsed >= 7 && !r.auto) {
         stale++;
         if (stale <= 3) staleLines += `- ${mark}**${r.title}**　\`${r.cat}\`\n  ${fmtWhen(Date.parse(r.due), r.allDay)} 締切 ── ${elapsed}日経過\n`;
+        else staleHidden.push(r.epoch);
       }
     } else if (daysFromToday(r.epoch) === 0) {
       // 「今日が締切」は締切日で判断する（期間つきで今日始まり・後日締切のものは入れない）
@@ -239,7 +254,7 @@ export function buildDigest(data, { now, windowDays = 7, appUrl = '', mentionUse
   let content = `${mention}# 📋 締切トラッカー\n### ${todayJst}の連絡\n${pickSection}`;
   if (stale > 0) {
     content += `\n## ⚠️ 長く残っています（${stale}件）\n${staleLines}`;
-    if (stale > 3) content += `-# ほか ${stale - 3} 件\n`;
+    if (stale > 3) content += `-# ほか ${stale - 3} 件 · ${dueRange(staleHidden)}\n`;
     content += '-# 完了か削除をおすすめします\n';
   }
   if (overdue > 0) content += `\n## 🔴 期限切れ（${count(overdue, overdueAuto)}）\n${overLines}`;

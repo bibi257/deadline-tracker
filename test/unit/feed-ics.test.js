@@ -37,6 +37,20 @@ test('.ics（購読用: subscribe）は、METHOD の直後にカレンダー名�
   assert.equal(sub.split('\r\n').length - base.split('\r\n').length, 3);
 });
 
+test('通知の文言（Worker）: 締切の日付（JST の M/D（曜））を付ける。1日前は「明日 …が締切」。繰り返しの予定は日付を付けない（回ごとに日付が変わるため）', () => {
+  const d = { items: [
+    { id: 'q1', title: '小テスト', cat: '考査', due: '2026-02-03T08:00:00.000Z' }, // 2/3（火）17:00 JST
+    { id: 'q2', title: '週次', cat: '考査', rep: 'weekly', due: '2026-02-03T08:00:00.000Z' },
+  ] };
+  // 行の折り返し（75バイト）を戻してから、文言を見る
+  const ics = buildIcs(d, { now: MORNING }).ics.replace(/\r\n /g, '');
+  assert.ok(ics.includes('DESCRIPTION:小テスト：2/3（火）が締切・あと1週間\r\n'), '7日前');
+  assert.ok(ics.includes('DESCRIPTION:小テスト：明日 2/3（火）が締切\r\n'), '1日前（あと1日は付けない）');
+  assert.ok(ics.includes('DESCRIPTION:小テスト：今日 2/3（火）が締切\r\n'), '当日');
+  assert.ok(ics.includes('DESCRIPTION:週次：あと1週間\r\n'), '繰り返しは相対の文言のまま');
+  assert.doesNotMatch(ics, /週次：\d/);
+});
+
 test('未完了が0件なら .ics は作らない（null）', () => {
   assert.equal(buildIcs({ items: [{ id: 'a', title: 'x', due: '2026-02-01T00:00:00.000Z', done: true }] }, { now: MORNING }).ics, null);
   assert.equal(buildIcs({}, { now: MORNING }).ics, null);

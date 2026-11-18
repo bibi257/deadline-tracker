@@ -12,7 +12,7 @@ const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const feed = JSON.parse(read('expected/feed.json'));
 const CFG = { clientId: 'cid-123', clientSecret: 'CLIENT-SECRET-xyz', refreshToken: 'REFRESH-TOKEN-abc', to: 'me@example.com', from: 'me@example.com' };
 
-test('メール本文が Python 版と同じ（見出しの件数だけ、自動完了を数えない形に変えてある）', () => {
+test('メール本文が Python 版と同じ（見出しの件数・おすすめの日付・8日以降の節は、今の仕様に合わせてある）', () => {
   const target = '2026-01-30';
   assert.equal(`件名: ${subjectFor(target)}\n${buildMailBody(feed, target)}\n`, read('expected/feed-mail.txt'));
 });
@@ -191,4 +191,62 @@ test('送信（POST）は、処理されなかったとわかる 429 だけや�
   const en = await sendGmail(CFG, { subject: 's', body: 'b', nowMs: 0, messageId: 'm' }, { fetchFn: gn.fetchFn, ...quick }).catch((x) => x);
   assert.match(en.message, /Gmail に接続できませんでした/);
   assert.equal(sends(gn), 1, '通信エラーでも、送信は1回だけ');
+});
+
+// ---- 8日以降の節（B3）・おすすめの順番の日付（B4） ----
+const mail = (items, target = '2026-01-30') => buildMailBody({ items, source_updated_at: null }, target);
+const m = (title, due, extra = {}) => ({ title, due_date: due, due_time: null, category: '考査', recurring: false, ...extra });
+
+test('8日以降の締切は「8日以降」の節に出る。見出しに件数と締切日の範囲（早い〜遅い）を書き、行の書き方は他の節と同じ', () => {
+  const body = mail([m('小テスト', '2026-02-10'), m('期末考査', '2026-02-20')]);
+  assert.match(body, /■ 8日以降（2件）2\/10（火）〜2\/20（金）\n- 小テスト ［考査］ 2\/10（火） 終日（あと11日）\n- 期末考査 ［考査］ 2\/20（金） 終日（あと21日）\n\n-- \n/);
+});
+
+test('8日以降の節は、締切日が同じ日だけなら日付は1つだけ書く（2つ並べない）', () => {
+  assert.match(mail([m('小テスト', '2026-02-10')]), /■ 8日以降（1件）2\/10（火）\n/);
+  assert.doesNotMatch(mail([m('小テスト', '2026-02-10')]), /2\/10（火）〜2\/10/);
+});
+
+test('8日以降の見出しは feed の範囲（range_end）まで。その先の締切は feed に入っていても出さず、見出しに「※…まで」を書く', () => {
+  const body = buildMailBody({ items: [m('小テスト', '2026-02-10'), m('期末考査', '2026-02-20')], range_end: '2026-02-13', source_updated_at: null }, '2026-01-30');
+  assert.match(body, /■ 8日以降（1件）2\/10（火）　※2\/13（金）まで\n- 小テスト ［考査］ 2\/10（火） 終日（あと11日）\n/);
+  assert.doesNotMatch(body, /期末考査/);
+});
+
+test('8日以降の見出しの「※…まで」は、締切日が範囲の終わりと同じ日でも付く', () => {
+  const body = buildMailBody({ items: [m('小テスト', '2026-02-13')], range_end: '2026-02-13', source_updated_at: null }, '2026-01-30');
+  assert.match(body, /■ 8日以降（1件）2\/13（金）　※2\/13（金）まで\n/);
+});
+
+test('8日以降の節は、8日以降の締切が無いときは出さない（7日以内だけなら「今後7日間」まで）', () => {
+  const body = mail([m('課題', '2026-02-06')]);
+  assert.doesNotMatch(body, /8日以降/);
+  assert.match(body, /■ 今後7日間の締切（1件）/);
+});
+
+test('期間中で締切が8日より先のものは「期間中」に入り、8日以降の節には重ねない', () => {
+  const body = mail([m('長い実習', '2026-02-15', { start_date: '2026-01-28' })]);
+  assert.match(body, /■ 期間中（1件）/);
+  assert.doesNotMatch(body, /8日以降/);
+});
+
+test('自動完了の予定も8日以降の件数から外し、「＋自動完了N件」と分けて書く', () => {
+  const body = mail([m('小テスト', '2026-02-10'), m('自動の予定', '2026-02-12', { auto_complete: true })]);
+  assert.match(body, /■ 8日以降（1件＋自動完了1件）2\/10（火）〜2\/12（木）\n/);
+});
+
+test('メールに「明日」は出さない（夕方に送るので、明日だと日がずれる）', () => {
+  const body = mail([m('レポート', '2026-01-31', { category: '課題' }), m('期末', '2026-03-02')]);
+  assert.doesNotMatch(body, /明日/);
+});
+
+test('おすすめの順番: 締切日（M/D（曜）・）を、あと◯日の前に入れる。あと◯日の書き方は変えない', () => {
+  const body = mail([m('レポート', '2026-01-31', { category: '課題' })]);
+  assert.match(body, /■ おすすめの順番（上位5件）\n1\. レポート ［課題］ … 1\/31（土）・あと1日(?:・[^\n]+)?\n/);
+});
+
+test('おすすめの順番: 期限切れ・今日が締切の行には締切日を付けない（あと◯日の行だけ付ける）', () => {
+  const body = mail([m('今日の課題', '2026-01-30', { category: '課題' }), m('昨日の課題', '2026-01-28', { category: '課題' })]);
+  assert.match(body, /1\. 昨日の課題 ［課題］ … 2日超過(?:・[^\n]+)?\n2\. 今日の課題 ［課題］ … 今日が締切(?:・[^\n]+)?\n/);
+  assert.doesNotMatch(body, /1\/28（水）・2日超過|1\/30（金）・今日が締切/);
 });
