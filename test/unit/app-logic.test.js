@@ -12,7 +12,7 @@ import { extractFunction, loadAppFunctions } from '../support/appFns.js';
 process.env.TZ = 'Asia/Tokyo'; // app.js は端末の時刻（ローカル）で計算する。日本時間に固定する
 
 const FNS = [
-  'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText', 'fmtDay', 'groupTitle', 'matchesKw', 'listConds', 'nearestDue', 'hiddenNotes', 'hiddenNoteText', 'emptyListHtml',
+  'pad', 'toLocalISO', 'startOfDay', 'daysBetween', 'parseItemDate', 'refDate', 'isRepeating', 'statusOf', 'remainText', 'fmtDay', 'groupTitle', 'listGroupOf', 'matchesKw', 'listConds', 'nearestDue', 'hiddenNotes', 'hiddenNoteText', 'emptyListHtml',
   'anchorDayOf', 'nextOccurrence', 'advanceRepeating', 'expandOccurrences', 'upcomingDue', 'monthEndRule',
   'toHalfWidth', 'parseQuick', 'trimCompletions', 'logCompletion', 'applyCompletionCore', 'levelOf', 'rewardOf',
   'normalizeItemTypes', 'cleanCompletions', 'parseChecklist', 'toggleChecklist', 'checklistProgress', 'picksFor', 'canPick', 'addPickDay', 'pickDaysIn', 'sanitizeIncomingItems', 'headerCount', 'needsKeyCard', 'versionInfo', 'metaContent', 'escHtml', 'prevOccurrence', 'progressOf', 'esc', 'utc', 'dateOnly', 'fold', 'alarm', 'relAlarm', 'remindersFor', 'reminderLabel', 'veventOf', 'buildICS',
@@ -326,6 +326,70 @@ test('groupTitle: 見出しに、グループの項目の日付の範囲を付�
   const overdueSpan = { start: iso(2026, 10, 1, 9), due: iso(2026, 11, 10, 9) };
   assert.equal(app.groupTitle('期限切れ', [overdueSpan], false, app.parseItemDate), '期限切れ · 11/10（火）', '期限切れは締切の日付');
   assert.equal(app.groupTitle('今週（7日以内）', [overdueSpan], false, app.refDate), '今週（7日以内） · 10/1（木）', 'ほかのグループは残り日数の基準（開始日）');
+});
+
+test('groupTitle: 今日の見出しは、開始日が過ぎた期間（進行中）があっても今日の日付だけを出す', () => {
+  const { app, now } = load('2026-01-30 12:00'); // 金曜の昼
+  const items = [
+    { start: iso(2026, 1, 27, 9), due: iso(2026, 2, 4, 9) }, // 3日前に始まった期間（今日のグループ）
+    { due: iso(2026, 1, 30, 17) },                           // 今日の締切
+  ];
+  // 今日のグループの見出しは renderListBody と同じ dateOf（今日より前は今日に丸める）で出す
+  const clampToToday = (i) => { const d = app.refDate(i), t = app.startOfDay(now); return d < t ? t : d; };
+  assert.equal(app.groupTitle('今日', items, false, clampToToday), '今日 · 1/30（金）', '過去の開始日は今日に丸め、範囲も出さない');
+  assert.equal(app.groupTitle('今日', items, false), '今日 · 1/27（火）〜1/30（金）', '丸めないと開始日から範囲が出る（今日の見出しでは使わない）');
+});
+
+// ---- 一覧のグループ（どのグループにも入らない項目が出ないように） ----
+
+test('listGroupOf: 期間の途中（開始日が過ぎて締切が先）は「今日」に入る。期限切れは締切で決まる', () => {
+  const { app, now } = load('2026-01-30 12:00'); // 金曜の昼
+  const G = (it) => app.listGroupOf(it, now);
+  assert.equal(G({ due: iso(2026, 2, 4, 9), start: iso(2026, 1, 27, 9) }), 'today', '3日前に始まり5日後に終わる期間は「今日」（以前は、どのグループにも入らなかった）');
+  assert.equal(G({ due: iso(2026, 2, 5, 9), start: iso(2026, 1, 30, 9) }), 'today', '今日始まる期間は「今日」');
+  assert.equal(G({ due: iso(2026, 2, 5, 9), start: iso(2026, 1, 31, 9) }), 'tomorrow', '明日始まる期間は「明日」');
+  assert.equal(G({ due: iso(2026, 1, 30, 9) }), 'over', '今日の過ぎた時刻の締切は「期限切れ」（今日ではない）');
+  assert.equal(G({ due: iso(2026, 1, 29, 9), start: iso(2026, 1, 20, 9) }), 'over', '締切が過ぎた期間は「期限切れ」');
+});
+
+test('listGroupOf: 単発の締切は、今日・明日・5日後（今週）・10日後（これから）に分かれる', () => {
+  const { app, now } = load('2026-01-30 12:00');
+  const G = (it) => app.listGroupOf(it, now);
+  assert.equal(G({ due: iso(2026, 1, 30, 17) }), 'today');
+  assert.equal(G({ due: iso(2026, 1, 31, 9) }), 'tomorrow');
+  assert.equal(G({ due: iso(2026, 2, 4, 9) }), 'week', '5日後');
+  assert.equal(G({ due: iso(2026, 2, 9, 9) }), 'later', '10日後');
+  assert.equal(G({ due: iso(2026, 1, 29, 9) }), 'over', '期限が過ぎた単発');
+});
+
+test('listGroupOf: 単発の締切は、ちょうど7日後で「今週」、8日後で「これから」（境界）', () => {
+  const { app, now } = load('2026-01-30 12:00');
+  const G = (it) => app.listGroupOf(it, now);
+  assert.equal(G({ due: iso(2026, 2, 6, 9) }), 'week', 'ちょうど7日後は「今週（7日以内）」');
+  assert.equal(G({ due: iso(2026, 2, 6, 23) }), 'week', '7日後の終わりの時刻でも「今週」');
+  assert.equal(G({ due: iso(2026, 2, 7, 0) }), 'later', '8日後の0時は「これから」');
+  assert.equal(G({ due: iso(2026, 2, 7, 9) }), 'later', 'ちょうど8日後は「これから」');
+});
+
+test('listGroupOf: 期間つきの項目は、どれもちょうど1つのグループに入る（落ちる項目がない）', () => {
+  const { app, now } = load('2026-01-30 12:00');
+  const GROUPS = ['over', 'today', 'tomorrow', 'week', 'later'];
+  // [開始, 締切, 期待]
+  const table = [
+    [iso(2026, 1, 20, 9), iso(2026, 1, 29, 9), 'over'],   // 期間が終わった
+    [iso(2026, 1, 20, 9), iso(2026, 1, 30, 9), 'over'],   // 締切が今日の過ぎた時刻
+    [iso(2026, 1, 27, 9), iso(2026, 2, 4, 9), 'today'],   // 途中
+    [iso(2026, 1, 30, 9), iso(2026, 1, 30, 17), 'today'], // 今日だけの期間
+    [iso(2026, 1, 31, 9), iso(2026, 2, 1, 9), 'tomorrow'],
+    [iso(2026, 2, 2, 9), iso(2026, 2, 5, 9), 'week'],
+    [iso(2026, 2, 6, 9), iso(2026, 2, 10, 9), 'week'],    // 7日後に始まる
+    [iso(2026, 2, 7, 9), iso(2026, 2, 10, 9), 'later'],   // 8日後に始まる
+  ];
+  for (const [start, due, want] of table) {
+    const got = app.listGroupOf({ start, due }, now);
+    assert.ok(GROUPS.includes(got), `${start} → ${due}: どのグループにも入らない（${got}）`);
+    assert.equal(got, want, `${start} → ${due}`);
+  }
 });
 
 // ---- 空の一覧の案内（隠れている項目があるかで言い方を変える） ----

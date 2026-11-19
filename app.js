@@ -1894,6 +1894,17 @@ function todaySummary(){
   return el;
 }
 
+/* 一覧のグループを1つに決める（期限切れ・今日・明日・今週・これから）。残り日数は期間つきなら開始日で数える。
+   開始日が過ぎて締切が先の期間は、残りの表示で「進行中」と出すので「今日」に入れる（どのグループにも入らないことがないように） */
+function listGroupOf(it,now){
+  if(parseItemDate(it)<now) return "over";
+  var n=daysBetween(now,refDate(it));
+  if(n<=0) return "today";
+  if(n===1) return "tomorrow";
+  if(n<=7) return "week";
+  return "later";
+}
+
 function renderListBody(){
   var body=document.getElementById("listBody");
   if(!body) return;
@@ -1911,19 +1922,19 @@ function renderListBody(){
   }
   // グループ分けもカードの残り日数と同じ基準（期間つきは開始日）で判定する。3つ目は「終わりがない」かどうか（これからだけ）
   var groups=[
-    ["期限切れ", function(i){ return parseItemDate(i)<now; }, false],
-    ["今日", function(i){ return daysBetween(now,refDate(i))===0; }, false],
-    ["明日", function(i){ return daysBetween(now,refDate(i))===1; }, false],
-    ["今週（7日以内）", function(i){ var n=daysBetween(now,refDate(i)); return n>1&&n<=7; }, false],
-    ["これから", function(i){ return daysBetween(now,refDate(i))>7; }, true]
+    ["期限切れ", function(i){ return listGroupOf(i,now)==="over"; }, false],
+    ["今日", function(i){ return listGroupOf(i,now)==="today"; }, false],
+    ["明日", function(i){ return listGroupOf(i,now)==="tomorrow"; }, false],
+    ["今週（7日以内）", function(i){ return listGroupOf(i,now)==="week"; }, false],
+    ["これから", function(i){ return listGroupOf(i,now)==="later"; }, true]
   ];
   var used={};
   groups.forEach(function(g){
     var arr=list.filter(function(i){ return !used[i.id]&&g[1](i); });
     arr.forEach(function(i){ used[i.id]=1; });
     if(!arr.length) return;
-    // 見出しの日付も、期限切れは締切（グループの判定と同じ）、ほかは残り日数の基準日
-    var title=groupTitle(g[0], arr, g[2], g[0]==="期限切れ"?parseItemDate:refDate);
+    // 見出しの日付は、期限切れは締切（グループの判定と同じ）、今日は今日より前を今日に丸める（開始日が過ぎた期間は今日だけを出す）、ほかは残り日数の基準日
+    var title=groupTitle(g[0], arr, g[2], g[0]==="期限切れ"?parseItemDate:g[0]==="今日"?function(i){ var d=refDate(i), t=startOfDay(now); return d<t?t:d; }:refDate);
     // 期限切れの中では、長く放置されているものを先頭に出す
     if(g[0]==="期限切れ"){
       arr.sort(function(a,b){ return overdueDays(b)-overdueDays(a); });
