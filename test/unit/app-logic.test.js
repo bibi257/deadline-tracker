@@ -562,6 +562,17 @@ test('buildICS: アプリの .ics と Worker（購読用）の .ics が、同じ
   assert.equal(fromApp, fromWorker);
 });
 
+test('通知の文言（アプリ）: 締切の日付を付ける。1日前は「明日 …が締切」。日付なし（繰り返し）は相対の文言だけ', () => {
+  const { app } = load('2026-01-30 12:00', { catReminders: CAT_REMINDERS });
+  const due = new Date(2026, 1, 3, 17, 0); // 2/3（火）17:00
+  assert.equal(app.reminderLabel(7, due), '2/3（火）が締切・あと1週間');
+  assert.equal(app.reminderLabel(3, due), '2/3（火）が締切・あと3日');
+  assert.equal(app.reminderLabel(1, due), '明日 2/3（火）が締切');
+  assert.equal(app.reminderLabel(0, due), '今日 2/3（火）が締切');
+  assert.equal(app.reminderLabel(7), 'あと1週間');
+  assert.equal(app.reminderLabel(1), '明日が締切');
+});
+
 // ---- ヘッダーの件数（D1: 「7日以内 0」なのに一覧に定期予定が並んで、食い違って見えないように） ----
 
 test('headerCount: 7日以内は繰り返さない締切だけを数え、定期予定は「＋定期 N」と添える。数え方は変えない', () => {

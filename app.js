@@ -565,9 +565,9 @@ function veventOf(it){
     });
   } else {
     days.forEach(function(n){
-      if(n>0){ L=L.concat(alarm(new Date(due.getTime()-n*86400000), it.title+"："+reminderLabel(n))); return; }
+      if(n>0){ L=L.concat(alarm(new Date(due.getTime()-n*86400000), it.title+"："+reminderLabel(n,due))); return; }
       var dayOf=new Date(due.getFullYear(),due.getMonth(),due.getDate(),db.settings.dayHour,0,0);
-      if(dayOf<due) L=L.concat(alarm(dayOf, it.title+"："+reminderLabel(0)));
+      if(dayOf<due) L=L.concat(alarm(dayOf, it.title+"："+reminderLabel(0,due)));
     });
   }
   L.push("END:VEVENT");
@@ -582,11 +582,14 @@ function remindersFor(cat){
   var v=db.catReminders[cat||"その他"];
   return Array.isArray(v)?v:REMINDER_DEFAULT;
 }
-function reminderLabel(n){
-  if(n===0) return "今日が締切";
-  if(n===1) return "明日が締切";
-  if(n%7===0) return "あと"+(n/7)+"週間";
-  return "あと"+n+"日";
+/* 通知の文言。due（締切の Date）を渡すと締切の日付を付ける（Worker の .ics と同じ文面。繰り返しの予定は回ごとに日付が変わるので渡さない） */
+function reminderLabel(n,due){
+  var rel=n===0?"今日が締切":n===1?"明日が締切":n%7===0?"あと"+(n/7)+"週間":"あと"+n+"日";
+  if(!due) return rel;
+  var date=fmtDay(due);
+  if(n===0) return "今日 "+date+"が締切";
+  if(n===1) return "明日 "+date+"が締切";
+  return date+"が締切・"+rel;
 }
 /* 外から来た値（Cloudflare・JSON）を検証する。壊れた値は捨てて既定に戻す */
 function cleanCatReminders(v){

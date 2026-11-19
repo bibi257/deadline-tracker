@@ -26,6 +26,14 @@ export function fromJst(y, mo, d, h = 0, mi = 0, s = 0, msec = 0) {
   return Date.UTC(y, mo - 1, d, h, mi, s, msec) - JST_OFFSET;
 }
 
+const DOW_JP = ['日', '月', '火', '水', '木', '金', '土'];
+
+/** JST の日付の表示。例：11/17（火） */
+export function jpDay(ms) {
+  const p = jstParts(ms);
+  return `${p.mo}/${p.d}（${DOW_JP[jstDow(ms)]}）`;
+}
+
 /** JST の曜日（0=日曜 … 6=土曜） */
 export const jstDow = (ms) => new Date(ms + JST_OFFSET).getUTCDay();
 

@@ -82,12 +82,19 @@ function prioritySection(items, target) {
   rows.sort((a, b) => (b.s - a.s) || cmpStr(a.e.due_date, b.e.due_date) || cmpStr(a.e.title, b.e.title));
   const out = [`■ おすすめの順番（上位${TOP_N}件）`];
   if (!rows.length) out.push('- 急ぎのものはありません');
-  rows.slice(0, TOP_N).forEach((r, i) => out.push(`${i + 1}. ${r.e.title} ［${r.e.category ?? ''}］ … ${r.why}`));
+  // 締切日を付けるのは、あと◯日の行だけ（期限切れ・今日が締切は理由に日付の意味が出ているので付けない）
+  rows.slice(0, TOP_N).forEach((r, i) => {
+    const d = diffDays(r.e.due_date, target);
+    const dayText = d > 0 ? `${jp(r.e.due_date)}・` : '';
+    out.push(`${i + 1}. ${r.e.title} ［${r.e.category ?? ''}］ … ${dayText}${r.why}`);
+  });
   out.push('');
   return out;
 }
 
-/** メール本文。feed は buildFeed の結果、target は "YYYY-MM-DD" */
+/**
+ * メール本文。feed は buildFeed の結果、target は "YYYY-MM-DD"。feed.items は buildFeed の順（締切日順）で並んでいること（節の並びがそれに頼っている）。
+ */
 export function buildMailBody(feed, target) {
   const items = feed.items ?? [];
   const over = items.filter((e) => e.due_date < target);
@@ -95,6 +102,9 @@ export function buildMailBody(feed, target) {
   const during = items.filter((e) => e.start_date && e.start_date <= target && target < e.due_date);
   const week = addDaysStr(target, 7);
   const soon = items.filter((e) => target < e.due_date && e.due_date <= week && !during.includes(e));
+  // 8日より先の締切（期間中の予定は「期間中」の節に出ているので除く）。feed の範囲（range_end）より先は、feed に入っていても出さない
+  const rangeEnd = feed.range_end;
+  const later = items.filter((e) => e.due_date > week && (!rangeEnd || e.due_date <= rangeEnd) && !during.includes(e));
 
   const out = [`${jp(target)}の締切（締切トラッカーより自動送信）`, ''];
   // 今日の一手（印の付いた締切。印が無ければ何も足さない＝今までの本文と変わらない）
@@ -106,9 +116,12 @@ export function buildMailBody(feed, target) {
   }
   out.push(...prioritySection(items, target));
   // 件数には、自動完了の予定（締切を過ぎると自動で完了になる）を数えない。あれば「＋自動完了N件」と分けて書く
-  const section = (title, rows) => {
+  const countText = (rows) => {
     const auto = rows.filter((e) => e.auto_complete === true).length;
-    out.push(`■ ${title}（${auto ? `${rows.length - auto}件＋自動完了${auto}件` : `${rows.length}件`}）`);
+    return auto ? `${rows.length - auto}件＋自動完了${auto}件` : `${rows.length}件`;
+  };
+  const section = (title, rows) => {
+    out.push(`■ ${title}（${countText(rows)}）`);
     if (rows.length) out.push(...rows.map((e) => line(e, target)));
     else out.push('- なし');
     out.push('');
@@ -117,6 +130,18 @@ export function buildMailBody(feed, target) {
   section('期限切れ', over);
   section('期間中', during);
   section('今後7日間の締切', soon);
+  // 8日以降は、件数と締切日の範囲（早い方〜遅い方。同じ日だけなら1つ）を見出しに書く。
+  // feed の範囲（range_end）までしか載せていないので、その日付も「※…まで」で書く。無ければ節ごと出さない
+  if (later.length) {
+    const dues = later.map((e) => e.due_date);
+    const first = dues.reduce((a, b) => (b < a ? b : a));
+    const last = dues.reduce((a, b) => (b > a ? b : a));
+    const range = first === last ? jp(first) : `${jp(first)}〜${jp(last)}`;
+    const limit = rangeEnd ? `　※${jp(rangeEnd)}まで` : '';
+    out.push(`■ 8日以降（${countText(later)}）${range}${limit}`);
+    out.push(...later.map((e) => line(e, target)));
+    out.push('');
+  }
   out.push('-- ');
   out.push(`この日付: ${target} ／ データ更新: ${feed.source_updated_at || '不明'}`);
   out.push('このメールは deadline-tracker の Cloudflare Worker が自動で送っています。返信不要です。');

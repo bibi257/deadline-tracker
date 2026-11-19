@@ -208,3 +208,68 @@ test('今日の一手：予定が1件も無い日でも、印があれば節が�
   assert.match(content, /## ◎ 今日の一手（1件）\n- \*\*合宿申込\*\*/);
   assert.match(content, /## ⏳ 7日以内の締切\n-# 予定はありません/);
 });
+
+// ---- 残り日数の「明日」（1日後だけ）。締切の一覧は今から数えるので、明日でよい ----
+const DAYS_NOW = parseNow('2026-01-30 06:47'); // 金曜
+const one = (due, extra = {}) => buildDigest({ items: [{ id: 'd1', title: '課題', cat: '課題', due, ...extra }] }, { now: DAYS_NOW, ...cfg }).content;
+
+test('残り1日は「明日」、0日は「今日」、2日以上は「N 日後」のまま', () => {
+  assert.match(one('2026-01-31T06:00:00.000Z'), /1\/31（土） 15:00　── 明日\n/, '1日後');
+  assert.doesNotMatch(one('2026-01-31T06:00:00.000Z'), /1 日後/);
+  assert.match(one('2026-01-30T06:00:00.000Z'), /1\/30（金） 15:00　── 今日\n/, '0日');
+  assert.match(one('2026-02-01T06:00:00.000Z'), /2\/1（日） 15:00　── 2 日後\n/, '2日後');
+});
+
+test('開始が明日の期間つきは「明日から開始」（今日から開始と同じ形）。締切も明日なら「明日」だけ。開始が2日後以降は今までどおり', () => {
+  const tomorrowStart = one('2026-02-03T03:00:00.000Z', { start: '2026-01-31T01:00:00.000Z' });
+  assert.match(tomorrowStart, /── 明日から開始\n/);
+  assert.match(one('2026-01-31T06:00:00.000Z', { start: '2026-01-31T01:00:00.000Z' }), /── 明日\n/, '締切も明日なら「明日から開始」は書かない');
+  assert.doesNotMatch(one('2026-01-31T06:00:00.000Z', { start: '2026-01-31T01:00:00.000Z' }), /明日から開始|明日に開始/);
+  assert.match(one('2026-02-03T03:00:00.000Z', { start: '2026-02-01T01:00:00.000Z' }), /── 2 日後に開始\n/);
+});
+
+test('定期予定の次の回が明日なら「次は … ── 明日」。今日・2日後は今までどおり', () => {
+  const rep = (due) => buildDigest({ items: [{ id: 'r1', title: '定例', cat: 'サークル', due, rep: 'weekly' }] }, { now: DAYS_NOW, ...cfg }).content;
+  assert.match(rep('2026-01-31T06:00:00.000Z'), /次は 1\/31（土） 15:00　── 明日\n/);
+  assert.match(rep('2026-02-01T06:00:00.000Z'), /次は 2\/1（日） 15:00　── 2 日後\n/);
+});
+
+// ---- ほか N 件の日付の範囲（それ以降の予定を10件で打ち切ったときの、隠れた件数） ----
+const later = (dues) => buildDigest({ items: dues.map((due, i) => ({ id: `L${i}`, title: `先の予定${i}`, cat: '課題', due })) }, { now: DAYS_NOW, ...cfg }).content;
+const tenPlusTwo = (lastTwo) => [
+  ...Array.from({ length: 10 }, (_, i) => `2026-03-${String(i + 1).padStart(2, '0')}T03:00:00.000Z`), // 3/1〜3/10 の10件（表示される）
+  ...lastTwo,
+];
+
+test('ほか N 件の案内に、隠れた件数の締切日の範囲（早い方〜遅い方）を付ける', () => {
+  const content = later(tenPlusTwo(['2026-03-20T03:00:00.000Z', '2026-03-11T03:00:00.000Z']));
+  assert.match(content, /-# ほか 2 件 · 3\/11（水）〜3\/20（金）\n/);
+});
+
+test('隠れた件数の締切日がすべて同じ日なら、日付は1つだけ書く', () => {
+  const content = later(tenPlusTwo(['2026-03-20T03:00:00.000Z', '2026-03-20T08:00:00.000Z']));
+  assert.match(content, /-# ほか 2 件 · 3\/20（金）\n/);
+  assert.doesNotMatch(content, /-# ほか 2 件 · 3\/20（金）〜/);
+});
+
+// ---- 長く残っています の「ほか N 件」にも、隠れた件数の締切日の範囲を付ける（それ以降と同じ形） ----
+const staleItems = (dues) => dues.map((due, i) => ({ id: `S${i}`, title: `滞留${i}`, cat: '課題', due }));
+
+test('長く残っています の「ほか N 件」に、隠れた件数の締切日の範囲（早い方〜遅い方）を付ける', () => {
+  // 表示は先頭の3件。残り2件（1/20・1/15）の範囲を書く（全件とも7日以上過ぎたものだけが対象）
+  const content = buildDigest({ items: staleItems(['2026-01-10T03:00:00.000Z', '2026-01-11T03:00:00.000Z', '2026-01-12T03:00:00.000Z', '2026-01-20T03:00:00.000Z', '2026-01-15T03:00:00.000Z']) }, { now: DAYS_NOW, ...cfg }).content;
+  assert.match(content, /## ⚠️ 長く残っています（5件）/);
+  assert.match(content, /-# ほか 2 件 · 1\/15（木）〜1\/20（火）\n-# 完了か削除をおすすめします\n/);
+});
+
+test('長く残っています の隠れた件数の締切日がすべて同じ日なら、日付は1つだけ書く', () => {
+  const content = buildDigest({ items: staleItems(['2026-01-10T03:00:00.000Z', '2026-01-11T03:00:00.000Z', '2026-01-12T03:00:00.000Z', '2026-01-20T03:00:00.000Z', '2026-01-20T08:00:00.000Z']) }, { now: DAYS_NOW, ...cfg }).content;
+  assert.match(content, /-# ほか 2 件 · 1\/20（火）\n/);
+  assert.doesNotMatch(content, /1\/20（火）〜/);
+});
+
+test('隠れた件数が無ければ「ほか」の行は出ない', () => {
+  const content = later(Array.from({ length: 10 }, (_, i) => `2026-03-${String(i + 1).padStart(2, '0')}T03:00:00.000Z`));
+  assert.doesNotMatch(content, /ほか \d+ 件 ·/);
+  assert.doesNotMatch(content, /-# ほか/);
+});
